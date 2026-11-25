@@ -185,7 +185,7 @@
                         ? '<span class="badge stopped">已停止</span>'
                         : '<span class="badge pending">' + esc(i.status || "未知") + '</span>';
                 const cdp = i.cdp_addr || ("127.0.0.1:" + i.debug_port);
-                const novnc = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port);
+                const novnc = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port + "/vnc.html");
                 const ready = i.status === "running"
                     ? (i.cdp_ready === true
                         ? '<span class="badge running">已就绪</span>'
