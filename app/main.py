@@ -1,9 +1,10 @@
 import os
+import time
 import uuid
 from typing import Dict
 
 import docker
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -26,6 +27,9 @@ PORT_VNC_END = 6000
 PORT_NOVNC_START = 7901
 PORT_NOVNC_END = 7999
 
+# 若通过反向代理访问，可设置 PUBLIC_HOST，例如 https://cdp.example.com
+PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "").strip().rstrip("/")
+
 
 def find_free(start: int, end: int, used: set) -> int:
     for port in range(start, end + 1):
@@ -35,54 +39,107 @@ def find_free(start: int, end: int, used: set) -> int:
     raise RuntimeError(f"端口池耗尽: {start}-{end}")
 
 
-def collect_used_ports() -> dict:
-    used = {"debug": set(), "vnc": set(), "novnc": set()}
-    for c in client.containers.list(
-        all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
+def public_base(request: Request) -> str:
+    if PUBLIC_HOST:
+        return PUBLIC_HOST
+    return f"{request.url.scheme}://{request.headers.get('host', request.client.host)}"
+
+
+def parse_ports(container) -> dict:
+    ports = container.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
+    result = {}
+    for internal, key in (
+        ("9222/tcp", "debug_port"),
+        ("5900/tcp", "vnc_port"),
+        ("6080/tcp", "novnc_port"),
     ):
-        ports = c.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
-        for internal, mappings in ports.items():
-            if not mappings:
-                continue
-            host_port = int(mappings[0]["HostPort"])
-            if internal == "9222/tcp":
-                used["debug"].add(host_port)
-            elif internal == "5900/tcp":
-                used["vnc"].add(host_port)
-            elif internal == "6080/tcp":
-                used["novnc"].add(host_port)
-    return used
+        try:
+            result[key] = int(ports[internal][0]["HostPort"])
+        except (KeyError, IndexError, TypeError):
+            result[key] = None
+    return result
+
+
+def sync_instances():
+    for sid, item in list(INSTANCES.items()):
+        try:
+            container = client.containers.get(item["container_id"])
+            item["status"] = container.status
+            item.update(parse_ports(container))
+        except docker.errors.NotFound:
+            INSTANCES.pop(sid, None)
+        except docker.errors.APIError:
+            pass
 
 
 def restore_instances():
     for c in client.containers.list(
         all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
     ):
-        labels = c.labels
-        sid = labels.get("cdp.sid")
+        sid = c.labels.get("cdp.sid")
         if not sid:
             continue
-        ports = c.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
-        try:
-            debug_port = int(ports["9222/tcp"][0]["HostPort"])
-            vnc_port = int(ports["5900/tcp"][0]["HostPort"])
-            novnc_port = int(ports["6080/tcp"][0]["HostPort"])
-        except (KeyError, IndexError, TypeError):
+        ports = parse_ports(c)
+        if any(v is None for v in ports.values()):
             continue
         INSTANCES[sid] = {
             "sid": sid,
             "container_id": c.id,
             "container_name": c.name,
-            "debug_port": debug_port,
-            "vnc_port": vnc_port,
-            "novnc_port": novnc_port,
-            "cdp_addr": f"127.0.0.1:{debug_port}",
+            **ports,
             "status": c.status,
         }
 
 
+def to_view(item: dict, request: Request) -> dict:
+    data = dict(item)
+    base = public_base(request)
+    host_only = base.split("://", 1)[-1]
+    debug = item.get("debug_port")
+    vnc = item.get("vnc_port")
+    novnc = item.get("novnc_port")
+    data["cdp_addr"] = f"{host_only.split(':')[0]}:{debug}" if debug else ""
+    data["cdp_http"] = f"http://{host_only.split(':')[0]}:{debug}" if debug else ""
+    data["vnc_url"] = f"http://{host_only.split(':')[0]}:{vnc}" if vnc else ""
+    data["novnc_url"] = f"http://{host_only.split(':')[0]}:{novnc}" if novnc else ""
+    return data
+
+
+def wait_cdp_ready(container, timeout: float = 30.0) -> bool:
+    import urllib.request
+
+    container.reload()
+    networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+    ip = None
+    for net in networks.values():
+        if net.get("IPAddress"):
+            ip = net["IPAddress"]
+            break
+    if not ip:
+        return False
+
+    deadline = time.time() + timeout
+    url = f"http://{ip}:9222/json/version"
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
+
 def start_browser_instance(sid: str) -> dict:
-    used = collect_used_ports()
+    used = {"debug": set(), "vnc": set(), "novnc": set()}
+    for c in client.containers.list(
+        all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
+    ):
+        ports = parse_ports(c)
+        for key in used:
+            if ports[key] is not None:
+                used[key].add(ports[key])
+
     debug_port = find_free(PORT_DEBUG_START, PORT_DEBUG_END, used["debug"])
     vnc_port = find_free(PORT_VNC_START, PORT_VNC_END, used["vnc"])
     novnc_port = find_free(PORT_NOVNC_START, PORT_NOVNC_END, used["novnc"])
@@ -111,24 +168,23 @@ def start_browser_instance(sid: str) -> dict:
         "debug_port": debug_port,
         "vnc_port": vnc_port,
         "novnc_port": novnc_port,
-        "cdp_addr": f"127.0.0.1:{debug_port}",
         "status": container.status,
     }
     INSTANCES[sid] = info
+    info["cdp_ready"] = wait_cdp_ready(container)
     return info
 
 
-def stop_instance(sid: str):
+def stop_instance(sid: str) -> bool:
     item = INSTANCES.pop(sid, None)
     if not item:
-        return
+        return False
     try:
         c = client.containers.get(item["container_id"])
         c.remove(force=True)
-    except docker.errors.NotFound:
+    except (docker.errors.NotFound, docker.errors.APIError):
         pass
-    except docker.errors.APIError:
-        pass
+    return True
 
 
 restore_instances()
@@ -136,16 +192,27 @@ restore_instances()
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request, "index.html", {
-        "instances": INSTANCES,
-    })
+    return templates.TemplateResponse(request, "index.html", {})
+
+
+@app.get("/api/list")
+async def api_list(request: Request):
+    sync_instances()
+    return {
+        "instances": {
+            sid: to_view(item, request) for sid, item in INSTANCES.items()
+        }
+    }
 
 
 @app.post("/instance/new")
-async def new_instance():
-    sid = str(uuid.uuid4())
-    data = start_browser_instance(sid)
-    return JSONResponse(data)
+async def new_instance(request: Request):
+    try:
+        sid = str(uuid.uuid4())
+        data = start_browser_instance(sid)
+        return JSONResponse(to_view(data, request))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/instance/{sid}/stop")
@@ -159,8 +226,3 @@ async def stop_all():
     for sid in list(INSTANCES.keys()):
         stop_instance(sid)
     return {"ok": True}
-
-
-@app.get("/api/list")
-async def api_list():
-    return {"instances": INSTANCES}
