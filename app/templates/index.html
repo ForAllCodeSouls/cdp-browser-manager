@@ -172,6 +172,27 @@
         a.link { color: var(--accent); text-decoration: none; }
         a.link:hover { text-decoration: underline; }
 
+        .settings-mask {
+            position: fixed; inset: 0; background: #0009;
+            display: none; align-items: center; justify-content: center; z-index: 100;
+        }
+        .settings-mask.open { display: flex; }
+        .settings-panel {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 22px 24px; width: 420px; max-width: 92vw;
+        }
+        .settings-panel h3 { margin: 0 0 16px; font-size: 16px; }
+        .settings-row { margin-bottom: 16px; }
+        .settings-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+        .settings-row select {
+            width: 100%; padding: 8px 10px; font: inherit; font-size: 13px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+        }
+        .settings-hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+        .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+        .settings-foot { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
+
         @media (max-width: 760px) {
             .layout { flex-direction: column; }
             aside { width: 100%; flex: 0 0 auto; max-height: 190px; border-right: none; border-bottom: 1px solid var(--border); }
@@ -185,6 +206,7 @@
             <div class="subtitle">左侧切换实例 · 画面自动连接 · CDP 调试</div>
         </div>
         <div class="toolbar">
+            <button onclick="openSettings()">⚙ 设置</button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
             <button class="btn-primary" onclick="create()" id="btnCreate">+ 新建实例</button>
@@ -208,12 +230,69 @@
 
     <div class="toast" id="toast"></div>
 
+    <div class="settings-mask" id="settingsMask" onclick="if(event.target===this) closeSettings()">
+        <div class="settings-panel">
+            <h3>设置</h3>
+            <div class="settings-row">
+                <label for="setPage">noVNC 页面</label>
+                <select id="setPage">
+                    <option value="vnc_lite.html">精简版 vnc_lite.html（推荐，打开即连）</option>
+                    <option value="vnc.html">完整版 vnc.html（带工具栏/设置）</option>
+                </select>
+                <div class="settings-hint">精简版：无连接按钮，加载即自动连接。<br>完整版：功能全（全屏、剪贴板、Ctrl+Alt+Del），默认也自动连接。</div>
+            </div>
+            <div class="settings-row">
+                <label for="setScale">画面缩放</label>
+                <select id="setScale">
+                    <option value="1">自适应缩放（推荐）</option>
+                    <option value="0">原始尺寸</option>
+                </select>
+            </div>
+            <div class="settings-foot">设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
+            <div class="settings-actions">
+                <button onclick="closeSettings()">取消</button>
+                <button class="btn-primary" onclick="saveSettings()">保存并重新连接</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
         let selectedSid = null;
         let frameLoadedSid = null;
         let busy = false;
+
+        // 设置：默认精简版 vnc_lite.html，持久化到 localStorage
+        const SETTINGS_KEY = "cdpManagerSettings";
+        function loadSettings() {
+            try {
+                const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+                return {
+                    page: s.page === "vnc.html" ? "vnc.html" : "vnc_lite.html",
+                    scale: s.scale === "0" ? "0" : "1",
+                };
+            } catch (e) {
+                return { page: "vnc_lite.html", scale: "1" };
+            }
+        }
+        let settings = loadSettings();
+
+        function openSettings() {
+            $("setPage").value = settings.page;
+            $("setScale").value = settings.scale;
+            $("settingsMask").classList.add("open");
+        }
+        function closeSettings() { $("settingsMask").classList.remove("open"); }
+        function saveSettings() {
+            settings = { page: $("setPage").value, scale: $("setScale").value };
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            closeSettings();
+            // 强制重建 iframe 以应用新设置
+            frameLoadedSid = null;
+            render();
+            toast("设置已保存，画面重新连接", "ok");
+        }
 
         function toast(msg, type = "") {
             const t = $("toast");
@@ -229,12 +308,19 @@
             }[c]));
         }
 
-        // noVNC 自动连接：autoconnect=1 跳过手动点「连接」
+        // 根据设置生成 noVNC 地址。两版参数不同：
+        // vnc_lite.html：加载即连，缩放参数 scale=1
+        // vnc.html：需 autoconnect=1，缩放参数 resize=scale
         function vncUrl(i) {
-            let u = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port + "/vnc.html");
-            if (u.indexOf("?") === -1) u += "?autoconnect=1&resize=scale&reconnect=1";
-            else u += "&autoconnect=1&resize=scale&reconnect=1";
-            return u;
+            const base = (i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port))
+                .split("?")[0]
+                .replace(/\/vnc(_lite|_auto)?\.html\/?$/, "");
+            const isLite = settings.page === "vnc_lite.html";
+            const page = settings.page;
+            const params = isLite
+                ? (settings.scale === "1" ? "scale=1" : "")
+                : ("autoconnect=1" + (settings.scale === "1" ? "&resize=scale" : "") + "&reconnect=1");
+            return base + "/" + page + (params ? "?" + params : "");
         }
 
         function statusBadge(i) {

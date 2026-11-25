@@ -105,8 +105,9 @@ def to_view(item: dict, request: Request) -> dict:
     data["cdp_addr"] = f"{host}:{debug}" if debug else ""
     data["cdp_http"] = f"http://{host}:{debug}" if debug else ""
     data["vnc_url"] = f"http://{host}:{vnc}" if vnc else ""
-    # Debian novnc 包不提供根目录 index.html，入口是 /vnc.html
-    data["novnc_url"] = f"http://{host}:{novnc}/vnc.html" if novnc else ""
+    # Debian novnc 包不提供根目录 index.html。这里返回基础地址，
+    # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
+    data["novnc_url"] = f"http://{host}:{novnc}" if novnc else ""
     return data
 
 
