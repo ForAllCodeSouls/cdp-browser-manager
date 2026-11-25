@@ -1,12 +1,15 @@
+import asyncio
+import json
 import os
 import re
 import threading
 import time
 import uuid
 from typing import Dict
+from urllib.parse import quote
 
 import docker
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +24,7 @@ BROWSER_IMAGE = os.environ.get(
 CONTAINER_LABEL = "cdp.browser.manager"
 PROFILE_LABEL = "cdp.profile"
 PROFILE_OWNER_LABEL = "cdp.profile.owner"
+BROWSER_MODE_LABEL = "cdp.browser.mode"
 MANAGER_ID = os.environ.get("MANAGER_ID", "default")
 
 INSTANCES: Dict[str, dict] = {}
@@ -147,8 +151,16 @@ def restore_instances():
         sid = c.labels.get("cdp.sid")
         if not sid:
             continue
+        mode = c.labels.get(BROWSER_MODE_LABEL, "full")
+        if mode not in ("full", "headless"):
+            mode = "full"
         ports = parse_ports(c)
-        if any(v is None for v in ports.values()):
+        # headless 内核没有 VNC/noVNC 端口，只要求 CDP 端口存在
+        if ports.get("debug_port") is None:
+            continue
+        if mode == "full" and (
+            ports.get("vnc_port") is None or ports.get("novnc_port") is None
+        ):
             continue
         INSTANCES[sid] = {
             "sid": sid,
@@ -156,6 +168,7 @@ def restore_instances():
             "container_name": c.name,
             **ports,
             "status": c.status,
+            "browser_mode": mode,
             "profile_mode": c.labels.get("cdp.profile.mode", "ephemeral"),
             "profile_name": c.labels.get("cdp.profile.name", ""),
         }
@@ -175,6 +188,12 @@ def to_view(item: dict, request: Request) -> dict:
     # novnc 包不提供根目录 index.html。这里返回基础地址，
     # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
     data["novnc_url"] = f"http://{host}:{novnc}" if novnc else ""
+    # screencast 前端模板：把 {tid} 换成标签页 id 即可。
+    # inspector.html 由浏览器自带的 CDP HTTP 服务提供，页面与 WS 同源，避免 CORS。
+    # 抓屏走 manager 的 WS 代理（见 /ws/cast），不依赖浏览器自带 devtools 前端。
+    data["cast_ws"] = (
+        f"/ws/cast/{item.get('sid', '')}/{{tid}}"
+    )
     return data
 
 
@@ -206,7 +225,12 @@ def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
     return False
 
 
-def start_browser_instance(sid: str, profile_mode: str = "ephemeral", profile_name: str = "") -> dict:
+def start_browser_instance(
+    sid: str,
+    profile_mode: str = "ephemeral",
+    profile_name: str = "",
+    browser_mode: str = "full",
+) -> dict:
     persistent = profile_mode == "persistent"
     # 端口分配必须在锁内完成，避免并发创建分配到同一端口
     with LOCK:
@@ -227,16 +251,22 @@ def start_browser_instance(sid: str, profile_mode: str = "ephemeral", profile_na
                     used[short_key].add(value)
 
         debug_port = find_free(PORT_DEBUG_START, PORT_DEBUG_END, used["debug"])
-        vnc_port = find_free(PORT_VNC_START, PORT_VNC_END, used["vnc"])
-        novnc_port = find_free(PORT_NOVNC_START, PORT_NOVNC_END, used["novnc"])
+        if browser_mode == "headless":
+            # 无头内核没有 Xvfb/VNC，不占用也不映射这两个端口
+            vnc_port = None
+            novnc_port = None
+        else:
+            vnc_port = find_free(PORT_VNC_START, PORT_VNC_END, used["vnc"])
+            novnc_port = find_free(PORT_NOVNC_START, PORT_NOVNC_END, used["novnc"])
 
         labels = {
             CONTAINER_LABEL: MANAGER_ID,
             "cdp.sid": sid,
+            BROWSER_MODE_LABEL: browser_mode,
             "cdp.profile.mode": profile_mode,
             "cdp.profile.name": profile_name if persistent else "",
         }
-        environment = {}
+        environment = {"BROWSER_MODE": browser_mode}
         volumes = None
         if persistent:
             name = profile_name or uuid.uuid4().hex[:12]
@@ -260,16 +290,17 @@ def start_browser_instance(sid: str, profile_mode: str = "ephemeral", profile_na
         else:
             environment["PROFILE_DIR"] = "/tmp/cdp-profile"
 
+        published = {"9222/tcp": debug_port}
+        if browser_mode == "full":
+            published["5900/tcp"] = vnc_port
+            published["6080/tcp"] = novnc_port
+
         container = client.containers.run(
             BROWSER_IMAGE,
             detach=True,
             name=f"cdpb-{sid[:8]}",
             labels=labels,
-            ports={
-                "9222/tcp": debug_port,
-                "5900/tcp": vnc_port,
-                "6080/tcp": novnc_port,
-            },
+            ports=published,
             environment=environment,
             volumes=volumes,
             shm_size="2gb",
@@ -284,6 +315,7 @@ def start_browser_instance(sid: str, profile_mode: str = "ephemeral", profile_na
             "vnc_port": vnc_port,
             "novnc_port": novnc_port,
             "status": container.status,
+            "browser_mode": browser_mode,
             "profile_mode": profile_mode,
             "profile_name": profile_name if persistent else "",
         }
@@ -351,6 +383,73 @@ def cdp_monitor_loop():
 threading.Thread(target=cdp_monitor_loop, daemon=True).start()
 
 
+# ---------- CDP 代理：供面板的 screencast 视图管理标签与下发命令 ----------
+# 面板页面与 CDP 端口是不同源，浏览器 JS 直接 fetch /json/* 会被 CORS 拦截；
+# 因此统一经 manager 用容器内网 IP 代理，前端只跟 8000 端口打交道。
+
+def get_instance(sid: str) -> dict:
+    with LOCK:
+        item = INSTANCES.get(sid)
+    if not item:
+        raise HTTPException(status_code=404, detail="实例不存在")
+    return item
+
+
+def cdp_http(sid: str, path: str, method: str = "GET") -> object:
+    """从容器内网访问 CDP HTTP 端点，返回解析后的 JSON。"""
+    import urllib.request
+
+    item = get_instance(sid)
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise RuntimeError("容器网络未就绪")
+    url = f"http://{ip}:9222{path}"
+    try:
+        req = urllib.request.Request(url, method=method)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {}
+    except Exception as e:
+        raise RuntimeError(f"CDP 请求失败: {e}")
+
+
+def cdp_command(sid: str, target_id: str, method: str, params: dict) -> dict:
+    """通过 CDP WebSocket 向指定标签下发命令，等待对应 id 的响应。"""
+    import websocket
+
+    item = get_instance(sid)
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise RuntimeError("容器网络未就绪")
+    url = f"ws://{ip}:9222/devtools/page/{target_id}"
+    ws = None
+    try:
+        ws = websocket.create_connection(
+            url, timeout=6, suppress_origin=True
+        )
+        call_id = 1
+        ws.send(json.dumps({"id": call_id, "method": method, "params": params or {}}))
+        deadline = time.time() + 6
+        while time.time() < deadline:
+            try:
+                msg = json.loads(ws.recv())
+            except Exception:
+                break
+            if msg.get("id") == call_id:
+                if "error" in msg:
+                    raise RuntimeError(str(msg["error"]))
+                return msg.get("result", {})
+        raise RuntimeError("CDP 命令响应超时")
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
@@ -379,21 +478,252 @@ async def api_profiles():
 async def new_instance(request: Request):
     mode = "ephemeral"
     name = ""
+    browser_mode = "full"
     try:
         payload = await request.json()
         if isinstance(payload, dict):
             mode = payload.get("profile_mode", mode)
             name = str(payload.get("profile_name", "") or "")
+            browser_mode = payload.get("browser_mode", browser_mode)
     except Exception:
         pass
     if mode not in ("ephemeral", "persistent"):
         raise HTTPException(status_code=400, detail="profile_mode 只能是 ephemeral 或 persistent")
+    if browser_mode not in ("full", "headless"):
+        raise HTTPException(status_code=400, detail="browser_mode 只能是 full 或 headless")
     try:
         sid = str(uuid.uuid4())
-        data = await run_in_threadpool(start_browser_instance, sid, mode, name)
+        data = await run_in_threadpool(
+            start_browser_instance, sid, mode, name, browser_mode
+        )
         return JSONResponse(to_view(data, request))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/instance/{sid}/targets")
+async def api_targets(sid: str):
+    """列出实例里的页面标签，供抓屏视图选择要显示的目标。"""
+    try:
+        raw = await run_in_threadpool(cdp_http, sid, "/json/list")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    targets = [
+        {
+            "id": t.get("id", ""),
+            "title": t.get("title", ""),
+            "url": t.get("url", ""),
+            "type": t.get("type", ""),
+        }
+        for t in (raw if isinstance(raw, list) else [])
+        if t.get("type") == "page" and t.get("id")
+    ]
+    return {"targets": targets}
+
+
+@app.post("/api/instance/{sid}/targets")
+async def api_new_target(sid: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    url = str(payload.get("url", "about:blank") or "about:blank")
+    # Chrome 要求 /json/new 使用 PUT，且 URL 必须放在查询串里
+    # 返回值是新标签的描述（含 id），前端据此自动切到新标签
+    try:
+        created = await run_in_threadpool(
+            cdp_http, sid, "/json/new?" + quote(url, safe=""), "PUT"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    tid = ""
+    if isinstance(created, dict):
+        tid = str(created.get("id", "") or "")
+    return {"ok": True, "id": tid}
+
+
+@app.post("/api/instance/{sid}/targets/{tid}/activate")
+async def api_activate_target(sid: str, tid: str):
+    try:
+        await run_in_threadpool(cdp_http, sid, "/json/activate/" + quote(tid, safe=""))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/instance/{sid}/targets/{tid}")
+async def api_close_target(sid: str, tid: str):
+    try:
+        await run_in_threadpool(cdp_http, sid, "/json/close/" + quote(tid, safe=""))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/instance/{sid}/cmd")
+async def api_cdp_cmd(sid: str, request: Request):
+    """下发 CDP 命令，如 Page.navigate / Page.reload。"""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    tid = str(payload.get("target_id", "") or "")
+    method = str(payload.get("method", "") or "")
+    params = payload.get("params") or {}
+    if not tid or not method:
+        raise HTTPException(status_code=400, detail="缺少 target_id 或 method")
+    allowed = {"Page.navigate", "Page.reload", "Page.bringToFront", "Runtime.evaluate"}
+    if method not in allowed:
+        raise HTTPException(status_code=400, detail="不支持的 CDP 命令: " + method)
+    try:
+        result = await run_in_threadpool(cdp_command, sid, tid, method, params)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+@app.websocket("/ws/cast/{sid}/{tid}")
+async def ws_cast(websocket: WebSocket, sid: str, tid: str):
+    """抓屏代理：把容器 CDP 的 screencast 帧转发给浏览器，并转发输入事件。
+
+    不直接用 devtools/inspector.html 的原因：它内置 CSP 只放行 ws://127.0.0.1，
+    公网访客无法连接其 WS；这里由 manager 中转，前端只需连 8000 端口。
+    """
+    import websocket as ws_client
+
+    await websocket.accept()
+    upstream = None
+    stop = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    try:
+        item = get_instance(sid)
+        ip = container_ip_by_id(item.get("container_id"))
+        if not ip:
+            await websocket.send_json({"type": "error", "message": "容器网络未就绪"})
+            await websocket.close()
+            return
+        upstream = ws_client.create_connection(
+            f"ws://{ip}:9222/devtools/page/{tid}",
+            timeout=10,
+            suppress_origin=True,
+        )
+
+        # 帧接收线程：把所有 CDP 消息转发给前端，screencastFrame 自动 Ack
+        def pump():
+            call_id = 100
+            upstream.send(json.dumps({
+                "id": call_id, "method": "Page.enable", "params": {}
+            }))
+            upstream.send(json.dumps({
+                "id": call_id + 1,
+                "method": "Page.startScreencast",
+                "params": {"format": "jpeg", "quality": 80, "everyNthFrame": 1},
+            }))
+            while not stop.is_set():
+                try:
+                    raw = upstream.recv()
+                except Exception:
+                    break
+                if not raw:
+                    break
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                method = msg.get("method", "")
+                if method == "Page.screencastFrame":
+                    params = msg.get("params", {})
+                    try:
+                        upstream.send(json.dumps({
+                            "id": call_id + 2,
+                            "method": "Page.screencastFrameAck",
+                            "params": {"sessionId": params.get("sessionId", "")},
+                        }))
+                    except Exception:
+                        pass
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send_json({
+                                "type": "frame",
+                                "data": params.get("data", ""),
+                            }),
+                            loop,
+                        ).result(timeout=2)
+                    except Exception:
+                        break
+
+        threading.Thread(target=pump, daemon=True).start()
+
+        # 前端 -> CDP：输入事件 / viewport / 停止
+        while True:
+            try:
+                data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+            kind = data.get("type")
+            if kind == "input":
+                method = data.get("method", "")
+                if method in (
+                    "Input.dispatchMouseEvent",
+                    "Input.dispatchKeyEvent",
+                    "Input.insertText",
+                    "Input.dispatchWheelEvent",
+                ):
+                    try:
+                        upstream.send(json.dumps({
+                            "id": 200, "method": method, "params": data.get("params", {})
+                        }))
+                    except Exception:
+                        break
+            elif kind == "viewport":
+                try:
+                    upstream.send(json.dumps({
+                        "id": 201,
+                        "method": "Emulation.setDeviceMetricsOverride",
+                        "params": {
+                            "width": int(data.get("width", 1280)),
+                            "height": int(data.get("height", 720)),
+                            "deviceScaleFactor": 1,
+                            "mobile": False,
+                        },
+                    }))
+                except Exception:
+                    break
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)[:200]})
+        except Exception:
+            pass
+    finally:
+        stop.set()
+        if upstream is not None:
+            try:
+                upstream.send(json.dumps({
+                    "id": 999, "method": "Page.stopScreencast", "params": {}
+                }))
+            except Exception:
+                pass
+            try:
+                upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/instance/{sid}/stop")

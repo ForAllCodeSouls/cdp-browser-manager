@@ -1,7 +1,7 @@
 # cdp-browser-manager
 
-多 Chromium 实例管理器，每个实例独立 CDP 远程调试端口 + noVNC 可视化画面。
-适合配合 DrissionPage / CDP 自动化脚本使用。
+多 Chromium 实例管理器，每个实例独立 CDP 远程调试端口，可选 **VNC** 或 **CDP 抓屏** 查看画面。
+适合配合 pydoll / DrissionPage / Playwright 等基于 CDP WS 协议的自动化脚本使用。
 
 ## 架构
 
@@ -10,19 +10,32 @@
 | 镜像 | 大小 | 内容 | 更新频率 |
 |---|---|---|---|
 | `ghcr.io/forallcodesouls/cdp-browser-manager:latest` | 约 40 MB | FastAPI 管理面板，通过 Docker API 调度 browser 容器 | 代码改动时 |
-| `ghcr.io/forallcodesouls/cdp-browser-browser:latest` | 约 600 MB | **Chrome for Testing**（官方固定版本）+ Xvfb + x11vnc + noVNC + 中文字体 | 浏览器版本升级时 |
+| `ghcr.io/forallcodesouls/cdp-browser-browser:latest` | 约 650 MB | **Chrome for Testing 双内核**（完整 chrome + chrome-headless-shell）+ Xvfb + x11vnc + noVNC + 中文字体 | 浏览器版本升级时 |
 
-浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。版本号在 `Dockerfile.browser` 顶部的 `CHROME_VERSION` 中锁定，升级时只改这一处。
+浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。镜像内同时装有两套二进制，新建实例时可选：
 
-manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。每个 browser 容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），再通过端口映射分配宿主机独立端口。日常只更新 manager 时，大镜像层命中缓存，几乎零下载。
+| 内核 | 二进制 | 画面方式 | 说明 |
+|---|---|---|---|
+| 完整内核（full，默认） | `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
+| 无头内核（headless） | `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；不分配 VNC/noVNC 端口 |
+
+两种内核的 CDP 端口都是容器内 9222，pydoll / DrissionPage 的连接方式完全一致。版本号在 `Dockerfile.browser` 顶部的 `CHROME_VERSION` 中锁定，升级时只改这一处，两个二进制一起更新。
+
+启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
+
+manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。完整内核容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），无头内核只使用 9222，再通过端口映射分配宿主机独立端口。日常只更新 manager 时，大镜像层命中缓存，几乎零下载。
 
 ## 功能
-- 一键新建浏览器实例，自动分配独立 CDP 端口、VNC、noVNC
+- 一键新建浏览器实例，可选完整/无头内核，自动分配独立 CDP 端口（完整内核另分配 VNC、noVNC）
+- **画面双模式，随时切换**：
+  - **VNC**：完整桌面画面，可见地址栏/标签栏（仅完整内核）
+  - **CDP 抓屏**：基于 CDP `Page.startScreencast`，画面与自动化共用同一 CDP 端口；支持标签切换、新建/关闭标签、地址栏导航、鼠标键盘交互（两种内核通用，无头内核只能用它）
+    - 实现上由 manager 的 `/ws/cast/{sid}/{tid}` 把容器内的 screencast 帧代理到浏览器 canvas，并转发输入事件。不直接用 Chrome 自带的 `devtools/inspector.html`——它的 CSP 只允许 `ws://127.0.0.1`，公网访客连不上。
 - **用户目录双模式**：
   - **临时目录**：停止实例即清理，适合一次性任务
   - **持久目录**：以 Docker Volume 保存在宿主机，停止实例后数据仍在；新建时可选择「新建持久目录」或「复用已有目录」恢复登录态，需在面板左侧手动点删除才会清除
-- Web 面板预览浏览器画面（左侧点击实例切换，noVNC 自动连接）
-- 复制 CDP 调试地址，外部程序连接控制
+- Web 面板预览浏览器画面（左侧点击实例切换，画面自动连接）
+- 复制 CDP 调试地址，pydoll / DrissionPage / Playwright 通过 CDP WS 连接控制
 - 停止单个 / 全部浏览器实例
 - manager 重启后自动恢复已有实例（通过容器标签识别）
 
@@ -41,16 +54,38 @@ manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容
 API：
 
 ```bash
-# 新建持久目录实例
+# 新建持久目录实例（完整内核）
 curl -X POST http://你的IP:8000/instance/new \
   -H 'Content-Type: application/json' \
-  -d '{"profile_mode":"persistent","profile_name":"shop-account"}'
+  -d '{"profile_mode":"persistent","profile_name":"shop-account","browser_mode":"full"}'
+
+# 新建无头内核实例（不分配 VNC/noVNC 端口）
+curl -X POST http://你的IP:8000/instance/new \
+  -H 'Content-Type: application/json' \
+  -d '{"browser_mode":"headless"}'
 
 # 列出所有持久目录
 curl http://你的IP:8000/api/profiles
 
 # 删除持久目录（需先停止使用它的实例）
 curl -X DELETE http://你的IP:8000/profile/shop-account
+```
+
+面板抓屏用到的 CDP 代理接口（标签 id 从 `/api/instance/{sid}/targets` 获取）：
+
+```bash
+# 列出标签页
+curl http://你的IP:8000/api/instance/{sid}/targets
+
+# 新建标签（面板用此接口代理，浏览器 JS 不直接访问 CDP 端口）
+curl -X POST http://你的IP:8000/api/instance/{sid}/targets \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com"}'
+
+# 下发 CDP 命令
+curl -X POST http://你的IP:8000/api/instance/{sid}/cmd \
+  -H 'Content-Type: application/json' \
+  -d '{"target_id":"标签ID","method":"Page.navigate","params":{"url":"https://example.com"}}'
 ```
 
 ## 部署（推荐 Docker Compose）
@@ -117,19 +152,40 @@ docker run -d \
   ghcr.io/forallcodesouls/cdp-browser-manager:latest
 ```
 
-## 外部调用示例（DrissionPage）
+## 外部调用示例
 
+pydoll（直连 CDP WS，无需 WebDriver）：
+
+```python
+import asyncio
+from pydoll.browser import Chrome
+
+async def main():
+    # cdp_url 填面板里复制的 CDP 地址，如 http://你的IP:9222
+    browser = Chrome(options=..., connection_port=9222)
+    async with browser:
+        tab = await browser.start()
+        await tab.go_to("https://example.com")
+        print(await tab.title)
+
+asyncio.run(main())
 ```
+
+> pydoll 版本 API 有差异，若上述写法不适用，用底层 CDP WS 地址 `ws://你的IP:9222/devtools/browser/...`（可从 `/json/version` 的 `webSocketDebuggerUrl` 取得）。
+
+DrissionPage：
+
+```python
 from DrissionPage import ChromiumOptions, WebPage
 
 co = ChromiumOptions()
-co.set_address("127.0.0.1:9222")
+co.set_address("你的IP:9222")
 page = WebPage(chromium_options=co)
 page.get("https://www.baidu.com")
 print(page.title)
 ```
 
-端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`。页面显示的是宿主机端口，可直接在宿主机上连接。
+端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`（无头内核只分配 CDP 端口）。页面显示的是宿主机端口，可直接在宿主机上连接。
 
 ## 本地构建
 
@@ -146,6 +202,8 @@ docker compose up -d --build
 | CDP 一直"未响应"，端口连不上 | browser 用旧镜像，缺 `--user-data-dir`，Chrome 136+ 静默忽略远程调试参数 | 执行 `bash upgrade.sh`（会删旧容器并用新镜像重建） |
 | 切换实例画面仍是上一个 | 目标实例容器卡死，iframe 加载失败保留旧画面 | 新版面板会显示"画面无法连接"并可重试；执行 `bash upgrade.sh` 重建 |
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
+| 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
+| 无头内核点 VNC 没反应 | 无头内核没有 Xvfb/VNC 服务 | 属正常，切到「抓屏」模式 |
 | 持久目录删除报「实例正在使用」 | 有实例挂载了该 Volume | 先停止使用该目录的实例，再删除 |
 | 想彻底清理持久目录数据 | Volume 不会随容器自动删除 | 面板左侧「持久用户目录」点删除，或 `docker volume rm cdp-profile-*` |
 

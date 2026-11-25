@@ -148,6 +148,49 @@
         .detail .kv b { color: var(--text); font-family: ui-monospace, monospace; font-weight: 500; }
         .detail .spacer { flex: 1; }
 
+        .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
+        .seg button.on { background: var(--accent); color: #fff; }
+
+        .castbar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 8px 10px;
+            font-size: 12px;
+        }
+        .castbar.show { display: flex; }
+        .castbar .tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+        .chip {
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 4px 9px;
+            border-radius: 999px;
+            cursor: pointer;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            font-size: 11px;
+        }
+        .chip:hover { filter: brightness(1.2); }
+        .chip.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; }
+        .castbar input.url {
+            flex: 1;
+            min-width: 180px;
+            padding: 5px 8px;
+            font: inherit;
+            font-size: 12px;
+            background: var(--surface-2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
         .frame-wrap {
             flex: 1;
             min-height: 280px;
@@ -159,6 +202,15 @@
         }
         .frame-host { position: absolute; inset: 0; }
         .frame-host iframe { display: block; width: 100%; height: 100%; border: none; }
+        .cast-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+            cursor: crosshair;
+            outline: none;
+        }
         .frame-overlay {
             position: absolute; inset: 0; z-index: 2;
             display: none; flex-direction: column;
@@ -195,6 +247,8 @@
         .badge.pending { background: #2c3143; color: var(--muted); }
         .badge.persist { background: #3a2f17; color: var(--warn); }
         .badge.temp { background: #262a38; color: var(--muted); }
+        .badge.full { background: #23314f; color: #9fc0ff; }
+        .badge.headless { background: #2f2440; color: #c9a6ff; }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
 
         .toast {
@@ -245,7 +299,7 @@
     <header>
         <div>
             <h1>CDP Browser Manager</h1>
-            <div class="subtitle">左侧切换实例 · 画面自动连接 · 用户目录可临时/持久</div>
+            <div class="subtitle">完整 / 无头双内核 · VNC / CDP 抓屏可切换 · 用户目录可临时/持久</div>
         </div>
         <div class="toolbar">
             <button onclick="openSettings()">⚙ 设置</button>
@@ -264,6 +318,7 @@
         </aside>
         <section class="viewer">
             <div class="detail" id="detail"></div>
+            <div class="castbar" id="castBar"></div>
             <div class="empty-view" id="viewerEmpty">
                 <h2>暂无可显示的画面</h2>
                 <div>点击左侧实例，或点右上角「新建实例」</div>
@@ -281,6 +336,14 @@
     <div class="mask" id="createMask" onclick="if(event.target===this) closeCreate()">
         <div class="panel">
             <h3>新建浏览器实例</h3>
+            <div class="row">
+                <label for="createBrowser">浏览器内核</label>
+                <select id="createBrowser">
+                    <option value="full">完整 Chrome — 有地址栏/标签栏，支持 VNC 与抓屏</option>
+                    <option value="headless">chrome-headless-shell — 更轻量，仅支持 CDP 抓屏</option>
+                </select>
+                <div class="hint">两种内核的 CDP 端口完全一致，pydoll / DrissionPage 连接方式不变。无头内核不提供 VNC。</div>
+            </div>
             <div class="row">
                 <label for="createMode">用户目录模式</label>
                 <select id="createMode" onchange="onModeChange()">
@@ -312,6 +375,14 @@
         <div class="panel">
             <h3>设置</h3>
             <div class="row">
+                <label for="setPreview">默认画面模式</label>
+                <select id="setPreview">
+                    <option value="vnc">VNC 画面（可见地址栏/标签栏，仅完整内核）</option>
+                    <option value="cast">CDP 抓屏（screencast，两种内核通用）</option>
+                </select>
+                <div class="hint">无头内核自动使用抓屏，不受此设置影响。也可在实例详情栏一键切换。</div>
+            </div>
+            <div class="row">
                 <label for="setPage">noVNC 页面</label>
                 <select id="setPage">
                     <option value="vnc_lite.html">精简版 vnc_lite.html（推荐，打开即连）</option>
@@ -341,36 +412,70 @@
         let selectedSid = null;
         let frameSid = null;        // 当前 iframe 加载的实例 sid
         let frameTimer = null;
+        let currentFrameUrl = "";
+        let castState = null;       // {sid, targets, tid, sig} 当前展示状态
+        let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
+        let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let busy = false;
 
-        // 设置：默认精简版 vnc_lite.html，持久化到 localStorage
         const SETTINGS_KEY = "cdpManagerSettings";
         function loadSettings() {
             try {
                 const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
                 return {
+                    preview: s.preview === "cast" ? "cast" : "vnc",
                     page: s.page === "vnc.html" ? "vnc.html" : "vnc_lite.html",
                     scale: s.scale === "0" ? "0" : "1",
                 };
             } catch (e) {
-                return { page: "vnc_lite.html", scale: "1" };
+                return { preview: "vnc", page: "vnc_lite.html", scale: "1" };
             }
         }
         let settings = loadSettings();
 
         function openSettings() {
+            $("setPreview").value = settings.preview;
             $("setPage").value = settings.page;
             $("setScale").value = settings.scale;
             $("settingsMask").classList.add("open");
         }
         function closeSettings() { $("settingsMask").classList.remove("open"); }
         function saveSettings() {
-            settings = { page: $("setPage").value, scale: $("setScale").value };
+            settings = {
+                preview: $("setPreview").value,
+                page: $("setPage").value,
+                scale: $("setScale").value,
+            };
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            resetFrameState();
             closeSettings();
-            frameSid = null;   // 强制重建 iframe 以应用新设置
             render();
             toast("设置已保存，画面重新连接", "ok");
+        }
+
+        function resetFrameState() {
+            frameSid = null;
+            castState = null;
+            castPreferredTid = "";
+            $("castBar").className = "castbar";
+        }
+
+        function effectiveMode(i) {
+            if (!i) return "vnc";
+            if (i.browser_mode === "headless") return "cast";
+            return settings.preview === "cast" ? "cast" : "vnc";
+        }
+
+        function setPreview(mode) {
+            const sel = selectedSid ? instances[selectedSid] : null;
+            if (mode === "vnc" && sel && sel.browser_mode === "headless") {
+                toast("无头内核没有 VNC 服务，请使用抓屏", "error");
+                return;
+            }
+            settings.preview = mode;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            resetFrameState();
+            render();
         }
 
         // ---- 新建实例弹窗 ----
@@ -385,7 +490,6 @@
             $("nameRow").style.display = mode === "new" ? "block" : "none";
             $("reuseRow").style.display = mode === "reuse" ? "block" : "none";
             if (mode === "reuse") {
-                // 正在被实例占用的目录不能复用：两个 Chrome 同时挂同一 profile 会锁冲突
                 const free = profiles.filter(p => !p.used_by);
                 const opts = free.map(p =>
                     '<option value="' + esc(p.name) + '">' + esc(p.name) + '</option>'
@@ -408,6 +512,7 @@
                 profileName = $("reuseName").value;
                 if (!profileName) { toast("没有可复用的目录，请先新建持久目录", "error"); return; }
             }
+            const browserMode = $("createBrowser").value;
             setBusy(true);
             const btn = $("btnConfirmCreate");
             const original = btn.textContent;
@@ -419,12 +524,16 @@
                     {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ profile_mode: profileMode, profile_name: profileName }),
+                        body: JSON.stringify({
+                            profile_mode: profileMode,
+                            profile_name: profileName,
+                            browser_mode: browserMode,
+                        }),
                     },
                     45000
                 );
                 selectedSid = data.sid;
-                frameSid = null;
+                resetFrameState();
                 closeCreate();
                 toast("实例已创建，画面将自动连接", "ok");
                 await load();
@@ -450,9 +559,6 @@
             }[c]));
         }
 
-        // 根据设置生成 noVNC 地址。两版参数不同：
-        // vnc_lite.html：加载即连，缩放参数 scale=1
-        // vnc.html：需 autoconnect=1，缩放参数 resize=scale
         function vncUrl(i) {
             const base = (i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port))
                 .split("?")[0]
@@ -463,6 +569,13 @@
                 ? (settings.scale === "1" ? "scale=1" : "")
                 : ("autoconnect=1" + (settings.scale === "1" ? "&resize=scale" : "") + "&reconnect=1");
             return base + "/" + page + (params ? "?" + params : "");
+        }
+
+        function castWsUrl(i, tid) {
+            const tpl = i.cast_ws || ("/ws/cast/" + i.sid + "/{tid}");
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            return proto + "//" + location.host +
+                tpl.replace("{tid}", encodeURIComponent(tid));
         }
 
         function statusBadge(i) {
@@ -480,6 +593,11 @@
                 return '<span class="badge persist" title="' + esc(i.profile_name) + '">持久目录</span>';
             }
             return '<span class="badge temp">临时目录</span>';
+        }
+
+        function kernelBadge(i) {
+            if (i.browser_mode === "headless") return '<span class="badge headless">无头内核</span>';
+            return '<span class="badge full">完整内核</span>';
         }
 
         function setBusy(v) {
@@ -518,14 +636,22 @@
             }
         }
 
-        // ---- 画面加载：切换时彻底销毁旧 iframe 再新建，避免卡死实例残留旧画面 ----
+        // ---- 画面加载 ----
         function clearFrame() {
             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+            if (castWs) {
+                try { castWs.close(); } catch (e) {}
+                castWs = null;
+            }
             const host = $("frameHost");
             while (host.firstChild) host.removeChild(host.firstChild);
             $("frameOverlay").className = "frame-overlay";
             $("frameOverlay").innerHTML = "";
             frameSid = null;
+            currentFrameUrl = "";
+            castState = null;
+            $("castBar").className = "castbar";
+            $("castBar").innerHTML = "";
         }
 
         function frameLoading(sid) {
@@ -544,17 +670,11 @@
                 '<button onclick="retryFrame()">重试</button>';
         }
 
-        function mountFrame(sel) {
-            clearFrame();
-            frameSid = sel.sid;
-            frameLoading(sel.sid);
-            $("frameWrap").style.display = "block";
-
+        function attachIframe(sel, url, timeoutMs) {
             const f = document.createElement("iframe");
             f.id = "mainFrame";
             f.title = "浏览器画面";
             f.allow = "clipboard-read; clipboard-write";
-            const url = vncUrl(sel);
             f.onload = () => {
                 if (frameSid !== sel.sid) return;
                 if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
@@ -563,17 +683,321 @@
             };
             f.onerror = () => { if (frameSid === sel.sid) frameFailed(sel.sid); };
             f.src = url;
+            currentFrameUrl = url;
             $("frameHost").appendChild(f);
-
             frameTimer = setTimeout(() => {
                 if (frameSid === sel.sid && $("frameOverlay").classList.contains("show")) {
-                    frameFailed(sel.sid, "连接超时，实例画面服务无响应");
+                    frameFailed(sel.sid, "连接超时，画面服务无响应");
                 }
-            }, 12000);
+            }, timeoutMs);
+        }
+
+        async function mountFrame(sel) {
+            clearFrame();
+            frameSid = sel.sid;
+            frameLoading(sel.sid);
+            $("frameWrap").style.display = "block";
+            if (effectiveMode(sel) === "cast") {
+                await mountCast(sel);
+                return;
+            }
+            attachIframe(sel, vncUrl(sel), 12000);
+        }
+
+        async function mountCast(sel) {
+            try {
+                const data = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
+                );
+                if (frameSid !== sel.sid) return;
+                const targets = data.targets || [];
+                if (!targets.length) {
+                    frameFailed(sel.sid, "浏览器里没有可抓屏的标签页");
+                    return;
+                }
+                let tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
+                if (!targets.some(t => t.id === tid)) tid = targets[0].id;
+                castPreferredTid = tid;
+                castState = { sid: sel.sid, targets: targets, tid: tid, sig: "" };
+                renderCastBar(sel, true);
+                mountCastCanvas(sel, tid);
+            } catch (e) {
+                frameFailed(sel.sid, "读取标签页失败: " + e.message);
+            }
+        }
+
+        // 用 canvas 渲染 CDP screencast 帧，并转发鼠标/键盘输入。
+        // 不走 devtools inspector.html：其 CSP 只允许 ws://127.0.0.1，公网访客连不上。
+        function mountCastCanvas(sel, tid) {
+            const host = $("frameHost");
+            const canvas = document.createElement("canvas");
+            canvas.id = "castCanvas";
+            canvas.className = "cast-canvas";
+            canvas.tabIndex = 0;
+            host.appendChild(canvas);
+
+            let gotFrame = false;
+            const ws = new WebSocket(castWsUrl(sel, tid));
+            castWs = ws;
+            const mySid = sel.sid;
+
+            ws.onmessage = (ev) => {
+                let msg;
+                try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                if (msg.type === "error") {
+                    frameFailed(mySid, msg.message || "抓屏代理出错");
+                    return;
+                }
+                if (msg.type === "frame" && msg.data) {
+                    const img = new Image();
+                    img.onload = () => {
+                        if (frameSid !== mySid) return;
+                        // 画布尺寸跟随第一帧，保持比例由 CSS object-fit 处理
+                        if (canvas.width !== img.width || canvas.height !== img.height) {
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                        }
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(img, 0, 0);
+                        if (!gotFrame) {
+                            gotFrame = true;
+                            if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+                            $("frameOverlay").className = "frame-overlay";
+                            $("frameOverlay").innerHTML = "";
+                        }
+                    };
+                    img.src = "data:image/jpeg;base64," + msg.data;
+                }
+            };
+            ws.onerror = () => { if (frameSid === mySid) frameFailed(mySid, "抓屏 WebSocket 连接失败"); };
+            ws.onclose = () => { if (castWs === ws) castWs = null; };
+
+            bindCastInput(canvas, ws, sel);
+
+            frameTimer = setTimeout(() => {
+                if (frameSid === mySid && !gotFrame) {
+                    frameFailed(mySid, "抓屏超时：浏览器未推送画面帧");
+                }
+            }, 15000);
+        }
+
+        function castSend(ws, method, params) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "input", method: method, params: params }));
+            }
+        }
+
+        function bindCastInput(canvas, ws, sel) {
+            // 把浏览器内坐标换算成 CDP 视口坐标（canvas 可能被 CSS 缩放）
+            const point = (e) => {
+                const r = canvas.getBoundingClientRect();
+                return {
+                    x: Math.round((e.clientX - r.left) * (canvas.width / r.width)),
+                    y: Math.round((e.clientY - r.top) * (canvas.height / r.height)),
+                };
+            };
+            canvas.addEventListener("mousemove", (e) => {
+                const p = point(e);
+                castSend(ws, "Input.dispatchMouseEvent", {
+                    type: "mouseMoved", x: p.x, y: p.y,
+                    modifiers: (e.ctrlKey ? 2 : 0) | (e.altKey ? 1 : 0) | (e.shiftKey ? 8 : 0) | (e.metaKey ? 4 : 0),
+                });
+            });
+            canvas.addEventListener("mousedown", (e) => {
+                canvas.focus();
+                const p = point(e);
+                castSend(ws, "Input.dispatchMouseEvent", {
+                    type: "mousePressed", x: p.x, y: p.y, button: "left",
+                    clickCount: e.detail || 1,
+                    buttons: 1,
+                });
+            });
+            canvas.addEventListener("mouseup", (e) => {
+                const p = point(e);
+                castSend(ws, "Input.dispatchMouseEvent", {
+                    type: "mouseReleased", x: p.x, y: p.y, button: "left",
+                    clickCount: e.detail || 1, buttons: 0,
+                });
+            });
+            canvas.addEventListener("wheel", (e) => {
+                e.preventDefault();
+                const p = point(e);
+                castSend(ws, "Input.dispatchMouseEvent", {
+                    type: "mouseWheel", x: p.x, y: p.y,
+                    deltaX: e.deltaX, deltaY: e.deltaY,
+                });
+            }, { passive: false });
+            canvas.addEventListener("keydown", (e) => {
+                castSend(ws, "Input.dispatchKeyEvent", {
+                    type: e.char ? "char" : "keyDown",
+                    key: e.key,
+                    code: e.code,
+                    windowsVirtualKeyCode: e.keyCode,
+                    nativeVirtualKeyCode: e.keyCode,
+                    text: e.char || undefined,
+                });
+                if (e.key.length === 1 || ["Enter", "Backspace", "Tab", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+                    e.preventDefault();
+                }
+            });
+            canvas.addEventListener("keyup", (e) => {
+                castSend(ws, "Input.dispatchKeyEvent", {
+                    type: "keyUp", key: e.key, code: e.code,
+                    windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
+                });
+            });
+        }
+
+        function castSig(targets, tid) {
+            return tid + "|" + targets.map(t => t.id + ":" + t.title).join(",");
+        }
+
+        function renderCastBar(sel, force = false) {
+            const bar = $("castBar");
+            if (!castState || castState.sid !== sel.sid) { bar.className = "castbar"; return; }
+            const sig = castSig(castState.targets, castState.tid);
+            if (!force && castState.sig === sig && bar.classList.contains("show")) return;
+            castState.sig = sig;
+
+            const oldInput = $("castUrl");
+            const focused = oldInput && document.activeElement === oldInput;
+            const typed = oldInput ? oldInput.value : null;
+
+            const chips = castState.targets.map(t =>
+                '<span class="chip ' + (t.id === castState.tid ? 'on' : '') +
+                '" title="' + esc(t.url) + '" onclick="switchTarget(\'' + t.id + '\')">' +
+                esc(t.title || t.url || "无标题") + '</span>'
+            ).join("");
+            const cur = castState.targets.find(t => t.id === castState.tid) || {};
+            const urlValue = focused && typed !== null ? typed : (cur.url || "");
+
+            bar.className = "castbar show";
+            bar.innerHTML =
+                '<span style="color:var(--muted)">标签</span>' +
+                '<span class="tabs">' + chips + '</span>' +
+                '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
+                '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
+                '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
+                '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
+                '<button class="btn-mini btn-danger" onclick="closeTarget()">关闭</button>';
+            const input = $("castUrl");
+            input.onkeydown = (e) => { if (e.key === "Enter") navigateCast(); };
+            if (focused) input.focus();
+        }
+
+        function currentSel() {
+            return selectedSid ? instances[selectedSid] : null;
+        }
+
+        async function remountCurrent() {
+            const sel = currentSel();
+            if (sel) { frameSid = null; await mountFrame(sel); }
+        }
+
+        function switchTarget(tid) {
+            const sel = currentSel();
+            if (!sel) return;
+            castPreferredTid = tid;
+            frameSid = null;
+            mountFrame(sel);
+        }
+
+        async function newTarget() {
+            const url = prompt("新标签页打开的地址：", "about:blank");
+            if (url === null) return;
+            const sel = currentSel();
+            if (!sel) return;
+            try {
+                const created = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: url || "about:blank" }),
+                    }
+                );
+                if (created && created.id) castPreferredTid = created.id;
+                await remountCurrent();
+            } catch (e) { toast("新建标签失败: " + e.message, "error"); }
+        }
+
+        async function sendCastCommand(method, params) {
+            const sel = currentSel();
+            if (!sel || !castState) return;
+            try {
+                await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/cmd",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            target_id: castState.tid,
+                            method: method,
+                            params: params || {},
+                        }),
+                    }
+                );
+            } catch (e) { toast("命令失败: " + e.message, "error"); throw e; }
+        }
+
+        async function navigateCast() {
+            const input = $("castUrl");
+            const url = input ? input.value.trim() : "";
+            if (!url) return;
+            try {
+                await sendCastCommand("Page.navigate", { url: url });
+                toast("已导航: " + url, "ok");
+                setTimeout(pollCastTargets, 1200);
+            } catch (e) {}
+        }
+
+        async function reloadCast() {
+            try { await sendCastCommand("Page.reload", { ignoreCache: false }); }
+            catch (e) { return; }
+            toast("已刷新", "ok");
+        }
+
+        async function closeTarget() {
+            const sel = currentSel();
+            if (!sel || !castState) return;
+            if (!confirm("关闭当前标签页？")) return;
+            try {
+                await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) +
+                        "/targets/" + encodeURIComponent(castState.tid),
+                    { method: "DELETE" }
+                );
+                castPreferredTid = "";
+                await remountCurrent();
+            } catch (e) { toast("关闭标签失败: " + e.message, "error"); }
+        }
+
+        async function pollCastTargets() {
+            const sel = currentSel();
+            if (!sel || !castState || castState.sid !== sel.sid) return;
+            if (effectiveMode(sel) !== "cast") return;
+            try {
+                const data = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
+                );
+                const targets = data.targets || [];
+                castState.targets = targets;
+                if (!targets.some(t => t.id === castState.tid)) {
+                    if (targets.length) {
+                        castPreferredTid = targets[0].id;
+                        await remountCurrent();
+                    } else {
+                        clearFrame();
+                        frameFailed(sel.sid, "浏览器里没有可抓屏的标签页");
+                    }
+                    return;
+                }
+                renderCastBar(sel);
+            } catch (e) { /* 轮询失败静默忽略，避免打扰 */ }
         }
 
         function retryFrame() {
-            const sel = selectedSid ? instances[selectedSid] : null;
+            const sel = currentSel();
             if (sel) mountFrame(sel);
         }
 
@@ -592,15 +1016,13 @@
                 $("instanceList").innerHTML = list.map(i =>
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(\'' + i.sid + '\')">' +
                         '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
-                        '<div class="meta">' + statusBadge(i) + profileBadge(i) +
+                        '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                             '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
-                            '<span>:' + esc(i.novnc_port || "-") + '</span>' +
                         '</div>' +
                     '</div>'
                 ).join("");
             }
 
-            // 持久目录列表
             $("profileStat").textContent = profiles.length;
             if (!profiles.length) {
                 $("profileList").innerHTML = '<div class="side-empty">暂无持久目录</div>';
@@ -620,22 +1042,34 @@
                 $("detail").innerHTML = "";
             } else {
                 const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
-                const url = vncUrl(sel);
+                const mode = effectiveMode(sel);
+                const headless = sel.browser_mode === "headless";
+                // 抓屏模式没有独立页面地址，提供 CDP HTTP 便于单独调试
+                const openUrl = mode === "cast"
+                    ? (sel.cdp_http || ("http://" + location.hostname + ":" + sel.debug_port))
+                    : vncUrl(sel);
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
                     : '';
+                const seg =
+                    '<span class="seg">' +
+                        '<button class="' + (mode === "vnc" ? "on" : "") + '"' +
+                            (headless ? ' disabled title="无头内核无 VNC"' : '') +
+                            ' onclick="setPreview(\'vnc\')">VNC</button>' +
+                        '<button class="' + (mode === "cast" ? "on" : "") + '"' +
+                            ' onclick="setPreview(\'cast\')">抓屏</button>' +
+                    '</span>';
                 $("detail").innerHTML =
-                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' + statusBadge(sel) + profileBadge(sel) +
+                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
+                    statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) + seg +
                     '<span class="kv">CDP <b id="cdpVal">' + esc(cdp) + '</b>' +
                         '<button class="copy" onclick="copyCdp()">复制</button></span>' +
                     pinfo +
                     '<span class="spacer"></span>' +
-                    '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">新窗口打开</a>' +
+                    '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
                     '<button class="btn-danger" onclick="stop(\'' + sel.sid + '\')">停止</button>';
             }
 
-            // 关键：只有选中实例变化时才重建 iframe；轮询不打断 VNC 连接。
-            // 重建而非改 src，避免目标卡死时浏览器保留上一个实例的旧画面。
             if (!sel || sel.status !== "running") {
                 clearFrame();
                 $("frameWrap").style.display = "none";
@@ -690,7 +1124,7 @@
             setBusy(true);
             try {
                 await api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" });
-                if (selectedSid === sid) { selectedSid = null; frameSid = null; }
+                if (selectedSid === sid) { selectedSid = null; resetFrameState(); }
                 toast("实例已停止", "ok");
                 await load();
             } catch (e) {
@@ -707,7 +1141,7 @@
             try {
                 await api("/instance/stop-all", { method: "POST" });
                 selectedSid = null;
-                frameSid = null;
+                resetFrameState();
                 toast("已停止全部实例，持久目录已保留", "ok");
                 await load();
             } catch (e) {
@@ -719,6 +1153,7 @@
 
         load();
         setInterval(() => load(true), 10000);
+        setInterval(pollCastTargets, 6000);
     </script>
 </body>
 </html>
