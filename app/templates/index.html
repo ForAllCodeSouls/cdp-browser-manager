@@ -129,14 +129,40 @@
         .detail .kv { color: var(--muted); }
         .detail .kv b { color: var(--text); font-family: ui-monospace, monospace; font-weight: 500; }
         .detail .spacer { flex: 1; }
-        .main-frame {
+
+        .frame-wrap {
             flex: 1;
-            width: 100%;
             min-height: 280px;
+            position: relative;
             border: 1px solid var(--border);
             border-radius: var(--radius);
             background: #000;
+            overflow: hidden;
         }
+        .frame-host { position: absolute; inset: 0; }
+        .frame-host iframe {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .frame-overlay {
+            position: absolute; inset: 0; z-index: 2;
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 12px; text-align: center; padding: 20px;
+            background: #0f1117f2; color: var(--muted); font-size: 13px;
+        }
+        .frame-overlay.show { display: flex; }
+        .frame-overlay.error { color: var(--danger); }
+        .frame-overlay .spin {
+            width: 28px; height: 28px;
+            border: 3px solid var(--border); border-top-color: var(--accent);
+            border-radius: 50%; animation: spin .8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .frame-overlay .hint { font-size: 11px; color: var(--muted); max-width: 420px; line-height: 1.6; }
+
         .empty-view {
             flex: 1;
             display: flex;
@@ -155,7 +181,6 @@
         .badge.stopped { background: #3a2026; color: var(--danger); }
         .badge.pending { background: #2c3143; color: var(--muted); }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
-        .auto-hint { color: var(--success); font-size: 11px; }
 
         .toast {
             position: fixed; bottom: 22px; right: 22px;
@@ -224,7 +249,10 @@
                 <h2>暂无可显示的画面</h2>
                 <div>点击左侧实例，或点右上角「新建实例」</div>
             </div>
-            <iframe id="mainFrame" class="main-frame" title="浏览器画面" style="display:none"></iframe>
+            <div class="frame-wrap" id="frameWrap" style="display:none">
+                <div class="frame-overlay" id="frameOverlay"></div>
+                <div class="frame-host" id="frameHost"></div>
+            </div>
         </section>
     </div>
 
@@ -260,7 +288,8 @@
         const $ = (id) => document.getElementById(id);
         let instances = {};
         let selectedSid = null;
-        let frameLoadedSid = null;
+        let frameSid = null;        // 当前 iframe 加载的实例 sid
+        let frameTimer = null;
         let busy = false;
 
         // 设置：默认精简版 vnc_lite.html，持久化到 localStorage
@@ -288,8 +317,7 @@
             settings = { page: $("setPage").value, scale: $("setScale").value };
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             closeSettings();
-            // 强制重建 iframe 以应用新设置
-            frameLoadedSid = null;
+            frameSid = null;   // 强制重建 iframe 以应用新设置
             render();
             toast("设置已保存，画面重新连接", "ok");
         }
@@ -325,7 +353,7 @@
 
         function statusBadge(i) {
             if (i.status === "running") {
-                if (i.cdp_ready === true) return '<span class="badge running">已就绪</span>';
+                if (i.cdp_ready === true) return '<span class="badge running">CDP 已就绪</span>';
                 if (i.cdp_ready === false) return '<span class="badge stopped">CDP 未响应</span>';
                 return '<span class="badge pending">检测中</span>';
             }
@@ -368,17 +396,75 @@
             }
         }
 
+        // ---- 画面加载：切换时彻底销毁旧 iframe 再新建，避免卡死实例残留旧画面 ----
+        function clearFrame() {
+            if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+            const host = $("frameHost");
+            while (host.firstChild) host.removeChild(host.firstChild);
+            $("frameOverlay").className = "frame-overlay";
+            $("frameOverlay").innerHTML = "";
+            frameSid = null;
+        }
+
+        function frameLoading(sid) {
+            const o = $("frameOverlay");
+            o.className = "frame-overlay show";
+            o.innerHTML = '<div class="spin"></div>' +
+                '<div>正在连接实例 ' + esc(sid.slice(0, 8)) + ' 的画面…</div>' +
+                '<div class="hint">首次连接约需 2-5 秒</div>';
+        }
+
+        function frameFailed(sid, msg) {
+            const o = $("frameOverlay");
+            o.className = "frame-overlay show error";
+            o.innerHTML = '<div>画面无法连接：' + esc(sid.slice(0, 8)) + '</div>' +
+                '<div class="hint">' + esc(msg || "该实例画面服务无响应，可能尚未就绪或已卡死") + '</div>' +
+                '<button onclick="retryFrame()">重试</button>';
+        }
+
+        function mountFrame(sel) {
+            clearFrame();
+            frameSid = sel.sid;
+            frameLoading(sel.sid);
+            $("frameWrap").style.display = "block";
+
+            const f = document.createElement("iframe");
+            f.id = "mainFrame";
+            f.title = "浏览器画面";
+            f.allow = "clipboard-read; clipboard-write";
+            const url = vncUrl(sel);
+            f.onload = () => {
+                if (frameSid !== sel.sid) return;
+                if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+                $("frameOverlay").className = "frame-overlay";
+                $("frameOverlay").innerHTML = "";
+            };
+            f.onerror = () => { if (frameSid === sel.sid) frameFailed(sel.sid); };
+            f.src = url;
+            $("frameHost").appendChild(f);
+
+            // 12 秒仍未触发 load 则判定失败，给出明确反馈而非静默保留旧画面
+            frameTimer = setTimeout(() => {
+                if (frameSid === sel.sid && $("frameOverlay").classList.contains("show")) {
+                    frameFailed(sel.sid, "连接超时，实例画面服务无响应");
+                }
+            }, 12000);
+        }
+
+        function retryFrame() {
+            const sel = selectedSid ? instances[selectedSid] : null;
+            if (sel) mountFrame(sel);
+        }
+
         function render() {
             const list = Object.values(instances);
             $("sideStat").textContent = list.length;
 
-            // 选中项失效时自动选第一个运行中的实例
             if (!list.some(i => i.sid === selectedSid)) {
                 const first = list.find(i => i.status === "running") || list[0];
                 selectedSid = first ? first.sid : null;
             }
 
-            // 左侧列表（无 iframe，可安全整体替换）
             if (!list.length) {
                 $("instanceList").innerHTML = '<div class="side-empty">暂无实例<br>点右上角新建</div>';
             } else {
@@ -393,7 +479,6 @@
                 ).join("");
             }
 
-            // 右侧详情
             const sel = selectedSid ? instances[selectedSid] : null;
             if (!sel) {
                 $("detail").innerHTML = "";
@@ -404,27 +489,20 @@
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' + statusBadge(sel) +
                     '<span class="kv">CDP <b id="cdpVal">' + esc(cdp) + '</b>' +
                         '<button class="copy" onclick="copyCdp()">复制</button></span>' +
-                    '<span class="auto-hint">画面自动连接中</span>' +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">新窗口打开</a>' +
                     '<button class="btn-danger" onclick="stop(\'' + sel.sid + '\')">停止</button>';
             }
 
-            // 关键：仅在选中实例变化时更新 iframe src，避免轮询把 VNC 连接掐断
-            const frame = $("mainFrame");
-            const empty = $("viewerEmpty");
+            // 关键：只有选中实例变化时才重建 iframe；轮询不打断 VNC 连接。
+            // 重建而非改 src，避免目标卡死时浏览器保留上一个实例的旧画面。
             if (!sel || sel.status !== "running") {
-                frame.style.display = "none";
-                frame.src = "about:blank";
-                frameLoadedSid = null;
-                empty.style.display = "flex";
+                clearFrame();
+                $("frameWrap").style.display = "none";
+                $("viewerEmpty").style.display = "flex";
             } else {
-                empty.style.display = "none";
-                frame.style.display = "block";
-                if (frameLoadedSid !== sel.sid) {
-                    frame.src = vncUrl(sel);
-                    frameLoadedSid = sel.sid;
-                }
+                $("viewerEmpty").style.display = "none";
+                if (frameSid !== sel.sid) mountFrame(sel);
             }
         }
 
@@ -462,7 +540,7 @@
             try {
                 const data = await api("/instance/new", { method: "POST" }, 45000);
                 selectedSid = data.sid;
-                frameLoadedSid = null;
+                frameSid = null;
                 toast("实例已创建，画面将自动连接", "ok");
                 await load();
             } catch (e) {
@@ -478,7 +556,7 @@
             setBusy(true);
             try {
                 await api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" });
-                if (selectedSid === sid) { selectedSid = null; frameLoadedSid = null; }
+                if (selectedSid === sid) { selectedSid = null; frameSid = null; }
                 toast("实例已停止", "ok");
                 await load();
             } catch (e) {
@@ -495,7 +573,7 @@
             try {
                 await api("/instance/stop-all", { method: "POST" });
                 selectedSid = null;
-                frameLoadedSid = null;
+                frameSid = null;
                 toast("已停止全部实例", "ok");
                 await load();
             } catch (e) {

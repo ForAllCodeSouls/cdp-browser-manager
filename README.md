@@ -46,7 +46,13 @@ services:
 
 > `cdp-browser-image` 带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose pull` 把 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。
 
-在 `docker-compose.yml` 所在目录执行：
+在 `docker-compose.yml` 所在目录执行。**推荐直接用一键升级脚本**（含拉取镜像、删旧容器、重建、校验）：
+
+```bash
+bash upgrade.sh
+```
+
+等价的手动命令：
 
 ```bash
 docker compose pull             # 拉取两个镜像（含 browser 大镜像）
@@ -56,6 +62,8 @@ docker compose ps              # 查看 manager 状态
 docker compose logs -f         # 跟踪日志
 docker compose down            # 停止并移除 manager（browser 实例会保留）
 ```
+
+> **为什么升级必须删旧容器**：browser 容器一旦创建，就固定使用创建时的镜像和 `start.sh`。只更新镜像、不删容器，旧实例仍跑旧代码（典型症状：画面能开但 CDP 连不上、切换实例画面不变）。`upgrade.sh` 已包含这一步。
 
 访问面板：
 
@@ -97,6 +105,22 @@ print(page.title)
 docker build -f Dockerfile.browser -t cdp-browser-browser:latest .
 docker build -f Dockerfile.manager -t cdp-browser-manager:latest .
 docker compose up -d --build
+```
+
+## 故障排查
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| CDP 一直"未响应"，端口连不上 | browser 用旧镜像，缺 `--user-data-dir`，Chrome 136+ 静默忽略远程调试参数 | 执行 `bash upgrade.sh`（会删旧容器并用新镜像重建） |
+| 切换实例画面仍是上一个 | 目标实例容器卡死，iframe 加载失败保留旧画面 | 新版面板会显示"画面无法连接"并可重试；执行 `bash upgrade.sh` 重建 |
+| noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
+
+查看某个 browser 容器的内部日志（排查 chromium / Xvfb 是否起来）：
+
+```bash
+docker ps --filter label=cdp.browser.manager --format '{{.Names}}'
+docker exec <容器名> tail -n 30 /tmp/chromium.log
+docker exec <容器名> tail -n 20 /tmp/xvfb.log
 ```
 
 ## 注意

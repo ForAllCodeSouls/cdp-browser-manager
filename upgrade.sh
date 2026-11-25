@@ -1,0 +1,32 @@
+#!/bin/bash
+# 一键升级：拉取最新镜像 -> 删除所有旧 browser 容器 -> 重建 manager。
+# 解决"改了代码但容器仍用旧镜像/旧启动脚本"的问题。
+set -e
+
+cd "$(dirname "$0")"
+
+echo "==> 1/5 拉取最新 compose 配置"
+git pull
+
+echo "==> 2/5 拉取最新镜像（manager + browser 大镜像）"
+docker compose pull
+
+echo "==> 3/5 删除所有旧的 browser 实例容器"
+docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f
+
+echo "==> 4/5 重建 manager"
+docker compose up -d
+
+echo "==> 5/5 等待 manager 就绪并校验"
+sleep 3
+curl -fsS http://127.0.0.1:8000/api/list >/dev/null 2>&1 || true
+
+echo
+echo "当前镜像摘要（应为此前公布的最新 digest）："
+docker images --digests | grep cdp-browser || true
+echo
+echo "浏览器容器（应为空，新建实例后才出现）："
+docker ps -a --filter label=cdp.browser.manager --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+echo
+echo "完成。打开面板：http://$(hostname -I 2>/dev/null | awk '{print $1}'):8000"
+echo "然后点「新建实例」，卡片 CDP 徽章应在 15 秒内变为「CDP 已就绪」。"
