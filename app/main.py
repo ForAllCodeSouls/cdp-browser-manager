@@ -210,6 +210,46 @@ def stop_instance(sid: str) -> bool:
 restore_instances()
 
 
+def container_ip_by_id(container_id: str) -> str:
+    if not container_id:
+        return ""
+    try:
+        c = client.containers.get(container_id)
+        return container_ip(c)
+    except Exception:
+        return ""
+
+
+def cdp_monitor_loop():
+    """后台持续探测 running 实例的 CDP 就绪状态，覆盖 restore 恢复的实例。"""
+    import urllib.request
+
+    while True:
+        with LOCK:
+            targets = [
+                (sid, item) for sid, item in INSTANCES.items()
+                if item.get("status") == "running"
+            ]
+        for sid, item in targets:
+            ip = container_ip_by_id(item.get("container_id"))
+            ready = False
+            if ip:
+                try:
+                    with urllib.request.urlopen(
+                        f"http://{ip}:9222/json/version", timeout=1
+                    ) as resp:
+                        ready = resp.status == 200
+                except Exception:
+                    ready = False
+            with LOCK:
+                if sid in INSTANCES:
+                    INSTANCES[sid]["cdp_ready"] = ready
+        time.sleep(8)
+
+
+threading.Thread(target=cdp_monitor_loop, daemon=True).start()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})

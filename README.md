@@ -37,12 +37,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       BROWSER_IMAGE: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+
+  # 占位服务：让 docker compose pull 能同时更新 browser 大镜像
+  cdp-browser-image:
+    image: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+    profiles: ["no-auto-start"]
 ```
+
+> `cdp-browser-image` 带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose pull` 把 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。
 
 在 `docker-compose.yml` 所在目录执行：
 
 ```bash
-docker compose pull             # 拉取两个镜像
+docker compose pull             # 拉取两个镜像（含 browser 大镜像）
+docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f   # 升级时清理旧浏览器容器
 docker compose up -d            # 后台启动 manager
 docker compose ps              # 查看 manager 状态
 docker compose logs -f         # 跟踪日志

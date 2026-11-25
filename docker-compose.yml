@@ -9,3 +9,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       BROWSER_IMAGE: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+
+  # 占位服务：让 `docker compose pull` 能同时更新 browser 大镜像。
+  # 带 profile 不会被 `docker compose up -d` 启动；manager 按需创建 browser 容器。
+  cdp-browser-image:
+    image: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+    profiles: ["no-auto-start"]
