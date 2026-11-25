@@ -5,25 +5,26 @@
 
 ## 架构
 
-采用**双镜像分层**设计，manager（小）与 browser（大）独立构建和发布：
+采用**三份镜像独立构建**的设计，manager 与两种内核的 browser 各自发布，改哪份只重新构建哪份：
 
 | 镜像 | 大小 | 内容 | 更新频率 |
 |---|---|---|---|
 | `ghcr.io/forallcodesouls/cdp-browser-manager:latest` | 约 40 MB | FastAPI 管理面板，通过 Docker API 调度 browser 容器 | 代码改动时 |
-| `ghcr.io/forallcodesouls/cdp-browser-browser:latest` | 约 650 MB | **Chrome for Testing 双内核**（完整 chrome + chrome-headless-shell）+ Xvfb + x11vnc + noVNC + 中文字体 | 浏览器版本升级时 |
+| `ghcr.io/forallcodesouls/cdp-browser-full:latest` | 约 650 MB | 完整 `chrome` + Xvfb + x11vnc + noVNC + 中文字体 | 完整内核升级时 |
+| `ghcr.io/forallcodesouls/cdp-browser-headless:latest` | 约 350 MB | 仅 `chrome-headless-shell` + 中文字体，无 VNC 栈 | 无头内核升级时 |
 
-浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。镜像内同时装有两套二进制，新建实例时可选：
+浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。两份镜像各只装一份二进制，新建实例时选择内核，manager 按 `browser_mode` 拉取对应镜像：
 
-| 内核 | 二进制 | 画面方式 | 说明 |
+| 内核 | 镜像 / 二进制 | 画面方式 | 说明 |
 |---|---|---|---|
-| 完整内核（full，默认） | `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
-| 无头内核（headless） | `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；不分配 VNC/noVNC 端口 |
+| 完整内核（full，默认） | `cdp-browser-full` / `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
+| 无头内核（headless） | `cdp-browser-headless` / `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；不分配 VNC/noVNC 端口 |
 
-两种内核的 CDP 端口都是容器内 9222，pydoll / DrissionPage 的连接方式完全一致。版本号在 `Dockerfile.browser` 顶部的 `CHROME_VERSION` 中锁定，升级时只改这一处，两个二进制一起更新。
+两种内核的 CDP 端口都是容器内 9222，pydoll / DrissionPage 的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
 
-manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。完整内核容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），无头内核只使用 9222，再通过端口映射分配宿主机独立端口。日常只更新 manager 时，大镜像层命中缓存，几乎零下载。
+manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。完整内核容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），无头内核只使用 9222，再通过端口映射分配宿主机独立端口。`start.sh` 由两份镜像共用，改动它会同时重建两份 browser 镜像；只升级 manager 时大镜像层命中缓存，几乎零下载。
 
 ## 功能
 - 一键新建浏览器实例，可选完整/无头内核，自动分配独立 CDP 端口（完整内核另分配 VNC、noVNC）
@@ -103,15 +104,22 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      BROWSER_IMAGE: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+      BROWSER_IMAGE_FULL: ghcr.io/forallcodesouls/cdp-browser-full:latest
+      BROWSER_IMAGE_HEADLESS: ghcr.io/forallcodesouls/cdp-browser-headless:latest
 
-  # 占位服务：让 docker compose pull 能同时更新 browser 大镜像
-  cdp-browser-image:
-    image: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+  # 占位服务：让 docker compose pull 能同时更新两份 browser 大镜像
+  cdp-browser-full-image:
+    image: ghcr.io/forallcodesouls/cdp-browser-full:latest
+    profiles: ["no-auto-start"]
+
+  cdp-browser-headless-image:
+    image: ghcr.io/forallcodesouls/cdp-browser-headless:latest
     profiles: ["no-auto-start"]
 ```
 
-> `cdp-browser-image` 带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose pull` 把 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。
+> 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose pull` 把两份 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。
+>
+> 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 
 在 `docker-compose.yml` 所在目录执行。**推荐直接用一键升级脚本**（含拉取镜像、删旧容器、重建、校验）：
 
@@ -122,7 +130,7 @@ bash upgrade.sh
 等价的手动命令：
 
 ```bash
-docker compose pull             # 拉取两个镜像（含 browser 大镜像）
+docker compose pull             # 拉取 manager + full/headless 三份镜像
 docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f   # 升级时清理旧浏览器容器
 docker compose up -d            # 后台启动 manager
 docker compose ps              # 查看 manager 状态
@@ -148,7 +156,8 @@ docker run -d \
   --restart unless-stopped \
   -p 8000:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e BROWSER_IMAGE=ghcr.io/forallcodesouls/cdp-browser-browser:latest \
+  -e BROWSER_IMAGE_FULL=ghcr.io/forallcodesouls/cdp-browser-full:latest \
+  -e BROWSER_IMAGE_HEADLESS=ghcr.io/forallcodesouls/cdp-browser-headless:latest \
   ghcr.io/forallcodesouls/cdp-browser-manager:latest
 ```
 
@@ -190,9 +199,13 @@ print(page.title)
 ## 本地构建
 
 ```bash
-docker build -f Dockerfile.browser -t cdp-browser-browser:latest .
-docker build -f Dockerfile.manager -t cdp-browser-manager:latest .
-docker compose up -d --build
+# 两份 browser 镜像可单独构建，互不影响
+docker build -f Dockerfile.browser         -t ghcr.io/forallcodesouls/cdp-browser-full:latest .
+docker build -f Dockerfile.browser-headless -t ghcr.io/forallcodesouls/cdp-browser-headless:latest .
+docker build -f Dockerfile.manager         -t ghcr.io/forallcodesouls/cdp-browser-manager:latest .
+
+# 若改的是本地 tag，同步修改 compose 里的镜像名后再启动
+docker compose up -d
 ```
 
 ## 故障排查
@@ -204,6 +217,7 @@ docker compose up -d --build
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
 | 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
 | 无头内核点 VNC 没反应 | 无头内核没有 Xvfb/VNC 服务 | 属正常，切到「抓屏」模式 |
+| 创建实例报镜像不存在 | 本地未拉取对应内核镜像，或 compose 仍用旧的 `cdp-browser-browser` | 执行 `bash upgrade.sh`（会 pull full/headless 两份镜像）；自定义部署需设 `BROWSER_IMAGE_FULL` / `BROWSER_IMAGE_HEADLESS` |
 | 持久目录删除报「实例正在使用」 | 有实例挂载了该 Volume | 先停止使用该目录的实例，再删除 |
 | 想彻底清理持久目录数据 | Volume 不会随容器自动删除 | 面板左侧「持久用户目录」点删除，或 `docker volume rm cdp-profile-*` |
 
@@ -219,6 +233,7 @@ docker exec <容器名> tail -n 20 /tmp/xvfb.log
 
 - 容器使用 `--no-sandbox`，适合内网受控环境，不要裸奔公网。
 - manager 挂载了 `docker.sock`，等同于拥有宿主机 Docker 控制权，只能在可信内网使用。
-- 两个镜像均由 GitHub Actions 自动构建推送至 ghcr.io。
+- 三份镜像均由 GitHub Actions 自动构建推送至 ghcr.io；CI 里是三个独立步骤，改无头镜像不会重打完整镜像。
+- 旧镜像名 `cdp-browser-browser:latest` 已弃用；升级时执行 `bash upgrade.sh` 会用新镜像重建实例容器。
 - GHCR 仓库名必须全小写，因此镜像路径使用 `forallcodesouls`（对应 GitHub 账号 `ForAllCodeSouls`）。
 - 若 GHCR 镜像为私有，先执行 `docker login ghcr.io -u ForAllCodeSouls` 再启动。

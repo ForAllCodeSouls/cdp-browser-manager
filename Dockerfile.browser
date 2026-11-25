@@ -1,12 +1,12 @@
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+# 完整内核镜像：只装 chrome，Xvfb/VNC/noVNC 栈只在这里
+ENV BROWSER_MODE=full
 
 # Chrome for Testing：Google 官方为自动化测试发布的固定版本，无自动更新。
-# 同一镜像内装两套二进制，新建实例时可选内核：
-#   /usr/bin/chrome                 完整 chrome（有头，Xvfb + VNC + screencast 都支持）
-#   /usr/bin/chrome-headless-shell  无头 shell（仅 screencast，更省资源，无地址栏）
-# 升级浏览器时只改 CHROME_VERSION，两个 zip 会一起更新。
+# 升级浏览器时只改 CHROME_VERSION；若需同步升级无头内核，
+# 记得同步修改 Dockerfile.browser-headless 里的同名参数。
 ARG CHROME_VERSION=158.0.8127.88
 
 RUN apt update && apt install -y --no-install-recommends \
@@ -20,7 +20,6 @@ RUN apt update && apt install -y --no-install-recommends \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 完整 chrome（有头）
 RUN curl -fsSL \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
       -o /tmp/chrome.zip \
@@ -28,15 +27,6 @@ RUN curl -fsSL \
     && rm -f /tmp/chrome.zip \
     && chmod +x /opt/chrome-linux64/chrome \
     && ln -sf /opt/chrome-linux64/chrome /usr/bin/chrome
-
-# 无头 shell（仅 CDP + screencast）
-RUN curl -fsSL \
-      "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
-      -o /tmp/shell.zip \
-    && unzip -q /tmp/shell.zip -d /opt \
-    && rm -f /tmp/shell.zip \
-    && chmod +x /opt/chrome-headless-shell-linux64/chrome-headless-shell \
-    && ln -sf /opt/chrome-headless-shell-linux64/chrome-headless-shell /usr/bin/chrome-headless-shell
 
 WORKDIR /app
 

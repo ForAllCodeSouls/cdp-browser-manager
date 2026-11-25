@@ -18,9 +18,22 @@ app = FastAPI(title="CDP Browser Manager")
 templates = Jinja2Templates(directory="templates")
 
 client = docker.from_env()
-BROWSER_IMAGE = os.environ.get(
-    "BROWSER_IMAGE", "ghcr.io/forallcodesouls/cdp-browser-browser:latest"
+# 完整内核与无头内核是两份独立镜像，改哪个只重新构建哪个。
+# 兼容旧部署：若仍只设置了 BROWSER_IMAGE，则作为 full 镜像沿用。
+BROWSER_IMAGE_FULL = os.environ.get(
+    "BROWSER_IMAGE_FULL",
+    os.environ.get("BROWSER_IMAGE", "ghcr.io/forallcodesouls/cdp-browser-full:latest"),
 )
+BROWSER_IMAGE_HEADLESS = os.environ.get(
+    "BROWSER_IMAGE_HEADLESS", "ghcr.io/forallcodesouls/cdp-browser-headless:latest"
+)
+
+
+def image_for_mode(browser_mode: str) -> str:
+    """按内核选择对应的浏览器镜像。"""
+    return BROWSER_IMAGE_HEADLESS if browser_mode == "headless" else BROWSER_IMAGE_FULL
+
+
 CONTAINER_LABEL = "cdp.browser.manager"
 PROFILE_LABEL = "cdp.profile"
 PROFILE_OWNER_LABEL = "cdp.profile.owner"
@@ -259,10 +272,12 @@ def start_browser_instance(
             vnc_port = find_free(PORT_VNC_START, PORT_VNC_END, used["vnc"])
             novnc_port = find_free(PORT_NOVNC_START, PORT_NOVNC_END, used["novnc"])
 
+        image = image_for_mode(browser_mode)
         labels = {
             CONTAINER_LABEL: MANAGER_ID,
             "cdp.sid": sid,
             BROWSER_MODE_LABEL: browser_mode,
+            "cdp.browser.image": image,
             "cdp.profile.mode": profile_mode,
             "cdp.profile.name": profile_name if persistent else "",
         }
@@ -296,7 +311,7 @@ def start_browser_instance(
             published["6080/tcp"] = novnc_port
 
         container = client.containers.run(
-            BROWSER_IMAGE,
+            image,
             detach=True,
             name=f"cdpb-{sid[:8]}",
             labels=labels,

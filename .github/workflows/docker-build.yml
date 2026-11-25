@@ -29,10 +29,19 @@ jobs:
           push: true
           tags: ghcr.io/forallcodesouls/cdp-browser-manager:latest
 
-      - name: Build & Push browser
+      - name: Build & Push browser (full)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile.browser
           push: true
-          tags: ghcr.io/forallcodesouls/cdp-browser-browser:latest
+          tags: ghcr.io/forallcodesouls/cdp-browser-full:latest
+
+      # 两份镜像独立构建：改无头内核只跑这一步，不会重打完整镜像
+      - name: Build & Push browser (headless)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.browser-headless
+          push: true
+          tags: ghcr.io/forallcodesouls/cdp-browser-headless:latest

@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 echo "==> 1/5 拉取最新 compose 配置"
 git pull
 
-echo "==> 2/5 拉取最新镜像（manager + browser 大镜像）"
+echo "==> 2/5 拉取最新镜像（manager + full/headless 两份 browser 镜像）"
 docker compose pull
 
 echo "==> 3/5 删除所有旧的 browser 实例容器（持久目录 Volume 会保留，不会删数据）"

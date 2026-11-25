@@ -1,6 +1,6 @@
 #!/bin/bash
 # 单实例启动脚本：Xvfb + x11vnc + websockify + Chrome for Testing
-# 内核由 BROWSER_MODE 决定（由 manager 通过环境变量传入）：
+# 两份镜像各自只装一份二进制，内核由镜像内 ENV BROWSER_MODE 固定（manager 也会传入同值）：
 #   full    : /usr/bin/chrome               完整浏览器，VNC 和 screencast 都能用
 #   headless: /usr/bin/chrome-headless-shell 无头内核，只能 screencast（无浏览器界面）
 # 用户目录两种模式（由 manager 通过 PROFILE_DIR 环境变量指定）：
