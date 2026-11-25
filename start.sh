@@ -34,7 +34,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 去 Google 化：官方 for Testing 包本无广告，这里再关掉后台联网/组件更新/同步等
-# 谷歌服务请求；CDP 参数在两种内核下完全一致，pydoll 可直连同一 WS 端口。
+# 谷歌服务请求；CDP 参数在两种内核下完全一致，外部客户端可直连同一 WS 端口。
 CHROME_ARGS=(
     --user-data-dir="$PROFILE_DIR"
     --remote-debugging-port=9222

@@ -1,7 +1,7 @@
 # cdp-browser-manager
 
 多 Chromium 实例管理器，每个实例独立 CDP 远程调试端口，可选 **VNC** 或 **CDP 抓屏** 查看画面。
-适合配合 pydoll / DrissionPage / Playwright 等基于 CDP WS 协议的自动化脚本使用。
+适合配合任何基于 CDP 协议的自动化脚本或客户端使用。
 
 > ⚠️ **免责声明**：本项目**仅限合法授权的自动化测试、开发调试与内网运维**。严禁用于未经授权的访问、爬取、绕过风控、批量注册、刷量或任何违法违规活动。下载、部署或使用本项目即表示你已阅读并同意文末 [免责声明](#免责声明)，并自行承担全部责任。
 
@@ -22,7 +22,7 @@
 | 完整内核（full，默认） | `cdp-browser-full` / `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
 | 无头内核（headless） | `cdp-browser-headless` / `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；不分配 VNC/noVNC 端口 |
 
-两种内核的 CDP 端口都是容器内 9222，pydoll / DrissionPage 的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
+两种内核的 CDP 端口都是容器内 9222，外部客户端的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
 
@@ -52,7 +52,7 @@ manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容
   - **临时目录**：停止实例即清理，适合一次性任务
   - **持久目录**：以 Docker Volume 保存在宿主机，停止实例后数据仍在；新建时可选择「新建持久目录」或「复用已有目录」恢复登录态，需在面板左侧手动点删除才会清除
 - Web 面板预览浏览器画面（左侧点击实例切换，画面自动连接）
-- 复制 CDP 调试地址，pydoll / DrissionPage / Playwright 通过 CDP WS 连接控制
+- 复制 CDP 调试地址，外部客户端可通过 CDP WebSocket 连接控制
 - 停止单个 / 全部浏览器实例
 - manager 重启后自动恢复已有实例（通过容器标签识别）
 
@@ -177,38 +177,18 @@ docker run -d \
   ghcr.io/forallcodesouls/cdp-browser-manager:latest
 ```
 
-## 外部调用示例
+## 外部调用
 
-pydoll（直连 CDP WS，无需 WebDriver）：
+每个实例都暴露标准的 Chrome DevTools Protocol（CDP）端点，任何实现 CDP 客户端的库都可以直接连接，无需针对本项目做适配。
 
-```python
-import asyncio
-from pydoll.browser import Chrome
+连接信息从面板的实例详情里复制，包含两部分：
 
-async def main():
-    # cdp_url 填面板里复制的 CDP 地址，如 http://你的IP:9222
-    browser = Chrome(options=..., connection_port=9222)
-    async with browser:
-        tab = await browser.start()
-        await tab.go_to("https://example.com")
-        print(await tab.title)
+- **HTTP 地址**：如 `http://你的IP:9222`，用于发现目标和读取元信息
+  - `GET /json/version` —— 浏览器版本，以及 `webSocketDebuggerUrl`
+  - `GET /json/list` —— 当前标签页列表，含每个页面的 `id` 与 `webSocketDebuggerUrl`
+- **WebSocket 地址**：如 `ws://你的IP:9222/devtools/browser/...`（浏览器级）或 `ws://你的IP:9222/devtools/page/<id>`（页面级），连接后按 CDP 协议发送 `Page.navigate`、`Runtime.evaluate` 等命令即可。
 
-asyncio.run(main())
-```
-
-> pydoll 版本 API 有差异，若上述写法不适用，用底层 CDP WS 地址 `ws://你的IP:9222/devtools/browser/...`（可从 `/json/version` 的 `webSocketDebuggerUrl` 取得）。
-
-DrissionPage：
-
-```python
-from DrissionPage import ChromiumOptions, WebPage
-
-co = ChromiumOptions()
-co.set_address("你的IP:9222")
-page = WebPage(chromium_options=co)
-page.get("https://www.baidu.com")
-print(page.title)
-```
+两种内核的 CDP 端口与协议完全一致，连接代码不需要区分内核；无头内核只是不提供 VNC/noVNC 端口。
 
 端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`（无头内核只分配 CDP 端口）。页面显示的是宿主机端口，可直接在宿主机上连接。
 
