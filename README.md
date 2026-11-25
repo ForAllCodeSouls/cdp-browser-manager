@@ -12,8 +12,8 @@
 | 镜像 | 大小 | 内容 | 更新频率 |
 |---|---|---|---|
 | `ghcr.io/forallcodesouls/cdp-browser-manager:latest` | 约 40 MB | FastAPI 管理面板，通过 Docker API 调度 browser 容器 | 代码改动时 |
-| `ghcr.io/forallcodesouls/cdp-browser-full:latest` | 约 650 MB | 完整 `chrome` + Xvfb + x11vnc + noVNC + 中文字体 | 完整内核升级时 |
-| `ghcr.io/forallcodesouls/cdp-browser-headless:latest` | 约 350 MB | 仅 `chrome-headless-shell` + 中文字体，无 VNC 栈 | 无头内核升级时 |
+| `ghcr.io/forallcodesouls/cdp-browser-full:latest` | 约 480 MB | 精简后的完整 `chrome` + Xvfb + x11vnc + noVNC + 中文字体 | 完整内核升级时 |
+| `ghcr.io/forallcodesouls/cdp-browser-headless:latest` | 约 200 MB | 精简后的 `chrome-headless-shell` + 中文字体，无 VNC 栈 | 无头内核升级时 |
 
 浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。两份镜像各只装一份二进制，新建实例时选择内核，manager 按 `browser_mode` 拉取对应镜像：
 
@@ -25,6 +25,20 @@
 两种内核的 CDP 端口都是容器内 9222，pydoll / DrissionPage 的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
+
+### 镜像精简说明
+
+Chrome 官方 zip 本身约 198 MB，但解压后是 412 MB，再加系统库和中文字体才堆到几百 MB。两份镜像做了以下精简（实测不影响 CDP、抓屏和 WebGL）：
+
+| 精简项 | 节省 | 说明 |
+|---|---|---|
+| Noto CJK → 文泉驿微米黑 | 约 86 MB | 简体中文显示正常；繁体/日韩字形覆盖较弱 |
+| `locales/` 220 个语言包 → 只留中英 | 约 46 MB | 仅影响 Chrome 界面语言，网页内容不受影响 |
+| 删除 WidevineCdm（仅完整版） | 约 21 MB | DRM 视频播放组件，自动化用不到 |
+| 删除 crashpad handler（仅完整版） | 约 2 MB | 崩溃上报组件 |
+| 清理 apt 文档 / 构建期工具 | 约 12 MB | 同一构建层内清除，分层删不会减小镜像 |
+
+**刻意保留**：`libvk_swiftshader.so` / `libEGL.so` / `libGLESv2.so`。虽然启动参数有 `--disable-gpu`，实测删除后 WebGL 会变成 `NO_WEBGL`；它们合计仅 4 MB，不值得为省这点空间丢功能。
 
 manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。完整内核容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），无头内核只使用 9222，再通过端口映射分配宿主机独立端口。`start.sh` 由两份镜像共用，改动它会同时重建两份 browser 镜像；只升级 manager 时大镜像层命中缓存，几乎零下载。
 
