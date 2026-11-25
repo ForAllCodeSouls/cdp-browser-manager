@@ -1,0 +1,10 @@
+services:
+  cdp-browser:
+    image: ghcr.io/forallcodesouls/cdp-browser-manager:latest
+    container_name: cdp-browser
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "9222-9322:9222-9322"
+      - "7901-7999:7901-7999"
+    shm_size: "2gb"
