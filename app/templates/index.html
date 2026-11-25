@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CDP Browser Manager</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: system-ui, sans-serif;
+            padding: 20px;
+            background: #f4f5f7;
+        }
+        .toolbar {
+            margin-bottom: 16px;
+        }
+        button {
+            padding: 8px 14px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, 640px);
+            gap: 16px;
+        }
+        .card {
+            background: white;
+            padding: 14px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px #00000015;
+        }
+        .info-line {
+            margin: 4px 0;
+            font-size: 14px;
+        }
+        .copy-btn {
+            font-size: 12px;
+            padding: 3px 7px;
+        }
+        .frame-wrap {
+            width: 100%;
+            height: 360px;
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>CDP Browser Manager</h1>
+    <div class="toolbar">
+        <button onclick="createInstance()">新建浏览器实例</button>
+        <button onclick="stopAll()">停止全部实例</button>
+    </div>
+    <div class="grid" id="container">
+        {% for sid, item in instances.items() %}
+        <div class="card">
+            <div class="info-line"><strong>SID:</strong> {{ sid }}</div>
+            <div class="info-line">
+                <strong>CDP 地址：</strong>
+                <span id="cdp-{{ sid }}">{{ item.cdp_addr }}</span>
+                <button class="copy-btn" onclick="copyCdp('{{ sid }}')">复制</button>
+            </div>
+            <div class="info-line"><strong>noVNC 端口：</strong> {{ item.novnc_port }}</div>
+            <div>
+                <button onclick="stopSid('{{ sid }}')">停止这个实例</button>
+            </div>
+            <div class="frame-wrap">
+                <iframe src="http://{{ request.client.host }}:{{ item.novnc_port }}"></iframe>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        async function refresh() {
+            const res = await fetch('/');
+            document.body.innerHTML = await res.text();
+        }
+        async function createInstance() {
+            await fetch('/instance/new', { method: 'POST' });
+            refresh();
+        }
+        async function stopSid(sid) {
+            await fetch(`/instance/${sid}/stop`, { method: 'POST' });
+            refresh();
+        }
+        async function stopAll() {
+            await fetch('/instance/stop-all', { method: 'POST' });
+            refresh();
+        }
+        function copyCdp(sid) {
+            const text = document.getElementById(`cdp-${sid}`).innerText;
+            navigator.clipboard.writeText(text);
+            alert("已复制 CDP 地址：" + text);
+        }
+    </script>
+</body>
+</html>
