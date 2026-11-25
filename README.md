@@ -34,9 +34,13 @@ Chrome 官方 zip 本身约 198 MB，但解压后是 412 MB，再加系统库和
 |---|---|---|
 | Noto CJK → 文泉驿微米黑 | 约 86 MB | 简体中文显示正常；繁体/日韩字形覆盖较弱 |
 | `locales/` 220 个语言包 → 只留中英 | 约 46 MB | 仅影响 Chrome 界面语言，网页内容不受影响 |
-| 删除 WidevineCdm（仅完整版） | 约 21 MB | DRM 视频播放组件，自动化用不到 |
-| 删除 crashpad handler（仅完整版） | 约 2 MB | 崩溃上报组件 |
+| 删除 WidevineCdm（完整版） | 约 21 MB | DRM 视频播放组件，自动化用不到 |
 | 清理 apt 文档 / 构建期工具 | 约 12 MB | 同一构建层内清除，分层删不会减小镜像 |
+
+**两个绝对不能删的东西**（曾因误删导致容器反复重启，已修复）：
+
+- `chrome_crashpad_handler`：Linux Chrome 启动时会 `exec` 它，文件缺失直接 FATAL 崩溃。
+- 动态库 `libxkbcommon.so.0` / `libudev.so.1` / `libatspi.so.0`：它们在包里是传递依赖，若不在 Dockerfile 里**显式安装**，`apt autoremove` 会把它们当孤儿删掉，浏览器随即起不来。现在已显式列出，标记为 manual 不会被清理。
 
 **刻意保留**：`libvk_swiftshader.so` / `libEGL.so` / `libGLESv2.so`。虽然启动参数有 `--disable-gpu`，实测删除后 WebGL 会变成 `NO_WEBGL`；它们合计仅 4 MB，不值得为省这点空间丢功能。
 

@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-# 无头内核镜像：只装 chrome-headless-shell，不含 Xvfb/VNC/noVNC
+# 无头内核镜像：只装 chrome-headless-shell，不含 Xvfb/VNC/noVNC，画面走 CDP 抓屏。
 ENV BROWSER_MODE=headless
 
 # Chrome for Testing：与完整镜像同版本，只改这里即可单独升级无头内核。
@@ -9,17 +9,22 @@ ENV BROWSER_MODE=headless
 ARG CHROME_VERSION=158.0.8127.88
 
 # 精简策略与 Dockerfile.browser 一致（见该文件顶部注释）：
-# locales 只留中英、删 WidevineCdm 与 crashpad、字体换文泉驿微米黑；
+# locales 只留中英、删 WidevineCdm、字体换文泉驿微米黑；
 # SwiftShader / libEGL / libGLESv2 必须保留以维持 WebGL。
+# headless-shell 包内没有 chrome_crashpad_handler，无需处理。
+# libxkbcommon0 / libudev1 / libatspi2.0-0 是二进制的 DT_NEEDED 动态库，
+# 必须显式安装（标记 manual），否则会被 apt autoremove 当孤儿删掉导致启动失败。
 # headless-shell 本身不需要 Xvfb / x11vnc / novnc / websockify。
 RUN apt update \
  && apt install -y --no-install-recommends \
       ca-certificates curl unzip procps fontconfig \
-      libasound2 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 \
-      libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 \
-      libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
-      libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
-      libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+      libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
+      libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 \
+      libgbm1 libgcc-s1 libglib2.0-0 libnspr4 libnss3 \
+      libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libudev1 \
+      libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 \
+      libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 \
+      libxrandr2 libxrender1 libxss1 libxtst6 \
       fonts-wqy-microhei \
  && curl -fsSL \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
@@ -31,7 +36,6 @@ RUN apt update \
  && find /opt/chrome-headless-shell-linux64/locales -maxdepth 1 -type f \
       ! -name 'en-US*' ! -name 'zh-CN*' -delete \
  && rm -rf /opt/chrome-headless-shell-linux64/WidevineCdm \
- && rm -f /opt/chrome-headless-shell-linux64/chrome_crashpad_handler \
  && fc-cache -f \
  && apt purge -y curl unzip \
  && apt autoremove -y \

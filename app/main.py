@@ -34,6 +34,22 @@ def image_for_mode(browser_mode: str) -> str:
     return BROWSER_IMAGE_HEADLESS if browser_mode == "headless" else BROWSER_IMAGE_FULL
 
 
+def ensure_image_available(image: str) -> None:
+    """创建前确认镜像已在本地，避免 containers.run 触发漫长 pull 并卡住全局锁。
+
+    镜像缺失时快速失败并给出可执行的提示，而不是让整个面板的接口一起挂起。
+    """
+    try:
+        client.images.get(image)
+    except docker.errors.ImageNotFound:
+        raise RuntimeError(
+            f"镜像 {image} 尚未拉取到本地。请先在服务器执行 "
+            f"docker compose pull 或 bash upgrade.sh，再创建实例。"
+        )
+    except docker.errors.APIError as e:
+        raise RuntimeError(f"检查镜像失败: {e}")
+
+
 CONTAINER_LABEL = "cdp.browser.manager"
 PROFILE_LABEL = "cdp.profile"
 PROFILE_OWNER_LABEL = "cdp.profile.owner"
@@ -222,13 +238,23 @@ def container_ip(container) -> str:
 def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
     import urllib.request
 
-    ip = container_ip(container)
-    if not ip:
-        return False
-
     deadline = time.time() + timeout
-    url = f"http://{ip}:9222/json/version"
+    url = ""
     while time.time() < deadline:
+        # 容器若已退出或在反复重启，立即判定失败，不再空等整个超时。
+        try:
+            container.reload()
+            state = container.attrs.get("State", {})
+            if state.get("Status") in ("exited", "dead") or state.get("Restarting"):
+                return False
+        except Exception:
+            pass
+        if not url:
+            ip = container_ip(container)
+            if not ip:
+                time.sleep(0.5)
+                continue
+            url = f"http://{ip}:9222/json/version"
         try:
             with urllib.request.urlopen(url, timeout=1) as resp:
                 if resp.status == 200:
@@ -245,6 +271,9 @@ def start_browser_instance(
     browser_mode: str = "full",
 ) -> dict:
     persistent = profile_mode == "persistent"
+    # 先确认镜像在本地：否则 containers.run 会触发 pull，长时间占着全局锁，
+    # 导致面板其它接口（/api/list 等）全部超时。镜像缺失时立即给出提示。
+    ensure_image_available(image_for_mode(browser_mode))
     # 端口分配必须在锁内完成，避免并发创建分配到同一端口
     with LOCK:
         used = {"debug": set(), "vnc": set(), "novnc": set()}
