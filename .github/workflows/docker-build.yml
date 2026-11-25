@@ -21,9 +21,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push
+      - name: Build & Push manager
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile.manager
           push: true
           tags: ghcr.io/forallcodesouls/cdp-browser-manager:latest
+
+      - name: Build & Push browser
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.browser
+          push: true
+          tags: ghcr.io/forallcodesouls/cdp-browser-browser:latest
