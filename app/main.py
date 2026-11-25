@@ -29,7 +29,7 @@ def start_browser_instance(sid: str):
 
     debug_port = find_free(9222, used_debug)
     vnc_port = find_free(5901, used_vnc)
-    novnc_port = find_free(7901, used_novnc)
+    novnc_port = find_free(7901, used_novnc, limit=99)
     disp_num = find_free(1, used_display)
     display = f":{disp_num}"
 
@@ -66,7 +66,7 @@ def start_browser_instance(sid: str):
 
     chrome = subprocess.Popen(
         [
-            "chromium-browser",
+            "chromium",
             f"--remote-debugging-port={debug_port}",
             "--no-sandbox",
             "--disable-dev-shm-usage",

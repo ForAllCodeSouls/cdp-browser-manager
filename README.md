@@ -17,7 +17,7 @@ docker run -d \
   -p 8000:8000 \
   -p 9222-9322:9222-9322 \
   -p 7901-8000:7901-8000 \
-  ghcr.io/你的用户名/cdp-browser-manager:latest
+  ghcr.io/forallcodesouls/cdp-browser-manager:latest
 ```
 
 访问面板：
@@ -43,3 +43,4 @@ print(page.title)
 - 容器使用 `--no-sandbox`，适合内网受控环境，不要裸奔公网。
 - 端口池默认范围：CDP `9222~9322`，noVNC `7901~8000`。
 - 镜像由 GitHub Actions 自动构建推送至 ghcr.io。
+- GHCR 仓库名必须全小写，因此镜像路径使用 `forallcodesouls`（对应 GitHub 账号 `ForAllCodeSouls`）。
