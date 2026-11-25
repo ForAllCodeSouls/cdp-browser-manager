@@ -136,23 +136,34 @@
             $("btnStopAll").disabled = v;
         }
 
-        async function api(url, options = {}) {
-            const res = await fetch(url, options);
-            if (!res.ok) {
-                let detail = res.statusText;
-                try { detail = (await res.json()).detail || detail; } catch (e) {}
-                throw new Error(detail);
+        async function api(url, options = {}, timeoutMs = 15000) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+            try {
+                const res = await fetch(url, { ...options, signal: ctrl.signal });
+                if (!res.ok) {
+                    let detail = res.statusText;
+                    try { detail = (await res.json()).detail || detail; } catch (e) {}
+                    throw new Error(detail);
+                }
+                return await res.json();
+            } catch (e) {
+                if (e.name === "AbortError") {
+                    throw new Error("请求超时（服务器可能正忙），请稍后重试");
+                }
+                throw e;
+            } finally {
+                clearTimeout(timer);
             }
-            return res.json();
         }
 
-        async function load() {
+        async function load(quiet = false) {
             try {
                 const data = await api("/api/list");
                 instances = data.instances || {};
                 render();
             } catch (e) {
-                toast("加载失败: " + e.message, "error");
+                if (!quiet) toast("加载失败: " + e.message, "error");
             }
         }
 
@@ -175,11 +186,18 @@
                         : '<span class="badge pending">' + esc(i.status || "未知") + '</span>';
                 const cdp = i.cdp_addr || ("127.0.0.1:" + i.debug_port);
                 const novnc = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port);
+                const ready = i.status === "running"
+                    ? (i.cdp_ready === true
+                        ? '<span class="badge running">已就绪</span>'
+                        : i.cdp_ready === false
+                            ? '<span class="badge stopped">CDP 未响应</span>'
+                            : '<span class="badge pending">检测中</span>')
+                    : '';
                 return '<div class="card">' +
                     '<div class="card-head"><div class="card-title">' + esc(i.sid) + '</div>' + badge + '</div>' +
                     '<div class="rows">' +
                         '<div class="k">CDP</div><div class="v"><span id="cdp-' + i.sid + '">' + esc(cdp) + '</span>' +
-                            '<button class="copy" onclick="copy(\'' + i.sid + '\')">复制</button></div>' +
+                            '<button class="copy" onclick="copy(\'' + i.sid + '\')">复制</button> ' + ready + '</div>' +
                         '<div class="k">noVNC</div><div class="v"><a class="link" href="' + esc(novnc) + '" target="_blank" rel="noopener">' + esc(novnc) + '</a></div>' +
                         '<div class="k">容器</div><div class="v">' + esc(i.container_name || "-") + '</div>' +
                     '</div>' +
@@ -217,14 +235,18 @@
         async function create() {
             if (busy) return;
             setBusy(true);
-            toast("正在创建实例，请稍候…");
+            const btn = $("btnCreate");
+            const original = btn.textContent;
+            btn.textContent = "创建中…";
+            toast("正在创建实例，首次启动可能需要十几秒…");
             try {
-                await api("/instance/new", { method: "POST" });
-                toast("实例已创建", "ok");
+                const data = await api("/instance/new", { method: "POST" }, 45000);
+                toast("实例已创建，CDP: " + (data.cdp_addr || "-"), "ok");
                 await load();
             } catch (e) {
                 toast("创建失败: " + e.message, "error");
             } finally {
+                btn.textContent = original;
                 setBusy(false);
             }
         }
@@ -259,7 +281,7 @@
         }
 
         load();
-        setInterval(load, 10000);
+        setInterval(() => load(true), 10000);
     </script>
 </body>
 </html>
