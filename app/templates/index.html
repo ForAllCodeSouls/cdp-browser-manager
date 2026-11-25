@@ -16,19 +16,22 @@
             --accent-hover: #4778ef;
             --success: #3ecf8e;
             --danger: #ff6b6b;
-            --danger-hover: #e85555;
-            --radius: 12px;
+            --radius: 10px;
         }
         * { box-sizing: border-box; }
+        html, body { height: 100%; }
         body {
             margin: 0;
+            display: flex;
+            flex-direction: column;
             font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.5;
         }
         header {
-            padding: 20px 28px;
+            flex: 0 0 auto;
+            padding: 14px 22px;
             border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
@@ -36,13 +39,13 @@
             flex-wrap: wrap;
             gap: 12px;
         }
-        h1 { font-size: 18px; margin: 0; font-weight: 600; }
-        .subtitle { color: var(--muted); font-size: 13px; margin-top: 2px; }
-        .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        h1 { font-size: 17px; margin: 0; font-weight: 600; }
+        .subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         button {
             font: inherit;
             font-size: 13px;
-            padding: 8px 14px;
+            padding: 7px 13px;
             border-radius: 8px;
             border: 1px solid var(--border);
             background: var(--surface-2);
@@ -56,42 +59,130 @@
         .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
-        main { padding: 24px 28px; }
-        .stats { display: flex; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
-        .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 20px; min-width: 120px; }
-        .stat .num { font-size: 24px; font-weight: 600; }
-        .stat .label { color: var(--muted); font-size: 12px; margin-top: 2px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; }
-        .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
-        .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-        .card-title { font-size: 14px; font-weight: 600; font-family: ui-monospace, monospace; word-break: break-all; }
-        .badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+
+        .layout { flex: 1; display: flex; min-height: 0; }
+        aside {
+            width: 272px;
+            flex: 0 0 272px;
+            border-right: 1px solid var(--border);
+            background: var(--surface);
+            overflow-y: auto;
+        }
+        .side-head {
+            padding: 12px 14px;
+            font-size: 12px;
+            color: var(--muted);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: var(--surface);
+            z-index: 1;
+        }
+        .side-stat { color: var(--text); font-weight: 600; }
+        .item {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background .12s;
+        }
+        .item:hover { background: var(--surface-2); }
+        .item.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+        .item .sid {
+            font-family: ui-monospace, monospace;
+            font-size: 12px;
+            font-weight: 600;
+            word-break: break-all;
+        }
+        .item .meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 7px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .side-empty { padding: 28px 16px; text-align: center; color: var(--muted); font-size: 12px; }
+
+        .viewer {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 14px 18px 18px;
+        }
+        .detail {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 14px;
+            font-size: 12px;
+        }
+        .detail .sid { font-family: ui-monospace, monospace; font-size: 13px; font-weight: 600; }
+        .detail .kv { color: var(--muted); }
+        .detail .kv b { color: var(--text); font-family: ui-monospace, monospace; font-weight: 500; }
+        .detail .spacer { flex: 1; }
+        .main-frame {
+            flex: 1;
+            width: 100%;
+            min-height: 280px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: #000;
+        }
+        .empty-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            color: var(--muted);
+            text-align: center;
+        }
+        .empty-view h2 { color: var(--text); font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+
+        .badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
         .badge.running { background: #173d30; color: var(--success); }
         .badge.stopped { background: #3a2026; color: var(--danger); }
         .badge.pending { background: #2c3143; color: var(--muted); }
-        .rows { display: grid; grid-template-columns: 76px 1fr; gap: 8px 10px; font-size: 13px; align-items: center; }
-        .rows .k { color: var(--muted); }
-        .rows .v { font-family: ui-monospace, monospace; word-break: break-all; }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
-        .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-        .preview { margin-top: 14px; display: none; }
-        .preview.open { display: block; }
-        .preview-frame { width: 100%; height: 300px; border: 1px solid var(--border); border-radius: 8px; background: #000; }
-        .empty { text-align: center; color: var(--muted); padding: 60px 20px; border: 1px dashed var(--border); border-radius: var(--radius); }
-        .empty h2 { color: var(--text); font-size: 16px; font-weight: 600; margin: 0 0 8px; }
-        .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 12px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transform: translateY(10px); transition: opacity .2s, transform .2s; pointer-events: none; z-index: 99; max-width: 360px; }
+        .auto-hint { color: var(--success); font-size: 11px; }
+
+        .toast {
+            position: fixed; bottom: 22px; right: 22px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            padding: 11px 16px; border-radius: 8px; font-size: 13px;
+            opacity: 0; transform: translateY(10px);
+            transition: opacity .2s, transform .2s;
+            pointer-events: none; z-index: 99; max-width: 380px;
+        }
         .toast.show { opacity: 1; transform: translateY(0); }
         .toast.error { border-left-color: var(--danger); }
         .toast.ok { border-left-color: var(--success); }
         a.link { color: var(--accent); text-decoration: none; }
         a.link:hover { text-decoration: underline; }
+
+        @media (max-width: 760px) {
+            .layout { flex-direction: column; }
+            aside { width: 100%; flex: 0 0 auto; max-height: 190px; border-right: none; border-bottom: 1px solid var(--border); }
+        }
     </style>
 </head>
 <body>
     <header>
         <div>
             <h1>CDP Browser Manager</h1>
-            <div class="subtitle">独立浏览器实例 · CDP 调试 · 可视化预览</div>
+            <div class="subtitle">左侧切换实例 · 画面自动连接 · CDP 调试</div>
         </div>
         <div class="toolbar">
             <button onclick="load()">刷新</button>
@@ -100,20 +191,28 @@
         </div>
     </header>
 
-    <main>
-        <div class="stats">
-            <div class="stat"><div class="num" id="statTotal">0</div><div class="label">实例总数</div></div>
-            <div class="stat"><div class="num" id="statRunning" style="color:var(--success)">0</div><div class="label">运行中</div></div>
-            <div class="stat"><div class="num" id="statStopped" style="color:var(--danger)">0</div><div class="label">已停止</div></div>
-        </div>
-        <div id="content"></div>
-    </main>
+    <div class="layout">
+        <aside>
+            <div class="side-head"><span>实例列表（点击切换画面）</span><span class="side-stat" id="sideStat">0</span></div>
+            <div id="instanceList"></div>
+        </aside>
+        <section class="viewer">
+            <div class="detail" id="detail"></div>
+            <div class="empty-view" id="viewerEmpty">
+                <h2>暂无可显示的画面</h2>
+                <div>点击左侧实例，或点右上角「新建实例」</div>
+            </div>
+            <iframe id="mainFrame" class="main-frame" title="浏览器画面" style="display:none"></iframe>
+        </section>
+    </div>
 
     <div class="toast" id="toast"></div>
 
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
+        let selectedSid = null;
+        let frameLoadedSid = null;
         let busy = false;
 
         function toast(msg, type = "") {
@@ -121,13 +220,31 @@
             t.textContent = msg;
             t.className = "toast show " + type;
             clearTimeout(t._timer);
-            t._timer = setTimeout(() => t.className = "toast", 3000);
+            t._timer = setTimeout(() => t.className = "toast", 3200);
         }
 
         function esc(s) {
             return String(s).replace(/[&<>"']/g, c => ({
                 "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
             }[c]));
+        }
+
+        // noVNC 自动连接：autoconnect=1 跳过手动点「连接」
+        function vncUrl(i) {
+            let u = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port + "/vnc.html");
+            if (u.indexOf("?") === -1) u += "?autoconnect=1&resize=scale&reconnect=1";
+            else u += "&autoconnect=1&resize=scale&reconnect=1";
+            return u;
+        }
+
+        function statusBadge(i) {
+            if (i.status === "running") {
+                if (i.cdp_ready === true) return '<span class="badge running">已就绪</span>';
+                if (i.cdp_ready === false) return '<span class="badge stopped">CDP 未响应</span>';
+                return '<span class="badge pending">检测中</span>';
+            }
+            if (i.status === "exited" || i.status === "dead") return '<span class="badge stopped">已停止</span>';
+            return '<span class="badge pending">' + esc(i.status || "未知") + '</span>';
         }
 
         function setBusy(v) {
@@ -148,9 +265,7 @@
                 }
                 return await res.json();
             } catch (e) {
-                if (e.name === "AbortError") {
-                    throw new Error("请求超时（服务器可能正忙），请稍后重试");
-                }
+                if (e.name === "AbortError") throw new Error("请求超时（服务器可能正忙），请稍后重试");
                 throw e;
             } finally {
                 clearTimeout(timer);
@@ -169,55 +284,74 @@
 
         function render() {
             const list = Object.values(instances);
-            $("statTotal").textContent = list.length;
-            $("statRunning").textContent = list.filter(i => i.status === "running").length;
-            $("statStopped").textContent = list.filter(i => i.status === "exited").length;
+            $("sideStat").textContent = list.length;
 
-            if (!list.length) {
-                $("content").innerHTML = '<div class="empty"><h2>暂无浏览器实例</h2><div>点击右上角「新建实例」启动一个独立的 Chromium 容器</div></div>';
-                return;
+            // 选中项失效时自动选第一个运行中的实例
+            if (!list.some(i => i.sid === selectedSid)) {
+                const first = list.find(i => i.status === "running") || list[0];
+                selectedSid = first ? first.sid : null;
             }
 
-            $("content").innerHTML = '<div class="grid">' + list.map(i => {
-                const badge = i.status === "running"
-                    ? '<span class="badge running">运行</span>'
-                    : i.status === "exited" || i.status === "dead"
-                        ? '<span class="badge stopped">已停止</span>'
-                        : '<span class="badge pending">' + esc(i.status || "未知") + '</span>';
-                const cdp = i.cdp_addr || ("127.0.0.1:" + i.debug_port);
-                const novnc = i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port + "/vnc.html");
-                const ready = i.status === "running"
-                    ? (i.cdp_ready === true
-                        ? '<span class="badge running">已就绪</span>'
-                        : i.cdp_ready === false
-                            ? '<span class="badge stopped">CDP 未响应</span>'
-                            : '<span class="badge pending">检测中</span>')
-                    : '';
-                return '<div class="card">' +
-                    '<div class="card-head"><div class="card-title">' + esc(i.sid) + '</div>' + badge + '</div>' +
-                    '<div class="rows">' +
-                        '<div class="k">CDP</div><div class="v"><span id="cdp-' + i.sid + '">' + esc(cdp) + '</span>' +
-                            '<button class="copy" onclick="copy(\'' + i.sid + '\')">复制</button> ' + ready + '</div>' +
-                        '<div class="k">noVNC</div><div class="v"><a class="link" href="' + esc(novnc) + '" target="_blank" rel="noopener">' + esc(novnc) + '</a></div>' +
-                        '<div class="k">容器</div><div class="v">' + esc(i.container_name || "-") + '</div>' +
-                    '</div>' +
-                    '<div class="actions">' +
-                        '<button onclick="window.open(\'' + esc(novnc) + '\',\'_blank\')">打开画面</button>' +
-                        '<button onclick="togglePreview(\'' + i.sid + '\')">内嵌预览</button>' +
-                        '<button class="btn-danger" onclick="stop(\'' + i.sid + '\')">停止</button>' +
-                    '</div>' +
-                    '<div class="preview" id="pv-' + i.sid + '"><iframe class="preview-frame" src="' + esc(novnc) + '" loading="lazy"></iframe></div>' +
-                '</div>';
-            }).join("") + '</div>';
+            // 左侧列表（无 iframe，可安全整体替换）
+            if (!list.length) {
+                $("instanceList").innerHTML = '<div class="side-empty">暂无实例<br>点右上角新建</div>';
+            } else {
+                $("instanceList").innerHTML = list.map(i =>
+                    '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(\'' + i.sid + '\')">' +
+                        '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
+                        '<div class="meta">' + statusBadge(i) +
+                            '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
+                            '<span>:' + esc(i.novnc_port || "-") + '</span>' +
+                        '</div>' +
+                    '</div>'
+                ).join("");
+            }
+
+            // 右侧详情
+            const sel = selectedSid ? instances[selectedSid] : null;
+            if (!sel) {
+                $("detail").innerHTML = "";
+            } else {
+                const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
+                const url = vncUrl(sel);
+                $("detail").innerHTML =
+                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' + statusBadge(sel) +
+                    '<span class="kv">CDP <b id="cdpVal">' + esc(cdp) + '</b>' +
+                        '<button class="copy" onclick="copyCdp()">复制</button></span>' +
+                    '<span class="auto-hint">画面自动连接中</span>' +
+                    '<span class="spacer"></span>' +
+                    '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">新窗口打开</a>' +
+                    '<button class="btn-danger" onclick="stop(\'' + sel.sid + '\')">停止</button>';
+            }
+
+            // 关键：仅在选中实例变化时更新 iframe src，避免轮询把 VNC 连接掐断
+            const frame = $("mainFrame");
+            const empty = $("viewerEmpty");
+            if (!sel || sel.status !== "running") {
+                frame.style.display = "none";
+                frame.src = "about:blank";
+                frameLoadedSid = null;
+                empty.style.display = "flex";
+            } else {
+                empty.style.display = "none";
+                frame.style.display = "block";
+                if (frameLoadedSid !== sel.sid) {
+                    frame.src = vncUrl(sel);
+                    frameLoadedSid = sel.sid;
+                }
+            }
         }
 
-        function togglePreview(sid) {
-            const el = $("pv-" + sid);
-            if (el) el.classList.toggle("open");
+        function selectSid(sid) {
+            if (selectedSid === sid) return;
+            selectedSid = sid;
+            render();
         }
 
-        async function copy(sid) {
-            const text = $("cdp-" + sid).textContent;
+        async function copyCdp() {
+            const el = $("cdpVal");
+            if (!el) return;
+            const text = el.textContent;
             try {
                 await navigator.clipboard.writeText(text);
                 toast("已复制 CDP 地址: " + text, "ok");
@@ -241,7 +375,9 @@
             toast("正在创建实例，首次启动可能需要十几秒…");
             try {
                 const data = await api("/instance/new", { method: "POST" }, 45000);
-                toast("实例已创建，CDP: " + (data.cdp_addr || "-"), "ok");
+                selectedSid = data.sid;
+                frameLoadedSid = null;
+                toast("实例已创建，画面将自动连接", "ok");
                 await load();
             } catch (e) {
                 toast("创建失败: " + e.message, "error");
@@ -256,6 +392,7 @@
             setBusy(true);
             try {
                 await api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" });
+                if (selectedSid === sid) { selectedSid = null; frameLoadedSid = null; }
                 toast("实例已停止", "ok");
                 await load();
             } catch (e) {
@@ -271,6 +408,8 @@
             setBusy(true);
             try {
                 await api("/instance/stop-all", { method: "POST" });
+                selectedSid = null;
+                frameLoadedSid = null;
                 toast("已停止全部实例", "ok");
                 await load();
             } catch (e) {
