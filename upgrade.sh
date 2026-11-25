@@ -11,7 +11,7 @@ git pull
 echo "==> 2/5 拉取最新镜像（manager + browser 大镜像）"
 docker compose pull
 
-echo "==> 3/5 删除所有旧的 browser 实例容器"
+echo "==> 3/5 删除所有旧的 browser 实例容器（持久目录 Volume 会保留，不会删数据）"
 docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f
 
 echo "==> 4/5 重建 manager"
@@ -27,6 +27,9 @@ docker images --digests | grep cdp-browser || true
 echo
 echo "浏览器容器（应为空，新建实例后才出现）："
 docker ps -a --filter label=cdp.browser.manager --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+echo
+echo "持久用户目录（升级后应完整保留）："
+docker volume ls --filter label=cdp.profile=1 --format 'table {{.Name}}'
 echo
 echo "完成。打开面板：http://$(hostname -I 2>/dev/null | awk '{print $1}'):8000"
 echo "然后点「新建实例」，卡片 CDP 徽章应在 15 秒内变为「CDP 已就绪」。"

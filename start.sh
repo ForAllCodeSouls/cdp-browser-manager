@@ -1,13 +1,20 @@
 #!/bin/bash
-# 单实例启动脚本：Xvfb + x11vnc + websockify + chromium
-# 不使用 set -e：某个后台服务启动失败时不应导致脚本提前退出、chromium 永不启动
+# 单实例启动脚本：Xvfb + x11vnc + websockify + Chrome for Testing
+# 用户目录两种模式（由 manager 通过 PROFILE_DIR 环境变量指定）：
+#   临时模式：PROFILE_DIR=/tmp/cdp-profile        —— 容器删除即清理
+#   持久模式：PROFILE_DIR=/cdp-profile（挂载卷）  —— 容器删除后数据保留
+# 不使用 set -e：某个后台服务失败时不应导致 chromium 永不启动。
 
 DISPLAY_NUM=99
 DISPLAY=":${DISPLAY_NUM}"
 export DISPLAY
 
+PROFILE_DIR="${PROFILE_DIR:-/tmp/cdp-profile}"
+export PROFILE_DIR
+mkdir -p "$PROFILE_DIR"
+
 cleanup() {
-    pkill -f "chromium" 2>/dev/null || true
+    pkill -f "/opt/chrome-linux64/chrome" 2>/dev/null || true
     pkill -f "x11vnc" 2>/dev/null || true
     pkill -f "websockify" 2>/dev/null || true
     pkill -f "Xvfb" 2>/dev/null || true
@@ -31,12 +38,13 @@ sleep 1
 websockify :6080 127.0.0.1:5900 --web=/usr/share/novnc >/tmp/websockify.log 2>&1 &
 sleep 1
 
-# 4) Chromium
-# 关键：Chrome 136+ 起，若使用默认 user-data-dir，--remote-debugging-port 会被静默忽略，
-# 表现为端口不监听 / TCP 通但无 HTTP 响应。必须指定一个非默认目录 CDP 才真正生效。
-PROFILE_DIR=/tmp/cdp-profile
-mkdir -p "$PROFILE_DIR"
-chromium \
+# 4) Chrome for Testing
+# 关键参数说明：
+#   --user-data-dir          Chrome 136+ 起远程调试必须用非默认目录，否则 CDP 静默失效
+#   --remote-debugging-*     监听 0.0.0.0，供宿主机端口映射后外部连接
+#   --no-first-run 等        去掉首次运行引导 / 搜索引擎选择 / 推广页面
+#   about:blank              启动时打开空白页，不进新标签页推广内容
+/usr/bin/chrome \
     --user-data-dir="$PROFILE_DIR" \
     --remote-debugging-port=9222 \
     --remote-debugging-address=0.0.0.0 \
@@ -44,10 +52,14 @@ chromium \
     --no-sandbox \
     --disable-dev-shm-usage \
     --disable-gpu \
-    --disable-infobars \
     --no-first-run \
+    --no-default-browser-check \
+    --disable-search-engine-choice-screen \
+    --disable-default-apps \
+    --disable-features=Translate,OptimizationHints,MediaRouter \
     --window-size=1920,1080 \
     --start-maximized \
+    about:blank \
     >/tmp/chromium.log 2>&1 &
 
 # 任一关键进程退出即结束脚本，借助 restart_policy 让容器自愈重建。

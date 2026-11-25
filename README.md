@@ -10,16 +10,48 @@
 | 镜像 | 大小 | 内容 | 更新频率 |
 |---|---|---|---|
 | `ghcr.io/forallcodesouls/cdp-browser-manager:latest` | 约 40 MB | FastAPI 管理面板，通过 Docker API 调度 browser 容器 | 代码改动时 |
-| `ghcr.io/forallcodesouls/cdp-browser-browser:latest` | 约 500 MB | Chromium + Xvfb + x11vnc + noVNC + 中文字体 | 很少变化 |
+| `ghcr.io/forallcodesouls/cdp-browser-browser:latest` | 约 600 MB | **Chrome for Testing**（官方固定版本）+ Xvfb + x11vnc + noVNC + 中文字体 | 浏览器版本升级时 |
+
+浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。版本号在 `Dockerfile.browser` 顶部的 `CHROME_VERSION` 中锁定，升级时只改这一处。
 
 manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。每个 browser 容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），再通过端口映射分配宿主机独立端口。日常只更新 manager 时，大镜像层命中缓存，几乎零下载。
 
 ## 功能
 - 一键新建浏览器实例，自动分配独立 CDP 端口、VNC、noVNC
-- Web 面板预览浏览器画面
+- **用户目录双模式**：
+  - **临时目录**：停止实例即清理，适合一次性任务
+  - **持久目录**：以 Docker Volume 保存在宿主机，停止实例后数据仍在；新建时可选择「新建持久目录」或「复用已有目录」恢复登录态，需在面板左侧手动点删除才会清除
+- Web 面板预览浏览器画面（左侧点击实例切换，noVNC 自动连接）
 - 复制 CDP 调试地址，外部程序连接控制
 - 停止单个 / 全部浏览器实例
 - manager 重启后自动恢复已有实例（通过容器标签识别）
+
+### 用户目录说明
+
+新建实例弹窗中可选三种模式：
+
+| 模式 | 数据存储 | 停止实例后 | 适用场景 |
+|---|---|---|---|
+| 临时目录 | 容器内 `/tmp/cdp-profile` | 数据随容器删除 | 日常自动化，不需登录态 |
+| 新建持久目录 | Docker Volume `cdp-profile-*` | 数据保留 | 需要保留 Cookie / 登录态 |
+| 复用已有持久目录 | 挂载同名 Volume | 数据保留并复用 | 下次继续上次的登录状态 |
+
+持久目录在面板左侧「持久用户目录」区列出。被运行中实例占用的目录显示「使用中」，不能删除；停止实例后可点「删除」永久清除。
+
+API：
+
+```bash
+# 新建持久目录实例
+curl -X POST http://你的IP:8000/instance/new \
+  -H 'Content-Type: application/json' \
+  -d '{"profile_mode":"persistent","profile_name":"shop-account"}'
+
+# 列出所有持久目录
+curl http://你的IP:8000/api/profiles
+
+# 删除持久目录（需先停止使用它的实例）
+curl -X DELETE http://你的IP:8000/profile/shop-account
+```
 
 ## 部署（推荐 Docker Compose）
 
@@ -114,6 +146,8 @@ docker compose up -d --build
 | CDP 一直"未响应"，端口连不上 | browser 用旧镜像，缺 `--user-data-dir`，Chrome 136+ 静默忽略远程调试参数 | 执行 `bash upgrade.sh`（会删旧容器并用新镜像重建） |
 | 切换实例画面仍是上一个 | 目标实例容器卡死，iframe 加载失败保留旧画面 | 新版面板会显示"画面无法连接"并可重试；执行 `bash upgrade.sh` 重建 |
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
+| 持久目录删除报「实例正在使用」 | 有实例挂载了该 Volume | 先停止使用该目录的实例，再删除 |
+| 想彻底清理持久目录数据 | Volume 不会随容器自动删除 | 面板左侧「持久用户目录」点删除，或 `docker volume rm cdp-profile-*` |
 
 查看某个 browser 容器的内部日志（排查 chromium / Xvfb 是否起来）：
 

@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 import time
 import uuid
@@ -18,6 +19,8 @@ BROWSER_IMAGE = os.environ.get(
     "BROWSER_IMAGE", "ghcr.io/forallcodesouls/cdp-browser-browser:latest"
 )
 CONTAINER_LABEL = "cdp.browser.manager"
+PROFILE_LABEL = "cdp.profile"
+PROFILE_OWNER_LABEL = "cdp.profile.owner"
 MANAGER_ID = os.environ.get("MANAGER_ID", "default")
 
 INSTANCES: Dict[str, dict] = {}
@@ -63,14 +66,76 @@ def parse_ports(container) -> dict:
     return result
 
 
+def profile_volume_name(name: str) -> str:
+    """把用户给的 profile 名规范成 Docker volume 名。"""
+    safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", str(name)).strip("-.")[:48]
+    if not safe:
+        safe = uuid.uuid4().hex[:12]
+    return f"cdp-profile-{MANAGER_ID}-{safe}"
+
+
+def list_profiles() -> list:
+    """列出本 manager 的所有持久 profile volume，并标注是否被实例占用。"""
+    with LOCK:
+        used_by = {
+            item.get("profile_name"): sid
+            for sid, item in INSTANCES.items()
+            if item.get("profile_mode") == "persistent" and item.get("profile_name")
+        }
+    result = []
+    try:
+        volumes = client.volumes.list(
+            filters={"label": f"{PROFILE_LABEL}=1"}
+        )
+    except docker.errors.APIError:
+        return result
+    for v in volumes:
+        labels = v.attrs.get("Labels") or {}
+        if labels.get(PROFILE_OWNER_LABEL) != MANAGER_ID:
+            continue
+        raw = labels.get("cdp.profile.name", "")
+        result.append(
+            {
+                "name": raw,
+                "volume": v.name,
+                "created": v.attrs.get("CreatedAt", ""),
+                "used_by": used_by.get(raw),
+            }
+        )
+    return sorted(result, key=lambda x: x["created"], reverse=True)
+
+
+def remove_profile(name: str) -> bool:
+    """删除一个持久 profile volume。被运行中实例占用时拒绝。"""
+    vname = profile_volume_name(name)
+    with LOCK:
+        for sid, item in INSTANCES.items():
+            if (
+                item.get("profile_mode") == "persistent"
+                and item.get("profile_name") == name
+            ):
+                raise RuntimeError(f"实例 {sid[:8]} 正在使用该目录，请先停止实例")
+    try:
+        v = client.volumes.get(vname)
+        v.remove(force=True)
+        return True
+    except docker.errors.NotFound:
+        return False
+    except docker.errors.APIError as e:
+        raise RuntimeError(str(e))
+
+
 def sync_instances():
-    for sid, item in list(INSTANCES.items()):
+    with LOCK:
+        snapshot = list(INSTANCES.items())
+    for sid, item in snapshot:
         try:
             container = client.containers.get(item["container_id"])
             item["status"] = container.status
             item.update(parse_ports(container))
         except docker.errors.NotFound:
-            INSTANCES.pop(sid, None)
+            with LOCK:
+                INSTANCES.pop(sid, None)
         except docker.errors.APIError:
             pass
 
@@ -91,6 +156,8 @@ def restore_instances():
             "container_name": c.name,
             **ports,
             "status": c.status,
+            "profile_mode": c.labels.get("cdp.profile.mode", "ephemeral"),
+            "profile_name": c.labels.get("cdp.profile.name", ""),
         }
 
 
@@ -105,7 +172,7 @@ def to_view(item: dict, request: Request) -> dict:
     data["cdp_addr"] = f"{host}:{debug}" if debug else ""
     data["cdp_http"] = f"http://{host}:{debug}" if debug else ""
     data["vnc_url"] = f"http://{host}:{vnc}" if vnc else ""
-    # Debian novnc 包不提供根目录 index.html。这里返回基础地址，
+    # novnc 包不提供根目录 index.html。这里返回基础地址，
     # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
     data["novnc_url"] = f"http://{host}:{novnc}" if novnc else ""
     return data
@@ -139,7 +206,8 @@ def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
     return False
 
 
-def start_browser_instance(sid: str) -> dict:
+def start_browser_instance(sid: str, profile_mode: str = "ephemeral", profile_name: str = "") -> dict:
+    persistent = profile_mode == "persistent"
     # 端口分配必须在锁内完成，避免并发创建分配到同一端口
     with LOCK:
         used = {"debug": set(), "vnc": set(), "novnc": set()}
@@ -162,19 +230,48 @@ def start_browser_instance(sid: str) -> dict:
         vnc_port = find_free(PORT_VNC_START, PORT_VNC_END, used["vnc"])
         novnc_port = find_free(PORT_NOVNC_START, PORT_NOVNC_END, used["novnc"])
 
+        labels = {
+            CONTAINER_LABEL: MANAGER_ID,
+            "cdp.sid": sid,
+            "cdp.profile.mode": profile_mode,
+            "cdp.profile.name": profile_name if persistent else "",
+        }
+        environment = {}
+        volumes = None
+        if persistent:
+            name = profile_name or uuid.uuid4().hex[:12]
+            vname = profile_volume_name(name)
+            # 不存在则创建；已存在则复用，达到"登录态长期保留"
+            try:
+                client.volumes.get(vname)
+            except docker.errors.NotFound:
+                client.volumes.create(
+                    name=vname,
+                    labels={
+                        PROFILE_LABEL: "1",
+                        PROFILE_OWNER_LABEL: MANAGER_ID,
+                        "cdp.profile.name": name,
+                    },
+                )
+            profile_name = name
+            labels["cdp.profile.name"] = name
+            environment["PROFILE_DIR"] = "/cdp-profile"
+            volumes = {vname: {"bind": "/cdp-profile", "mode": "rw"}}
+        else:
+            environment["PROFILE_DIR"] = "/tmp/cdp-profile"
+
         container = client.containers.run(
             BROWSER_IMAGE,
             detach=True,
             name=f"cdpb-{sid[:8]}",
-            labels={
-                CONTAINER_LABEL: MANAGER_ID,
-                "cdp.sid": sid,
-            },
+            labels=labels,
             ports={
                 "9222/tcp": debug_port,
                 "5900/tcp": vnc_port,
                 "6080/tcp": novnc_port,
             },
+            environment=environment,
+            volumes=volumes,
             shm_size="2gb",
             restart_policy={"Name": "unless-stopped"},
         )
@@ -187,6 +284,8 @@ def start_browser_instance(sid: str) -> dict:
             "vnc_port": vnc_port,
             "novnc_port": novnc_port,
             "status": container.status,
+            "profile_mode": profile_mode,
+            "profile_name": profile_name if persistent else "",
         }
         INSTANCES[sid] = info
 
@@ -205,6 +304,7 @@ def stop_instance(sid: str) -> bool:
         c.remove(force=True)
     except (docker.errors.NotFound, docker.errors.APIError):
         pass
+    # 持久模式的 volume 不随容器删除，数据保留
     return True
 
 
@@ -261,18 +361,36 @@ async def api_list(request: Request):
     await run_in_threadpool(sync_instances)
     with LOCK:
         snapshot = list(INSTANCES.items())
+    profiles = await run_in_threadpool(list_profiles)
     return {
         "instances": {
             sid: to_view(item, request) for sid, item in snapshot
-        }
+        },
+        "profiles": profiles,
     }
+
+
+@app.get("/api/profiles")
+async def api_profiles():
+    return {"profiles": await run_in_threadpool(list_profiles)}
 
 
 @app.post("/instance/new")
 async def new_instance(request: Request):
+    mode = "ephemeral"
+    name = ""
+    try:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            mode = payload.get("profile_mode", mode)
+            name = str(payload.get("profile_name", "") or "")
+    except Exception:
+        pass
+    if mode not in ("ephemeral", "persistent"):
+        raise HTTPException(status_code=400, detail="profile_mode 只能是 ephemeral 或 persistent")
     try:
         sid = str(uuid.uuid4())
-        data = await run_in_threadpool(start_browser_instance, sid)
+        data = await run_in_threadpool(start_browser_instance, sid, mode, name)
         return JSONResponse(to_view(data, request))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -291,3 +409,14 @@ async def stop_all():
     for sid in sids:
         await run_in_threadpool(stop_instance, sid)
     return {"ok": True}
+
+
+@app.delete("/profile/{name}")
+async def delete_profile(name: str):
+    try:
+        ok = await run_in_threadpool(remove_profile, name)
+        return {"ok": ok}
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

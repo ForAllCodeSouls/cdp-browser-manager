@@ -16,6 +16,7 @@
             --accent-hover: #4778ef;
             --success: #3ecf8e;
             --danger: #ff6b6b;
+            --warn: #f7b955;
             --radius: 10px;
         }
         * { box-sizing: border-box; }
@@ -59,11 +60,12 @@
         .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
+        .btn-mini { font-size: 11px; padding: 3px 8px; }
 
         .layout { flex: 1; display: flex; min-height: 0; }
         aside {
-            width: 272px;
-            flex: 0 0 272px;
+            width: 288px;
+            flex: 0 0 288px;
             border-right: 1px solid var(--border);
             background: var(--surface);
             overflow-y: auto;
@@ -79,11 +81,12 @@
             position: sticky;
             top: 0;
             background: var(--surface);
-            z-index: 1;
+            z-index: 2;
         }
+        .side-head.second { top: 41px; z-index: 1; }
         .side-stat { color: var(--text); font-weight: 600; }
         .item {
-            padding: 12px 14px;
+            padding: 11px 14px;
             border-bottom: 1px solid var(--border);
             cursor: pointer;
             transition: background .12s;
@@ -99,12 +102,27 @@
         .item .meta {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-top: 7px;
+            gap: 7px;
+            margin-top: 6px;
             font-size: 11px;
             color: var(--muted);
+            flex-wrap: wrap;
         }
-        .side-empty { padding: 28px 16px; text-align: center; color: var(--muted); font-size: 12px; }
+        .profile-item {
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        .profile-item .pname {
+            font-family: ui-monospace, monospace;
+            flex: 1;
+            word-break: break-all;
+            color: var(--text);
+        }
+        .side-empty { padding: 20px 16px; text-align: center; color: var(--muted); font-size: 12px; }
 
         .viewer {
             flex: 1;
@@ -140,12 +158,7 @@
             overflow: hidden;
         }
         .frame-host { position: absolute; inset: 0; }
-        .frame-host iframe {
-            display: block;
-            width: 100%;
-            height: 100%;
-            border: none;
-        }
+        .frame-host iframe { display: block; width: 100%; height: 100%; border: none; }
         .frame-overlay {
             position: absolute; inset: 0; z-index: 2;
             display: none; flex-direction: column;
@@ -180,6 +193,8 @@
         .badge.running { background: #173d30; color: var(--success); }
         .badge.stopped { background: #3a2026; color: var(--danger); }
         .badge.pending { background: #2c3143; color: var(--muted); }
+        .badge.persist { background: #3a2f17; color: var(--warn); }
+        .badge.temp { background: #262a38; color: var(--muted); }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
 
         .toast {
@@ -197,30 +212,32 @@
         a.link { color: var(--accent); text-decoration: none; }
         a.link:hover { text-decoration: underline; }
 
-        .settings-mask {
+        .mask {
             position: fixed; inset: 0; background: #0009;
             display: none; align-items: center; justify-content: center; z-index: 100;
         }
-        .settings-mask.open { display: flex; }
-        .settings-panel {
+        .mask.open { display: flex; }
+        .panel {
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 22px 24px; width: 420px; max-width: 92vw;
+            border-radius: 12px; padding: 22px 24px; width: 440px; max-width: 92vw;
+            max-height: 88vh; overflow-y: auto;
         }
-        .settings-panel h3 { margin: 0 0 16px; font-size: 16px; }
-        .settings-row { margin-bottom: 16px; }
-        .settings-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-        .settings-row select {
+        .panel h3 { margin: 0 0 16px; font-size: 16px; }
+        .row { margin-bottom: 16px; }
+        .row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+        .row select, .row input {
             width: 100%; padding: 8px 10px; font: inherit; font-size: 13px;
             background: var(--surface-2); color: var(--text);
             border: 1px solid var(--border); border-radius: 8px;
         }
-        .settings-hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
-        .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
-        .settings-foot { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
+        .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+        .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+        .foot { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 
         @media (max-width: 760px) {
             .layout { flex-direction: column; }
-            aside { width: 100%; flex: 0 0 auto; max-height: 190px; border-right: none; border-bottom: 1px solid var(--border); }
+            aside { width: 100%; flex: 0 0 auto; max-height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
+            .side-head.second { top: 41px; }
         }
     </style>
 </head>
@@ -228,13 +245,13 @@
     <header>
         <div>
             <h1>CDP Browser Manager</h1>
-            <div class="subtitle">左侧切换实例 · 画面自动连接 · CDP 调试</div>
+            <div class="subtitle">左侧切换实例 · 画面自动连接 · 用户目录可临时/持久</div>
         </div>
         <div class="toolbar">
             <button onclick="openSettings()">⚙ 设置</button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
-            <button class="btn-primary" onclick="create()" id="btnCreate">+ 新建实例</button>
+            <button class="btn-primary" onclick="openCreate()" id="btnCreate">+ 新建实例</button>
         </div>
     </header>
 
@@ -242,6 +259,8 @@
         <aside>
             <div class="side-head"><span>实例列表（点击切换画面）</span><span class="side-stat" id="sideStat">0</span></div>
             <div id="instanceList"></div>
+            <div class="side-head second"><span>持久用户目录（保留登录态）</span><span class="side-stat" id="profileStat">0</span></div>
+            <div id="profileList"></div>
         </aside>
         <section class="viewer">
             <div class="detail" id="detail"></div>
@@ -258,26 +277,57 @@
 
     <div class="toast" id="toast"></div>
 
-    <div class="settings-mask" id="settingsMask" onclick="if(event.target===this) closeSettings()">
-        <div class="settings-panel">
+    <!-- 新建实例弹窗 -->
+    <div class="mask" id="createMask" onclick="if(event.target===this) closeCreate()">
+        <div class="panel">
+            <h3>新建浏览器实例</h3>
+            <div class="row">
+                <label for="createMode">用户目录模式</label>
+                <select id="createMode" onchange="onModeChange()">
+                    <option value="ephemeral">临时目录 — 停止即清理（推荐日常用）</option>
+                    <option value="new">新建持久目录 — 保存登录态，需手动删除</option>
+                    <option value="reuse">复用已有持久目录 — 恢复之前的登录态</option>
+                </select>
+            </div>
+            <div class="row" id="nameRow" style="display:none">
+                <label for="createName">目录名称</label>
+                <input id="createName" placeholder="例如：shop-account" maxlength="48">
+                <div class="hint">仅允许字母、数字、下划线、点、短横线。同名目录会被复用。</div>
+            </div>
+            <div class="row" id="reuseRow" style="display:none">
+                <label for="reuseName">选择已有目录</label>
+                <select id="reuseName"></select>
+                <div class="hint">被运行中实例占用的目录不会出现在列表里。</div>
+            </div>
+            <div class="foot">持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。</div>
+            <div class="actions">
+                <button onclick="closeCreate()">取消</button>
+                <button class="btn-primary" onclick="confirmCreate()" id="btnConfirmCreate">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置弹窗 -->
+    <div class="mask" id="settingsMask" onclick="if(event.target===this) closeSettings()">
+        <div class="panel">
             <h3>设置</h3>
-            <div class="settings-row">
+            <div class="row">
                 <label for="setPage">noVNC 页面</label>
                 <select id="setPage">
                     <option value="vnc_lite.html">精简版 vnc_lite.html（推荐，打开即连）</option>
                     <option value="vnc.html">完整版 vnc.html（带工具栏/设置）</option>
                 </select>
-                <div class="settings-hint">精简版：无连接按钮，加载即自动连接。<br>完整版：功能全（全屏、剪贴板、Ctrl+Alt+Del），默认也自动连接。</div>
+                <div class="hint">精简版：无连接按钮，加载即自动连接。<br>完整版：功能全（全屏、剪贴板、Ctrl+Alt+Del），默认也自动连接。</div>
             </div>
-            <div class="settings-row">
+            <div class="row">
                 <label for="setScale">画面缩放</label>
                 <select id="setScale">
                     <option value="1">自适应缩放（推荐）</option>
                     <option value="0">原始尺寸</option>
                 </select>
             </div>
-            <div class="settings-foot">设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
-            <div class="settings-actions">
+            <div class="foot">设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
+            <div class="actions">
                 <button onclick="closeSettings()">取消</button>
                 <button class="btn-primary" onclick="saveSettings()">保存并重新连接</button>
             </div>
@@ -287,6 +337,7 @@
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
+        let profiles = [];
         let selectedSid = null;
         let frameSid = null;        // 当前 iframe 加载的实例 sid
         let frameTimer = null;
@@ -320,6 +371,69 @@
             frameSid = null;   // 强制重建 iframe 以应用新设置
             render();
             toast("设置已保存，画面重新连接", "ok");
+        }
+
+        // ---- 新建实例弹窗 ----
+        function openCreate() {
+            if (busy) return;
+            onModeChange();
+            $("createMask").classList.add("open");
+        }
+        function closeCreate() { $("createMask").classList.remove("open"); }
+        function onModeChange() {
+            const mode = $("createMode").value;
+            $("nameRow").style.display = mode === "new" ? "block" : "none";
+            $("reuseRow").style.display = mode === "reuse" ? "block" : "none";
+            if (mode === "reuse") {
+                // 正在被实例占用的目录不能复用：两个 Chrome 同时挂同一 profile 会锁冲突
+                const free = profiles.filter(p => !p.used_by);
+                const opts = free.map(p =>
+                    '<option value="' + esc(p.name) + '">' + esc(p.name) + '</option>'
+                ).join("");
+                $("reuseName").innerHTML = opts || '<option value="">（无可用目录）</option>';
+            }
+        }
+
+        async function confirmCreate() {
+            if (busy) return;
+            const mode = $("createMode").value;
+            let profileMode = "ephemeral";
+            let profileName = "";
+            if (mode === "new") {
+                profileMode = "persistent";
+                profileName = $("createName").value.trim();
+                if (!profileName) { toast("请填写目录名称", "error"); return; }
+            } else if (mode === "reuse") {
+                profileMode = "persistent";
+                profileName = $("reuseName").value;
+                if (!profileName) { toast("没有可复用的目录，请先新建持久目录", "error"); return; }
+            }
+            setBusy(true);
+            const btn = $("btnConfirmCreate");
+            const original = btn.textContent;
+            btn.textContent = "创建中…";
+            toast("正在创建实例，首次启动可能需要十几秒…");
+            try {
+                const data = await api(
+                    "/instance/new",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ profile_mode: profileMode, profile_name: profileName }),
+                    },
+                    45000
+                );
+                selectedSid = data.sid;
+                frameSid = null;
+                closeCreate();
+                toast("实例已创建，画面将自动连接", "ok");
+                await load();
+            } catch (e) {
+                toast("创建失败: " + e.message, "error");
+            } finally {
+                btn.textContent = original;
+                setBusy(false);
+            }
         }
 
         function toast(msg, type = "") {
@@ -361,6 +475,13 @@
             return '<span class="badge pending">' + esc(i.status || "未知") + '</span>';
         }
 
+        function profileBadge(i) {
+            if (i.profile_mode === "persistent") {
+                return '<span class="badge persist" title="' + esc(i.profile_name) + '">持久目录</span>';
+            }
+            return '<span class="badge temp">临时目录</span>';
+        }
+
         function setBusy(v) {
             busy = v;
             $("btnCreate").disabled = v;
@@ -390,6 +511,7 @@
             try {
                 const data = await api("/api/list");
                 instances = data.instances || {};
+                profiles = data.profiles || [];
                 render();
             } catch (e) {
                 if (!quiet) toast("加载失败: " + e.message, "error");
@@ -443,7 +565,6 @@
             f.src = url;
             $("frameHost").appendChild(f);
 
-            // 12 秒仍未触发 load 则判定失败，给出明确反馈而非静默保留旧画面
             frameTimer = setTimeout(() => {
                 if (frameSid === sel.sid && $("frameOverlay").classList.contains("show")) {
                     frameFailed(sel.sid, "连接超时，实例画面服务无响应");
@@ -471,10 +592,25 @@
                 $("instanceList").innerHTML = list.map(i =>
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(\'' + i.sid + '\')">' +
                         '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
-                        '<div class="meta">' + statusBadge(i) +
+                        '<div class="meta">' + statusBadge(i) + profileBadge(i) +
                             '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
                             '<span>:' + esc(i.novnc_port || "-") + '</span>' +
                         '</div>' +
+                    '</div>'
+                ).join("");
+            }
+
+            // 持久目录列表
+            $("profileStat").textContent = profiles.length;
+            if (!profiles.length) {
+                $("profileList").innerHTML = '<div class="side-empty">暂无持久目录</div>';
+            } else {
+                $("profileList").innerHTML = profiles.map(p =>
+                    '<div class="profile-item">' +
+                        '<span class="pname" title="' + esc(p.volume) + '">' + esc(p.name) + '</span>' +
+                        (p.used_by
+                            ? '<span class="badge running">使用中</span>'
+                            : '<button class="btn-danger btn-mini" onclick="deleteProfile(\'' + esc(p.name) + '\')">删除</button>') +
                     '</div>'
                 ).join("");
             }
@@ -485,10 +621,14 @@
             } else {
                 const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
                 const url = vncUrl(sel);
+                const pinfo = sel.profile_mode === "persistent"
+                    ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
+                    : '';
                 $("detail").innerHTML =
-                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' + statusBadge(sel) +
+                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' + statusBadge(sel) + profileBadge(sel) +
                     '<span class="kv">CDP <b id="cdpVal">' + esc(cdp) + '</b>' +
                         '<button class="copy" onclick="copyCdp()">复制</button></span>' +
+                    pinfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">新窗口打开</a>' +
                     '<button class="btn-danger" onclick="stop(\'' + sel.sid + '\')">停止</button>';
@@ -530,23 +670,17 @@
             }
         }
 
-        async function create() {
+        async function deleteProfile(name) {
             if (busy) return;
+            if (!confirm("确定删除持久目录「" + name + "」？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。")) return;
             setBusy(true);
-            const btn = $("btnCreate");
-            const original = btn.textContent;
-            btn.textContent = "创建中…";
-            toast("正在创建实例，首次启动可能需要十几秒…");
             try {
-                const data = await api("/instance/new", { method: "POST" }, 45000);
-                selectedSid = data.sid;
-                frameSid = null;
-                toast("实例已创建，画面将自动连接", "ok");
+                await api("/profile/" + encodeURIComponent(name), { method: "DELETE" });
+                toast("目录已删除", "ok");
                 await load();
             } catch (e) {
-                toast("创建失败: " + e.message, "error");
+                toast("删除失败: " + e.message, "error");
             } finally {
-                btn.textContent = original;
                 setBusy(false);
             }
         }
@@ -568,13 +702,13 @@
 
         async function stopAll() {
             if (busy) return;
-            if (!confirm("确定停止全部浏览器实例？")) return;
+            if (!confirm("确定停止全部浏览器实例？（持久目录会保留）")) return;
             setBusy(true);
             try {
                 await api("/instance/stop-all", { method: "POST" });
                 selectedSid = null;
                 frameSid = null;
-                toast("已停止全部实例", "ok");
+                toast("已停止全部实例，持久目录已保留", "ok");
                 await load();
             } catch (e) {
                 toast("操作失败: " + e.message, "error");
