@@ -1114,13 +1114,31 @@ async def api_targets(sid: str):
     return {"targets": targets}
 
 
+def normalize_target_url(raw: object) -> str:
+    """把用户输入的 baidu.com / localhost:8080 补成 CDP 能接受的完整 URL。
+
+    CDP 的 Page.navigate 和 /json/new 都不接受无协议的裸域名，
+    直接透传会得到 Chrome 的 -32000 Cannot navigate to invalid URL。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return "about:blank"
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", s):  # 已有协议：http/https/about/file 等
+        return s
+    if s.startswith("//"):
+        return "https:" + s
+    if re.match(r"^localhost(:\d+)?(/|$|\?)", s, re.I):
+        return "http://" + s
+    return "https://" + s
+
+
 @app.post("/api/instance/{sid}/targets")
 async def api_new_target(sid: str, request: Request):
     try:
         payload = await request.json()
     except Exception:
         payload = {}
-    url = str(payload.get("url", "about:blank") or "about:blank")
+    url = normalize_target_url(payload.get("url", "about:blank"))
     # Chrome 要求 /json/new 使用 PUT，且 URL 必须放在查询串里
     # 返回值是新标签的描述（含 id），前端据此自动切到新标签
     try:
@@ -1180,6 +1198,8 @@ async def api_cdp_cmd(sid: str, request: Request):
     allowed = {"Page.navigate", "Page.reload", "Page.bringToFront", "Runtime.evaluate"}
     if method not in allowed:
         raise HTTPException(status_code=400, detail="不支持的 CDP 命令: " + method)
+    if method == "Page.navigate" and isinstance(params, dict) and "url" in params:
+        params["url"] = normalize_target_url(params.get("url"))
     try:
         result = await run_in_threadpool(cdp_command, sid, tid, method, params)
     except HTTPException:

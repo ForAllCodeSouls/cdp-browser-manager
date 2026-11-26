@@ -1150,8 +1150,9 @@
         }
 
         async function newTarget() {
-            const url = prompt("新标签页打开的地址：", "about:blank");
-            if (url === null) return;
+            const raw = prompt("新标签页打开的地址：", "about:blank");
+            if (raw === null) return;
+            const url = normalizeCastUrl(raw) || "about:blank";
             const sel = currentSel();
             if (!sel) return;
             try {
@@ -1187,9 +1188,18 @@
             } catch (e) { toast("命令失败: " + e.message, "error"); throw e; }
         }
 
+        function normalizeCastUrl(raw) {
+            const s = (raw || "").trim();
+            if (!s) return "";
+            if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)) return s;
+            if (s.startsWith("//")) return "https:" + s;
+            if (/^localhost(:\d+)?(\/|\?|$)/i.test(s)) return "http://" + s;
+            return "https://" + s;
+        }
+
         async function navigateCast() {
             const input = $("castUrl");
-            const url = input ? input.value.trim() : "";
+            const url = normalizeCastUrl(input ? input.value : "");
             if (!url) return;
             try {
                 await sendCastCommand("Page.navigate", { url: url });
