@@ -238,17 +238,24 @@
             position: absolute; inset: 0; z-index: 4;
             display: none; flex-direction: column;
             align-items: center; justify-content: center;
+            justify-content: safe center;  /* 画面区过矮时退化为顶部对齐，配合滚动避免文字被裁 */
             gap: 10px; text-align: center; padding: 20px;
             background: repeating-linear-gradient(
                 45deg, #0f111780, #0f111780 12px, #1a1d2780 12px, #1a1d2780 24px
             );
             color: var(--warn); cursor: not-allowed;
-            outline: none;
+            outline: none; overflow-y: auto;
         }
         .screen-lock.show { display: flex; }
         .screen-lock .lk-icon { font-size: 30px; line-height: 1; }
         .screen-lock .lk-title { font-size: 14px; font-weight: 600; }
-        .screen-lock .lk-hint { font-size: 11px; color: var(--muted); max-width: 380px; line-height: 1.6; }
+        /* 深色不透明底衬隔离斜纹与底下亮色画面，避免灰字在亮背景上看不清 */
+        .screen-lock .lk-hint {
+            font-size: 11px; color: var(--text);
+            background: #0f1117e8; border: 1px solid #3a3f52;
+            border-radius: 8px; padding: 8px 12px;
+            max-width: 380px; line-height: 1.6;
+        }
 
         /* 自测结果：有头 / 无头双栏卡片 */
         .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
