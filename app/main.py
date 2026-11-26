@@ -129,6 +129,20 @@ def get_remote(host_id: str):
     return None
 
 
+def ws_requested_subprotocols(headers) -> list:
+    """读取浏览器在 WS 握手时请求的子协议列表（如 noVNC 的 binary）。
+
+    noVNC 只有收到服务端回显的 binary 子协议才会用二进制帧解析 RFB 数据；
+    代理若不回显，它会误入 base64 模式，表现为画面一直停在 Connecting。
+    """
+    raw = ""
+    try:
+        raw = headers.get("sec-websocket-protocol", "") or ""
+    except Exception:
+        pass
+    return [p.strip() for p in str(raw).split(",") if p.strip()]
+
+
 def auth_exempt(path: str, method: str) -> bool:
     """免鉴权路径：面板首页、健康检查、主机列表，以及 noVNC 静态资源。
 
@@ -2139,7 +2153,11 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
     if host.get("key"):
         headers.append(f"X-API-Key: {host['key']}")
 
-    await websocket.accept()
+    # 透传浏览器请求的子协议（noVNC 的 binary）：回显给浏览器，并请求上游。
+    # 否则远端 VNC 会因协商失败停在 Connecting。CDP 等文本通道无子协议，None 即可。
+    requested = ws_requested_subprotocols(websocket.headers)
+    subprotocol = requested[0] if requested else None
+    await websocket.accept(subprotocol=subprotocol)
     upstream = None
     stop = threading.Event()
     loop = asyncio.get_running_loop()
@@ -2162,9 +2180,10 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
                 break
 
     try:
-        upstream = ws_client.create_connection(
-            url, timeout=10, header=headers, suppress_origin=True
-        )
+        upstream_opts = dict(timeout=10, header=headers, suppress_origin=True)
+        if subprotocol:
+            upstream_opts["subprotocols"] = [subprotocol]
+        upstream = ws_client.create_connection(url, **upstream_opts)
         threading.Thread(target=pump, daemon=True).start()
         while True:
             try:
@@ -2361,7 +2380,12 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
         await websocket.close(code=4401)
         return
 
-    await websocket.accept()
+    # noVNC 靠 binary 子协议决定用二进制帧解析 RFB 数据。必须原样回显浏览器
+    # 请求的子协议；否则 it 会退回 base64 模式，把二进制字节当 base64 解，
+    # 画面永远停在 Connecting。上游 websockify 也用同一子协议连接，帧模式一致。
+    requested = ws_requested_subprotocols(websocket.headers)
+    subprotocol = "binary" if "binary" in requested else (requested[0] if requested else None)
+    await websocket.accept(subprotocol=subprotocol)
     item = instance_by_novnc_port(port)
     if not item:
         await websocket.close(code=1008)
@@ -2384,16 +2408,22 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
             if not raw:
                 break
             try:
-                payload = raw if isinstance(raw, (bytes, bytearray)) else raw.encode("utf-8", "replace")
-                asyncio.run_coroutine_threadsafe(
-                    websocket.send_bytes(payload), loop
-                ).result(timeout=3)
+                # binary 模式下 recv 返回 bytes；base64 模式下返回 str。
+                # 按类型回发对应帧，避免把 base64 文本错当二进制帧。
+                if isinstance(raw, (bytes, bytearray)):
+                    coro = websocket.send_bytes(bytes(raw))
+                else:
+                    coro = websocket.send_text(raw)
+                asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=3)
             except Exception:
                 break
 
     try:
+        upstream_opts = dict(timeout=10, suppress_origin=True)
+        if subprotocol:
+            upstream_opts["subprotocols"] = [subprotocol]
         upstream = ws_client.create_connection(
-            f"ws://{ip}:6080/websockify", timeout=10, suppress_origin=True
+            f"ws://{ip}:6080/websockify", **upstream_opts
         )
         threading.Thread(target=pump, daemon=True).start()
         while not stop.is_set():

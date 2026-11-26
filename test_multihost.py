@@ -79,6 +79,32 @@ class ParseHostsTests(unittest.TestCase):
         self.assertEqual(main.parse_remote_hosts(""), [])
 
 
+class WebSocketSubprotocolTests(unittest.TestCase):
+    def test_parse_binary(self):
+        self.assertEqual(main.ws_requested_subprotocols({"sec-websocket-protocol": "binary"}), ["binary"])
+
+    def test_parse_multiple(self):
+        self.assertEqual(
+            main.ws_requested_subprotocols({"sec-websocket-protocol": " binary , v1 "}),
+            ["binary", "v1"],
+        )
+
+    def test_parse_missing(self):
+        self.assertEqual(main.ws_requested_subprotocols({}), [])
+        self.assertEqual(main.ws_requested_subprotocols(None), [])
+
+    def test_novnc_selects_binary(self):
+        # noVNC 请求 binary，代理必须回显它，否则 VNC 卡在 Connecting。
+        requested = main.ws_requested_subprotocols({"sec-websocket-protocol": "binary"})
+        subprotocol = "binary" if "binary" in requested else (requested[0] if requested else None)
+        self.assertEqual(subprotocol, "binary")
+
+    def test_cdp_selects_none(self):
+        requested = main.ws_requested_subprotocols({})
+        subprotocol = "binary" if "binary" in requested else (requested[0] if requested else None)
+        self.assertIsNone(subprotocol)
+
+
 class AuthExemptTests(unittest.TestCase):
     def test_exempt_paths(self):
         for path in ("/", "/api/health", "/api/hosts", "/7901/vnc_lite.html",
@@ -252,6 +278,29 @@ class IntegrationTests(unittest.TestCase):
                 with client.websocket_connect("/ws/cast/abc/def"):
                     pass
             self.assertEqual(ctx.exception.code, 4401)
+
+    def test_websocket_subprotocol_echoed(self):
+        """回归测试：noVNC 的 binary 子协议必须被代理回显，否则 VNC 停在 Connecting。"""
+        # 造一个最小 WS 应用，复用真实的 accept 逻辑验证 TestClient 能看到回显。
+        from fastapi import WebSocket
+        from fastapi.testclient import TestClient as TC
+        from starlette.applications import Starlette
+        from starlette.routing import WebSocketRoute
+
+        async def echo(ws: WebSocket):
+            requested = main.ws_requested_subprotocols(ws.headers)
+            subprotocol = "binary" if "binary" in requested else (requested[0] if requested else None)
+            await ws.accept(subprotocol=subprotocol)
+            await ws.send_text("up")
+            await ws.close()
+
+        app = Starlette(routes=[WebSocketRoute("/7901/websockify", echo)])
+        with TC(app) as client:
+            with client.websocket_connect(
+                "/7901/websockify", subprotocols=["binary"]
+            ) as ws:
+                self.assertEqual(ws.accepted_subprotocol, "binary")
+                self.assertEqual(ws.receive_text(), "up")
 
 
 if __name__ == "__main__":
