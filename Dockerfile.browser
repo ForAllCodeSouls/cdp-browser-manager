@@ -21,6 +21,15 @@ ARG CHROME_VERSION=158.0.8127.88
 #     它们是 chrome 的 DT_NEEDED 动态库，之前靠传递依赖装进来，
 #     一旦 apt autoremove 就会变成孤儿被删，导致浏览器起不来。
 #     显式安装后会被 apt 标记为 manual，autoremove 不会误删。
+# 关闭 --no-sandbox 的 "unsupported command-line flag" 警告条：
+# Chrome 76+ 已忽略 --disable-infobars，只能由管理策略关闭。
+# 同时写 chromium 路径，兼容部分构建变体；文件极小，不影响镜像体积。
+RUN mkdir -p /etc/opt/chrome/policies/managed /etc/chromium/policies/managed \
+ && printf '%s\n' '{"CommandLineFlagSecurityWarningsEnabled": false}' \
+      > /etc/opt/chrome/policies/managed/cdp_browser_manager.json \
+ && cp /etc/opt/chrome/policies/managed/cdp_browser_manager.json \
+      /etc/chromium/policies/managed/cdp_browser_manager.json
+
 # 安装、下载、精简、卸载构建工具必须在同一层，分层删不会减小镜像。
 RUN apt update \
  && apt install -y --no-install-recommends \

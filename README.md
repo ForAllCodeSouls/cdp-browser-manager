@@ -28,6 +28,8 @@
 
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
 
+> **浏览器顶部提示条已消除**：`--no-sandbox` 会触发 Chrome 76+ 的 "unsupported command-line flag" 安全警告（老参数 `--disable-infobars` 已失效），镜像内置管理策略 `CommandLineFlagSecurityWarningsEnabled: false` 关闭它；Chrome for Testing 的 "only for automated testing" 提示条则由 `--test-type=gpu` 跳过。完整内核 VNC 画面里不会再有这两条占用画面高度的横条。
+
 ### 镜像精简说明
 
 Chrome 官方 zip 本身约 198 MB，但解压后是 412 MB，再加系统库和中文字体才堆到几百 MB。两份镜像做了以下精简（实测不影响 CDP、抓屏和 WebGL）：

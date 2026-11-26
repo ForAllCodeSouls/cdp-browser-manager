@@ -81,9 +81,20 @@ CHROME_ARGS=(
     --disable-sync
     --disable-domain-reliability
     --metrics-recording-only
+    # Chrome for Testing 启动时会显示 "only for automated testing" 提示条：
+    # Chromium 的 infobar_utils.cc 在 --test-type=gpu 时会跳过它；
+    # --disable-infobars 对新版已不完全生效，这里作为旧构建的兜底保留。
+    --test-type=gpu
+    --disable-infobars
     --disable-features=Translate,OptimizationHints,MediaRouter
     --window-size=1920,1080
 )
+
+# --no-sandbox 会触发 "unsupported command-line flag" 警告条，Chrome 76+ 起
+# 只能用管理策略关闭（--disable-infobars 已失效）。策略在镜像构建时写入。
+if [ -f /etc/opt/chrome/policies/managed/cdp_browser_manager.json ]; then
+    echo "managed policy: flag security warnings disabled"
+fi
 
 if [ "$BROWSER_MODE" = "full" ]; then
     # 1) 虚拟显示。残留 lock 会导致新容器起不来，先清理。
