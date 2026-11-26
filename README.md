@@ -65,6 +65,8 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 | `AUTO_PULL_IMAGES` | `1` | 开启定时自动更新；设 `0` 关闭 |
 | `AUTO_UPDATE_INTERVAL_HOURS` | `6` | 定时自动更新的检查间隔（小时，最小 1）：默认每 6 小时检查一次，仅当无运行实例时拉取 |
 | `PUBLIC_HOST` | 空 | 反向代理时填对外地址，如 `https://cdp.example.com`；留空按请求 Host 生成链接 |
+| `API_KEY` | 空 | 可选。设置后本机所有管理 API / CDP / WS 都需带同一密钥；留空则完全不启用鉴权，行为与单主机部署一致 |
+| `REMOTE_HOSTS` | 空 | 可选。多主机聚合配置（JSON 数组或简易格式），详见「多主机统一操控」 |
 | `MANAGER_ID` | `default` | 多个 manager 共用一台宿主机时，隔离容器标签与持久卷 |
 | `BROWSER_SHM_SIZE` | `512m` | 每个 browser 容器的 `/dev/shm`；启动参数已带 `--disable-dev-shm-usage` |
 | `CAST_MAX_WIDTH` / `CAST_MAX_HEIGHT` | `1920` / `1080` | 抓屏帧上限，避免高分屏帧拖慢 WS 转发 |
@@ -273,6 +275,35 @@ docker run -d \
 
 实例详情栏会**同时列出两种 CDP 地址**（各自带「复制」按钮）：`CDP(域名)` 是同源代理地址，`CDP(直连)` 是旧格式直连地址；只有后端同时提供新旧字段时才显示两行，旧后端仍只显示一行。
 
+## 多主机统一操控
+
+两台主机各跑一套 manager 时，可以在**同一个网页**里创建、切换、操控两台主机上的浏览器。
+
+**架构**：浏览器只连接面板所在主机（A）。A 根据服务端配置把请求与 WebSocket 转发到远端主机（B），并把 B 返回的实例地址改写为 A 域名下的 `/remote/<主机ID>/...`。B 的 API 密钥只写在 A 的服务端配置里，前端拿不到，也不会出现在 URL 或 localStorage 中。这样不存在跨域、混合内容（HTTPS 页面连 HTTP 主机）问题，两台主机的浏览器端口都不需要对外暴露。
+
+**配置**（在 A 的 `docker-compose.yml` 中设置）：
+
+```yaml
+environment:
+  # A 自己的密钥：设置后打开面板需输入一次，保存在当前浏览器
+  API_KEY: ${API_KEY:-}
+  # JSON 数组：远端地址 + 远端密钥
+  REMOTE_HOSTS: >-
+    [{"id":"b","name":"主机B","base":"https://b.example.com","key":"B主机的API_KEY"}]
+```
+
+也支持简易格式（用 `;` 分隔多台，每段 `id|名称|base|密钥`）：
+
+```yaml
+REMOTE_HOSTS: "b|主机B|https://b.example.com|B主机的API_KEY;c|主机C|http://10.0.0.2:8000|"
+```
+
+- `id` 只允许字母、数字、下划线、短横线，且不能是 `local`；不合法的条目会被忽略并写入运行日志。
+- 未设置 `API_KEY` 时完全不启用鉴权；未设置 `REMOTE_HOSTS` 时只有「本机」，界面与单主机版本一致。
+- 面板顶栏「密钥」按钮可重新输入本机密钥；远端不可达时该主机的实例会自动跳过，本机不受影响，错误记入运行日志。
+- 多主机时新建弹窗会出现「目标主机」下拉；实例列表用徽标标出所属主机。CDP、VNC、抓屏地址均由后端改写为走 A 的代理，可直接复制使用。
+- 持久目录列表、镜像更新与内置自测仍只针对**面板所在主机**；远端主机请到它自己的面板维护。实例级操作（新建 / 停止 / 标签 / 导航 / 抓屏）支持远端。
+
 ## 本地构建
 
 ```bash
@@ -291,6 +322,7 @@ docker compose up -d
 
 ```bash
 python -m py_compile app/main.py                  # 后端语法
+python test_multihost.py                          # 多主机/鉴权自测（纯逻辑；装了 fastapi+httpx 会连 mock 远端跑完整集成测试）
 bash -n start.sh upgrade.sh                       # 启动/升级脚本
 docker compose config -q                          # Compose 配置
 curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针

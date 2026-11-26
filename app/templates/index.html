@@ -429,6 +429,7 @@
         .badge.temp { background: #262a38; color: var(--muted); }
         .badge.full { background: #23314f; color: #9fc0ff; }
         .badge.headless { background: #2f2440; color: #c9a6ff; }
+        .badge.host { background: #1d3b40; color: #7fdbd9; }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
 
         .toast {
@@ -520,6 +521,10 @@
         <symbol id="i-cross" viewBox="0 0 24 24">
             <path d="M5 5l14 14M19 5 5 19"/>
         </symbol>
+        <symbol id="i-key" viewBox="0 0 24 24">
+            <circle cx="8" cy="15" r="4"/>
+            <path d="m11 12 8-8M16 5l3 3M14 8l3 3"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -533,6 +538,7 @@
                 <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
                 <span class="switch"></span>
             </label>
+            <button id="btnKey" onclick="openKey()" class="btn-icon" title="设置本机 API 密钥（多主机时需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
             <button onclick="load()">刷新</button>
@@ -591,6 +597,11 @@
     <div class="mask" id="createMask" onclick="if(event.target===this) closeCreate()">
         <div class="panel">
             <h3>新建浏览器实例</h3>
+            <div class="row" id="hostRow" style="display:none">
+                <label for="createHost">目标主机</label>
+                <select id="createHost"></select>
+                <div class="hint">远端主机由本机面板代理创建，远端密钥不用填写。</div>
+            </div>
             <div class="row">
                 <label for="createBrowser">浏览器内核</label>
                 <select id="createBrowser">
@@ -680,6 +691,22 @@
         </div>
     </div>
 
+    <!-- API 密钥弹窗：只在服务端设置了 API_KEY 时需要填写 -->
+    <div class="mask" id="keyMask" onclick="if(event.target===this) closeKey()">
+        <div class="panel">
+            <h3>API 密钥</h3>
+            <div class="row">
+                <label for="keyInput">本机访问密钥</label>
+                <input id="keyInput" type="password" autocomplete="off" placeholder="输入 manager 的 API_KEY">
+                <div class="hint" id="keyHint">服务端设置了 API_KEY 时，所有管理请求都需要它。密钥只保存在当前浏览器，远端主机的密钥由服务端配置，不会显示在这里。</div>
+            </div>
+            <div class="actions">
+                <button onclick="closeKey()">取消</button>
+                <button class="btn-primary" onclick="saveKey()">保存并连接</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
@@ -699,6 +726,71 @@
         let frameRetryCount = 0;    // 画面断连自动重试次数（容器重启等瞬时故障自愈）
         let frameRetryTimer = null;
         let busy = false;
+
+        // ---- 多主机与鉴权：浏览器只连本机面板，远端由服务端代理 ----
+        const API_KEY_STORAGE = "cdpManagerApiKey";
+        let apiKey = "";
+        let hosts = [];
+        let authRequired = false;
+        try { apiKey = localStorage.getItem(API_KEY_STORAGE) || ""; } catch (e) {}
+
+        function authHeaders() { return apiKey ? { "X-API-Key": apiKey } : {}; }
+        function keyQuery(url) {
+            if (!apiKey) return url;
+            return url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(apiKey);
+        }
+        function updateKeyLabel() {
+            const el = $("keyLabel");
+            if (el) el.textContent = !authRequired ? "密钥" : (apiKey ? "已设置" : "需设置");
+        }
+        function openKey() { $("keyMask").classList.add("open"); $("keyInput").focus(); }
+        function closeKey() { $("keyMask").classList.remove("open"); }
+        function saveKey() {
+            apiKey = ($("keyInput").value || "").trim();
+            try { localStorage.setItem(API_KEY_STORAGE, apiKey); } catch (e) {}
+            closeKey();
+            updateKeyLabel();
+            initHosts().then(() => load());
+        }
+        function showKeyMask(msg) {
+            $("keyHint").textContent = msg || "服务端设置了 API_KEY 时，所有管理请求都需要它。密钥只保存在当前浏览器。";
+            openKey();
+        }
+        function fillHostSelect() {
+            const sel = $("createHost");
+            if (!sel) return;
+            sel.innerHTML = hosts.map(h =>
+                '<option value="' + esc(h.id) + '">' + esc(h.name) + '</option>'
+            ).join("");
+            const row = $("hostRow");
+            if (row) row.style.display = hosts.length > 1 ? "" : "none";
+        }
+        async function initHosts() {
+            try {
+                const res = await fetch(keyQuery("/api/hosts"), {
+                    headers: authHeaders(), signal: AbortSignal.timeout(10000)
+                });
+                const data = await res.json();
+                authRequired = !!data.auth_required;
+                hosts = data.hosts || [];
+                fillHostSelect();
+                updateKeyLabel();
+                if (data.needs_key) showKeyMask("服务端启用了 API_KEY，请输入后再操作。密钥只保存在当前浏览器。");
+            } catch (e) {
+                // 面板仍可用：主机列表失败只影响多主机创建入口。
+            }
+        }
+        // 按实例所属主机给管理 API 加路由前缀；单主机时行为与原来完全一致。
+        function scopeUrl(url) {
+            const s = String(url);
+            const m = s.match(/^\/api\/instance\/([^/?]+)/);
+            if (!m) return s;
+            const inst = instances[decodeURIComponent(m[1])];
+            if (inst && inst.host && inst.host !== "local") {
+                return "/remote/" + encodeURIComponent(inst.host) + s;
+            }
+            return s;
+        }
 
         const SETTINGS_KEY = "cdpManagerSettings";
         function loadSettings() {
@@ -1194,6 +1286,7 @@
                             profile_mode: profileMode,
                             profile_name: profileName,
                             browser_mode: browserMode,
+                            host: $("createHost") ? $("createHost").value : "local",
                         }),
                     },
                     30000
@@ -1267,8 +1360,12 @@
             // 当前 host 的 /websockify，但域名 443 只转给 manager；用 path 参数把
             // 端口带进路径，令 WS 落到 /<port>/websockify（manager 透传到容器 6080）。
             // 若后端仍是旧的直连地址（结尾为 :端口），则不加 path，保持原行为。
-            if (/\/\d+$/.test(base) && i.novnc_port) {
-                list.push("path=" + i.novnc_port + "/websockify");
+            if (i.novnc_port && ((i.host && i.host !== "local") || /\/\d+$/.test(base))) {
+                // 远端实例的 WS 路径也要带 /remote/<host> 前缀，由本机代理转发。
+                const root = (i.host && i.host !== "local")
+                    ? "remote/" + encodeURIComponent(i.host) + "/" + i.novnc_port
+                    : String(i.novnc_port);
+                list.push("path=" + encodeURIComponent(keyQuery(root + "/websockify")));
             }
             return base + "/" + page + (list.length ? "?" + list.join("&") : "");
         }
@@ -1276,8 +1373,8 @@
         function castWsUrl(i, tid) {
             const tpl = i.cast_ws || ("/ws/cast/" + i.sid + "/{tid}");
             const proto = location.protocol === "https:" ? "wss:" : "ws:";
-            return proto + "//" + location.host +
-                tpl.replace("{tid}", encodeURIComponent(tid));
+            // 远端实例的 cast_ws 已带 /remote/<host> 前缀；WS 无法自定义头，用查询参数传本机密钥。
+            return proto + "//" + location.host + keyQuery(tpl.replace("{tid}", encodeURIComponent(tid)));
         }
 
         function statusBadge(i) {
@@ -1318,7 +1415,16 @@
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), timeoutMs);
             try {
-                const res = await fetch(url, { ...options, signal: ctrl.signal });
+                const opts = {
+                    ...options,
+                    headers: { ...(options.headers || {}), ...authHeaders() },
+                    signal: ctrl.signal,
+                };
+                const res = await fetch(scopeUrl(url), opts);
+                if (res.status === 401) {
+                    if (apiKey) showKeyMask("API 密钥无效或缺失，请重新输入。");
+                    throw new Error("API 密钥无效，请重新输入");
+                }
                 if (!res.ok) {
                     let detail = res.statusText;
                     try {
@@ -1338,6 +1444,7 @@
         }
 
         async function load(quiet = false) {
+            if (authRequired && !apiKey) return; // 等用户输入密钥后再拉数据，避免 401 弹窗风暴
             try {
                 const data = await api("/api/list");
                 instances = data.instances || {};
@@ -2083,6 +2190,8 @@
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
                         '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
                         '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
+                            (i.host && i.host !== "local"
+                                ? '<span class="badge host">' + esc(i.host_name || i.host) + '</span>' : '') +
                             '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
                         '</div>' +
                     '</div>'
@@ -2257,9 +2366,7 @@
             const body = $("logBody");
             if (force) body.textContent = "刷新中...";
             try {
-                const res = await fetch("/api/logs/global?tail=300", { signal: AbortSignal.timeout(15000) });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || res.statusText);
+                const data = await api("/api/logs/global?tail=300", {}, 15000);
                 if (!logsOpen) return; // 期间抽屉被收起，丢弃结果
                 $("logInfo").textContent = "来源: " + (data.source || "-") + " · 每 10 秒自动刷新";
                 const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
@@ -2297,9 +2404,8 @@
             let text = ($("logBody").textContent || "").trim();
             if (!text || text.indexOf("刷新中") === 0 || text.indexOf("读取日志失败") === 0) {
                 try {
-                    const res = await fetch("/api/logs/global?tail=300", { signal: AbortSignal.timeout(15000) });
-                    const data = await res.json();
-                    if (res.ok) text = (data.logs || "").trim();
+                    const data = await api("/api/logs/global?tail=300", {}, 15000);
+                    text = (data.logs || "").trim();
                 } catch (e) { /* 拉取失败则用当前内容兜底 */ }
             }
             if (!text) { toast("没有可复制的日志", "error"); return; }
@@ -2312,7 +2418,9 @@
         }
 
         applyScreenLock();
-        load();
+        initHosts().then(() => {
+            if (!authRequired || apiKey) load();
+        });
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
         setInterval(() => { if (!document.hidden) load(true); }, 10000);

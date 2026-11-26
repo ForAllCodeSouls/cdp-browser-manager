@@ -16,6 +16,14 @@ services:
       AUTO_UPDATE_INTERVAL_HOURS: "6"
       # 反向代理时填对外地址，如 https://cdp.example.com；留空则按访问请求的 Host 生成
       PUBLIC_HOST: ${PUBLIC_HOST:-}
+      # 可选：设置后本机所有管理 API / CDP / WS 都要带同一密钥，前端首次打开时输入一次。
+      # 留空 = 完全不启用鉴权，现有单主机部署行为不变。
+      # API_KEY: ${API_KEY:-}
+      # 可选：多主机聚合。远端主机的地址与密钥只写在服务端，浏览器端看不到。
+      # 面板只连本机，/remote/<id>/... 由本机 manager 代理到远端 manager。
+      # REMOTE_HOSTS: '[{"id":"b","name":"主机B","base":"https://b.example.com","key":"远端API_KEY"}]'
+      # 也支持简易格式：b|主机B|https://b.example.com|远端API_KEY;c|主机C|http://10.0.0.2:8000|
+      # REMOTE_HOSTS: ${REMOTE_HOSTS:-}
       # 可选调优：抓屏帧上限 / 每个实例共享内存
       # CAST_MAX_WIDTH: "1920"
       # CAST_MAX_HEIGHT: "1080"

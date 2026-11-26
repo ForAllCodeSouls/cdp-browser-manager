@@ -242,3 +242,27 @@ jobs:
       - name: Cleanup browser container
         if: always()
         run: docker rm -f cdp-ci-${{ matrix.mode }} || true
+
+  # 纯源码测试：不依赖镜像构建，也不启动任何浏览器容器。
+  # 用 mock 远端 manager 验证多主机聚合代理与 API_KEY 鉴权。
+  multihost-tests:
+    name: 多主机聚合与鉴权自测
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt httpx
+
+      - name: Run multihost / auth tests
+        run: python test_multihost.py

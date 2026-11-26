@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import io
 import json
 import logging
@@ -12,7 +13,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 from typing import Dict
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import docker
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -54,7 +55,108 @@ _buffer_handler.setFormatter(
 )
 logging.getLogger().addHandler(_buffer_handler)
 
+# ---------- 可选 API 密钥鉴权（多主机统一操控） ----------
+# 默认不设置：完全不启用鉴权，现有单主机部署行为零变化。
+# 设置后：本机管理 API / CDP 代理 / WS 通道都必须带同一密钥。
+# 远端主机的密钥只写在服务端 REMOTE_HOSTS 里，前端拿不到。
+API_KEY = os.environ.get("API_KEY", "").strip()
+
+
+def key_ok(supplied: str) -> bool:
+    if not API_KEY:
+        return True
+    return bool(supplied) and hmac.compare_digest(str(supplied), API_KEY)
+
+
+# ---------- 多主机聚合（后端代理，浏览器只连本机） ----------
+# REMOTE_HOSTS 是 JSON 数组，每项：
+#   {"id":"b","name":"主机B","base":"https://b.example.com","key":"远端API_KEY"}
+# 也支持简易格式：id|名称|base|key;id2|名称2|base2|key2
+# id 只允许字母数字下划线短横线，防止路径注入；"local" 保留给本机。
+REMOTE_HOST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+STATIC_RESOURCE_RE = re.compile(
+    r"\.(js|mjs|css|html?|png|svg|ico|woff2?|ttf|webp|jpe?g|gif|map|json)$", re.I
+)
+
+
+def parse_remote_hosts(raw: str) -> list:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    entries = []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if isinstance(parsed, list):
+            entries = parsed
+    except Exception:
+        for part in raw.split(";"):
+            bits = [b.strip() for b in part.strip().split("|")]
+            if len(bits) >= 3:
+                entries.append({
+                    "id": bits[0], "name": bits[1] or bits[0],
+                    "base": bits[2], "key": bits[3] if len(bits) > 3 else "",
+                })
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        hid = str(entry.get("id") or "").strip()
+        base = str(entry.get("base") or entry.get("url") or "").strip().rstrip("/")
+        if not REMOTE_HOST_ID_RE.fullmatch(hid) or hid == "local":
+            log.warning("忽略非法的 REMOTE_HOSTS id: %r", hid)
+            continue
+        if not base.startswith(("http://", "https://")):
+            log.warning("忽略非法的 REMOTE_HOSTS base: %r", base)
+            continue
+        result[hid] = {
+            "id": hid,
+            "name": str(entry.get("name") or hid),
+            "base": base,
+            "key": str(entry.get("key") or entry.get("api_key") or "").strip(),
+        }
+    return list(result.values())
+
+
+REMOTE_HOSTS = parse_remote_hosts(os.environ.get("REMOTE_HOSTS", ""))
+
+
+def get_remote(host_id: str):
+    for host in REMOTE_HOSTS:
+        if host["id"] == host_id:
+            return host
+    return None
+
+
+def auth_exempt(path: str, method: str) -> bool:
+    """免鉴权路径：面板首页、健康检查、主机列表，以及 noVNC 静态资源。
+
+    noVNC 页面里的 <script>/<link> 无法携带 X-API-Key 头，且这些资源不含敏感
+    信息，因此按扩展名放行；CDP 的 /<port>/json/* 仍然必须带密钥。
+    """
+    if path in ("/", "/api/health", "/api/hosts"):
+        return True
+    m = re.match(r"^/\d+/(.+)$", path)
+    if m and method == "GET":
+        rest = m.group(1)
+        return not rest.startswith("json/") and bool(STATIC_RESOURCE_RE.search(rest))
+    return False
+
+
 app = FastAPI(title="CDP Browser Manager")
+
+
+@app.middleware("http")
+async def api_key_guard(request: Request, call_next):
+    path = request.url.path
+    if API_KEY and not auth_exempt(path, request.method):
+        supplied = request.headers.get("x-api-key") or request.query_params.get("key", "")
+        if not key_ok(supplied):
+            return JSONResponse(status_code=401, content={"detail": "API 密钥无效或缺失"})
+    return await call_next(request)
+
+
 # 用绝对路径定位模板，避免从别的目录启动 uvicorn 时找不到 templates。
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
@@ -589,6 +691,43 @@ def to_view(item: dict, request: Request) -> dict:
     data["cast_ws"] = (
         f"/ws/cast/{item.get('sid', '')}/{{tid}}"
     )
+    return data
+
+
+def remote_request(host: dict, path: str, method: str = "GET", payload=None, timeout: float = 30.0):
+    """调用远端 manager 的 HTTP API，返回 (status, bytes, content_type)。"""
+    import urllib.request
+
+    url = host["base"] + "/" + str(path).lstrip("/")
+    headers = {"Accept": "application/json"}
+    if host.get("key"):
+        headers["X-API-Key"] = host["key"]
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+
+
+def remote_view(host: dict, item: dict, request: Request) -> dict:
+    """改写远端实例的代理地址，使全部走本机 /remote/<host_id>/ 前缀。"""
+    data = dict(item)
+    prefix = "/remote/" + host["id"]
+    base = external_base(request).rstrip("/") + prefix
+    hostpart = host_for_url(host_from_base(external_base(request)))
+    debug = item.get("debug_port")
+    vnc = item.get("vnc_port")
+    novnc = item.get("novnc_port")
+    # 旧字段保留远端 manager 生成的直连地址，老项目的读取方式不变。
+    data["host"] = host["id"]
+    data["host_name"] = host["name"]
+    data["cdp_addr_proxy"] = f"{hostpart}{prefix}/{debug}" if debug else ""
+    data["cdp_http_proxy"] = f"{base}/{debug}" if debug else ""
+    data["vnc_url_proxy"] = f"{base}/{vnc}" if vnc else ""
+    data["novnc_url_proxy"] = f"{base}/{novnc}" if novnc else ""
+    data["cast_ws"] = f"{prefix}/ws/cast/{item.get('sid', '')}/{{tid}}"
     return data
 
 
@@ -1337,17 +1476,58 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
 
 
+@app.get("/api/hosts")
+async def api_hosts(request: Request):
+    """主机列表（免鉴权，供面板在输入密钥前判断是否需要鉴权）。
+
+    未通过本机鉴权时不泄露远端主机信息，只返回 needs_key。
+    """
+    needs_key = bool(API_KEY) and not key_ok(
+        request.headers.get("x-api-key") or request.query_params.get("key", "")
+    )
+    return {
+        "auth_required": bool(API_KEY),
+        "needs_key": needs_key,
+        "hosts": [] if needs_key else [
+            {"id": "local", "name": "本机", "base": ""}
+        ] + [
+            {"id": h["id"], "name": h["name"], "base": h["base"]}
+            for h in REMOTE_HOSTS
+        ],
+    }
+
+
 @app.get("/api/list")
 async def api_list(request: Request):
     await run_in_threadpool(sync_instances)
     with LOCK:
         snapshot = list(INSTANCES.items())
     profiles = await run_in_threadpool(list_profiles)
+    instances = {}
+    for sid, item in snapshot:
+        view = to_view(item, request)
+        view["host"] = "local"
+        view["host_name"] = "本机"
+        instances[sid] = view
+
+    host_errors = []
+    for host in REMOTE_HOSTS:
+        try:
+            _, raw, _ = await run_in_threadpool(remote_request, host, "/api/list")
+            payload = json.loads(raw.decode("utf-8", "replace"))
+            for sid, view in (payload.get("instances") or {}).items():
+                # key 必须等于 view.sid：前端按 sid 索引实例并决定请求前缀。
+                # sid 是 uuid4，跨主机碰撞可忽略；真碰撞时以后端为准覆盖。
+                instances[sid] = remote_view(host, view, request)
+        except Exception as e:
+            log.warning("远端主机 %s 拉取实例失败: %s", host["id"], e)
+            host_errors.append({
+                "host": host["id"], "name": host["name"], "error": str(e)[:200]
+            })
     return {
-        "instances": {
-            sid: to_view(item, request) for sid, item in snapshot
-        },
+        "instances": instances,
         "profiles": profiles,
+        "host_errors": host_errors,
     }
 
 
@@ -1494,14 +1674,35 @@ async def new_instance(request: Request):
     mode = "ephemeral"
     name = ""
     browser_mode = "full"
+    host_id = "local"
     try:
         payload = await request.json()
         if isinstance(payload, dict):
             mode = payload.get("profile_mode", mode)
             name = str(payload.get("profile_name", "") or "")
             browser_mode = payload.get("browser_mode", browser_mode)
+            host_id = str(payload.get("host") or "local")
     except Exception:
         pass
+
+    # 远端主机：由本机代理转发创建，密钥只在本机使用。
+    if host_id != "local":
+        host = get_remote(host_id)
+        if not host:
+            raise HTTPException(status_code=404, detail=f"未知主机: {host_id}")
+        forwarded = {
+            "profile_mode": mode, "profile_name": name,
+            "browser_mode": browser_mode,
+        }
+        try:
+            _, raw, _ = await run_in_threadpool(
+                remote_request, host, "/instance/new", "POST", forwarded
+            )
+            view = json.loads(raw.decode("utf-8", "replace"))
+            return JSONResponse(remote_view(host, view, request))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"远端主机创建失败: {e}")
+
     if mode not in ("ephemeral", "persistent"):
         raise HTTPException(status_code=400, detail="profile_mode 只能是 ephemeral 或 persistent")
     if browser_mode not in VALID_BROWSER_MODES:
@@ -1690,6 +1891,11 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
     """
     import websocket as ws_client
 
+    # WS 不走 HTTP 中间件，需单独校验密钥（从查询参数取，浏览器 WS 无法自定义头）。
+    if not key_ok(websocket.query_params.get("key", "")):
+        await websocket.close(code=4401)
+        return
+
     if not valid_target_id(tid):
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": "非法的标签 ID"})
@@ -1835,17 +2041,161 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
 # 按路径里的端口找到实例，从容器内网访问真实 CDP，并把响应里的 WS 地址改写
 # 成同源地址。这样 Playwright/Puppeteer 等客户端用 https://域名/<port> 即可连接。
 
-def rewrite_cdp_ws_urls(text: str, request: Request, port: int) -> str:
-    """把 CDP JSON 里 ws://127.0.0.1:9223/devtools/... 改成同源 wss 地址。"""
+def rewrite_cdp_ws_urls(text: str, request: Request, port: int, prefix: str = "") -> str:
+    """把 CDP JSON 里的 ws://127.0.0.1:9223/devtools/... 改成同源 wss 地址。
+
+    prefix 用于远端聚合：改写为 /remote/<host_id>/<port>/devtools/...，
+    否则远端返回的 WS 地址会指向用户浏览器不可达的远端主机。
+    """
     base = external_base(request)
     ws_base = "wss://" + base.split("://", 1)[-1] if base.startswith("https://") else "ws://" + base.split("://", 1)[-1]
     # 保留 /devtools/... 之后的部分，替换协议与主机端口。
     pattern = re.compile(r'"(webSocketDebuggerUrl|wss?Url|wsUrl)"\s*:\s*"wss?://[^"]*?(/devtools/[^"]*)"')
 
     def repl(m):
-        return '"' + m.group(1) + '":"' + ws_base + "/" + str(port) + m.group(2) + '"'
+        return '"' + m.group(1) + '":"' + ws_base + prefix + "/" + str(port) + m.group(2) + '"'
 
     return pattern.sub(repl, text)
+
+
+# ---------- 远端主机通用代理（HTTP + WS） ----------
+# 浏览器只与本机面板通信；/remote/<host_id>/<原路径> 由本机转发到远端 manager。
+# 远端密钥放在服务端配置里，绝不出现在页面或 URL 中。
+
+
+@app.api_route(
+    "/remote/{host_id}/{rest:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def remote_http_proxy(host_id: str, rest: str, request: Request):
+    host = get_remote(host_id)
+    if not host:
+        raise HTTPException(status_code=404, detail=f"未知主机: {host_id}")
+    path = rest
+    if request.url.query:
+        path += "?" + request.url.query
+    body = await request.body()
+
+    def do():
+        import urllib.error
+        import urllib.request
+
+        url = host["base"] + "/" + path
+        headers = {}
+        if host.get("key"):
+            headers["X-API-Key"] = host["key"]
+        if request.headers.get("content-type"):
+            headers["Content-Type"] = request.headers["content-type"]
+        req = urllib.request.Request(
+            url, data=body if body else None, headers=headers, method=request.method
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers.get("Content-Type", "")
+
+    try:
+        status, raw, ctype = await run_in_threadpool(do)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"远端主机 {host_id} 请求失败: {e}")
+
+    # CDP JSON 里的 WS 地址需要二次改写到本机代理路径。
+    first = rest.split("/", 1)[0]
+    if first.isdigit() and rest.startswith(first + "/json/") and raw:
+        try:
+            json.loads(raw.decode("utf-8", "replace"))
+            raw = rewrite_cdp_ws_urls(
+                raw.decode("utf-8", "replace"), request, int(first),
+                prefix="/remote/" + host_id,
+            ).encode("utf-8")
+        except Exception:
+            pass
+    return Response(content=raw, status_code=status, media_type=ctype or None)
+
+
+@app.websocket("/remote/{host_id}/{rest:path}")
+async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
+    import websocket as ws_client
+
+    if not key_ok(websocket.query_params.get("key", "")):
+        await websocket.close(code=4401)
+        return
+    host = get_remote(host_id)
+    if not host:
+        await websocket.accept()
+        await websocket.send_json({"error": f"未知主机: {host_id}"})
+        await websocket.close()
+        return
+
+    # 本机鉴权用的 key 不转发；认证远端改用服务端配置的 header。
+    query = urllib.parse.urlencode([
+        (k, v) for k, v in websocket.query_params.multi_items() if k != "key"
+    ])
+    parsed = urlsplit(host["base"])
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    url = f"{scheme}://{parsed.netloc}/{rest}" + ("?" + query if query else "")
+    headers = []
+    if host.get("key"):
+        headers.append(f"X-API-Key: {host['key']}")
+
+    await websocket.accept()
+    upstream = None
+    stop = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def pump():
+        while not stop.is_set():
+            try:
+                raw = upstream.recv()
+            except Exception:
+                break
+            if not raw:
+                break
+            try:
+                coro = (
+                    websocket.send_bytes(raw) if isinstance(raw, bytes)
+                    else websocket.send_text(raw)
+                )
+                asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=3)
+            except Exception:
+                break
+
+    try:
+        upstream = ws_client.create_connection(
+            url, timeout=10, header=headers, suppress_origin=True
+        )
+        threading.Thread(target=pump, daemon=True).start()
+        while True:
+            try:
+                msg = await websocket.receive()
+            except Exception:
+                break
+            if msg.get("type") == "websocket.disconnect":
+                break
+            payload = msg.get("bytes") if msg.get("bytes") is not None else msg.get("text")
+            if payload is None:
+                continue
+            try:
+                await run_in_threadpool(upstream.send, payload)
+            except Exception:
+                break
+    except Exception as e:
+        try:
+            await websocket.send_json({"error": str(e)[:200]})
+        except Exception:
+            pass
+    finally:
+        stop.set()
+        if upstream is not None:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.api_route("/{port}/json/{rest:path}", methods=["GET", "PUT", "POST", "DELETE"])
@@ -1890,6 +2240,10 @@ async def cdp_json_proxy(port: int, rest: str, request: Request):
 async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
     """CDP WebSocket 通用透传：browser 级与 page 级都支持，供自动化客户端连接。"""
     import websocket as ws_client
+
+    if not key_ok(websocket.query_params.get("key", "")):
+        await websocket.close(code=4401)
+        return
 
     await websocket.accept()
     item = instance_by_port(port)
@@ -2002,6 +2356,10 @@ async def novnc_http_proxy(port: int, rest: str, request: Request):
 async def novnc_ws_proxy(websocket: WebSocket, port: int):
     """noVNC websockify 二进制 WS 同源透传（RFB 协议帧，非文本）。"""
     import websocket as ws_client
+
+    if not key_ok(websocket.query_params.get("key", "")):
+        await websocket.close(code=4401)
+        return
 
     await websocket.accept()
     item = instance_by_novnc_port(port)
