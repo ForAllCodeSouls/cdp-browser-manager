@@ -66,6 +66,22 @@ def browser_ws_url(cdp: str) -> str:
     return info["webSocketDebuggerUrl"]
 
 
+def page_ws_url(cdp: str) -> str:
+    with urllib.request.urlopen(cdp.rstrip("/") + "/json/list", timeout=10) as r:
+        targets = json.loads(r.read().decode("utf-8", "replace"))
+    pages = [t for t in targets if t.get("type") == "page"]
+    if not pages:
+        raise RuntimeError("/json/list 没有可用 page 目标")
+    return pages[0]["webSocketDebuggerUrl"]
+
+
+def script_value(value):
+    """不同客户端版本的 execute_script 可能返回原始 CDP 响应，统一取出值。"""
+    if isinstance(value, dict):
+        return value.get("result", {}).get("result", {}).get("value")
+    return value
+
+
 def test_requests(cdp: str):
     import requests
 
@@ -80,7 +96,7 @@ def test_requests(cdp: str):
 def test_websocket_client(cdp: str):
     import websocket
 
-    ws = websocket.create_connection(browser_ws_url(cdp), timeout=10, suppress_origin=True)
+    ws = websocket.create_connection(page_ws_url(cdp), timeout=10, suppress_origin=True)
     try:
         ws.send(
             json.dumps(
@@ -114,7 +130,7 @@ async def _pydoll_async(cdp: str):
 
 
 def test_pydoll(cdp: str):
-    value = asyncio.run(_pydoll_async(cdp))
+    value = script_value(asyncio.run(_pydoll_async(cdp)))
     if value != "PYDOLL_OK":
         raise RuntimeError(f"DOM 读取结果为 {value}")
     return "导航与 DOM 读取 OK"
