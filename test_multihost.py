@@ -123,6 +123,26 @@ class PortProxyRouteTests(unittest.TestCase):
         self.assertNotIn('"/{port}/websockify"', src)
 
 
+class BinaryFrameForwardingTests(unittest.TestCase):
+    """RFB/二进制帧转发必须用 BINARY opcode，否则 websockify 拒绝并关闭连接。"""
+
+    def test_novnc_proxy_uses_binary_opcode(self):
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        # 在 novnc_ws_proxy 函数体内断言二进制分支显式指定了 OPCODE_BINARY。
+        i = src.index("async def novnc_ws_proxy")
+        seg = src[i:i + 4200]
+        self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
+        self.assertIn("if is_binary", seg)
+
+    def test_remote_proxy_uses_binary_opcode(self):
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("async def remote_ws_proxy")
+        seg = src[i:i + 3200]
+        self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
+
+
 class CastQualityProfileTests(unittest.TestCase):
     """抓屏画质三档：未知档位回落均衡，参数不越界。"""
 

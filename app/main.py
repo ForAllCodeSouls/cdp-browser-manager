@@ -2259,8 +2259,15 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
             payload = msg.get("bytes") if msg.get("bytes") is not None else msg.get("text")
             if payload is None:
                 continue
+            # 与 noVNC 代理同理：二进制帧必须显式 BINARY opcode，否则上游按
+            # 文本帧拒绝。CDP 的 JSON 命令是文本帧，保持默认 TEXT 即可。
             try:
-                await run_in_threadpool(upstream.send, payload)
+                if isinstance(payload, (bytes, bytearray)):
+                    await run_in_threadpool(
+                        upstream.send, payload, ws_client.ABNF.OPCODE_BINARY
+                    )
+                else:
+                    await run_in_threadpool(upstream.send, payload)
             except Exception:
                 break
     except Exception as e:
@@ -2498,11 +2505,21 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
             if msg.get("type") == "websocket.disconnect":
                 break
             data = msg.get("bytes")
-            if data is None:
+            is_binary = data is not None
+            if not is_binary:
                 text = msg.get("text")
                 data = text.encode("utf-8") if text else b""
+            # websocket-client 的 send() 默认 opcode=TEXT，直接发 bytes 会被
+            # websockify 当作文本帧拒绝（"Unsupported: Text frames are not
+            # supported"）并关闭连接 —— VNC 就此卡在 Connecting。RFB 帧必须
+            # 显式用 BINARY opcode 转发。
             try:
-                await run_in_threadpool(upstream.send, data)
+                if is_binary:
+                    await run_in_threadpool(
+                        upstream.send, data, ws_client.ABNF.OPCODE_BINARY
+                    )
+                else:
+                    await run_in_threadpool(upstream.send, data)
             except Exception:
                 break
     finally:

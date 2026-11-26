@@ -337,6 +337,7 @@ curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 | CDP 一直"未响应"，端口连不上 | browser 用旧镜像，缺 `--user-data-dir`，Chrome 136+ 静默忽略远程调试参数 | 执行 `bash upgrade.sh`（会删旧容器并用新镜像重建） |
 | 切换实例画面仍是上一个 | 目标实例容器卡死，iframe 加载失败保留旧画面 | 新版面板会显示"画面无法连接"并可重试；执行 `bash upgrade.sh` 重建 |
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
+| VNC 一直显示 Connecting、看不到画面 | manager 的 WS 代理把浏览器发来的 RFB 二进制帧按文本帧转发，websockify 回 `Unsupported: Text frames are not supported` 并断连 | 新版代理对二进制帧显式用 BINARY opcode 转发，直连/同源代理均已实测完成 RFB 握手；确认已重建 manager |
 | 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
 | 抓屏画面卡住/定格（静态页、验证码页） | 页面长时间无视觉变化，CDP 不推 screencast 帧 | 新版 manager 按 `CAST_KEEPALIVE_SEC` 主动截图补帧，静态页也不会冻结；确认已重建 manager |
 | 刷新按钮点了没反应 | 当前没有选中标签，或刷新命令下发失败 | 新版刷新会真实下发 `Page.reload` 并同步地址栏，失败会明确提示；先确认已选中一个标签页 |

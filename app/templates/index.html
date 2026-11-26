@@ -2312,7 +2312,7 @@
                     '</span>';
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
-                    statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) + seg +
+                    statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
                     '<span class="kv">' + (cdpProxyFull ? "CDP(域名)" : "CDP") +
                         ' <b id="cdpVal">' + esc(cdp) + '</b>' +
                         '<button class="copy" onclick="copyCdp(\'domain\')">复制</button></span>' +
@@ -2323,7 +2323,8 @@
                     pinfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
-                    '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>';
+                    '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
+                    seg;
             }
 
             // 右侧日志抽屉与画面并存：开关决定抽屉是否滑出，画面区独立按实例状态渲染。
