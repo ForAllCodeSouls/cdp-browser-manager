@@ -109,7 +109,8 @@ class PortProxyRouteTests(unittest.TestCase):
     """端口代理必须用 {port:int}，否则 /instance/{sid}/stop 会被抢先匹配成 422。"""
 
     def test_all_port_proxy_routes_use_int_converter(self):
-        src = open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
         # 逐一检查四类端口代理路由声明，路径参数都应是 {port:int}。
         self.assertIn('"/{port:int}/json/{rest:path}"', src)
         self.assertIn('"/{port:int}/devtools/{rest:path}"', src)
@@ -120,6 +121,36 @@ class PortProxyRouteTests(unittest.TestCase):
         self.assertNotIn('"/{port}/devtools/', src)
         self.assertNotIn('"/{port}/{rest:path}"', src)
         self.assertNotIn('"/{port}/websockify"', src)
+
+
+class CastQualityProfileTests(unittest.TestCase):
+    """抓屏画质三档：未知档位回落均衡，参数不越界。"""
+
+    def test_three_profiles(self):
+        low = main.cast_quality_profile("low")
+        medium = main.cast_quality_profile("medium")
+        high = main.cast_quality_profile("high")
+        # 省流档分辨率/码率最小且隔帧推送
+        self.assertLess(low["max_width"], medium["max_width"])
+        self.assertLess(medium["max_width"], high["max_width"])
+        self.assertLess(low["quality"], medium["quality"])
+        self.assertLessEqual(medium["quality"], high["quality"])
+        self.assertEqual(low["every_nth"], 2)
+        self.assertEqual(medium["every_nth"], 1)
+        self.assertEqual(high["every_nth"], 1)
+
+    def test_unknown_falls_back_to_medium(self):
+        self.assertEqual(main.cast_quality_profile("bogus"), main.cast_quality_profile("medium"))
+        self.assertEqual(main.cast_quality_profile(""), main.cast_quality_profile("medium"))
+        self.assertEqual(main.cast_quality_profile(None), main.cast_quality_profile("medium"))
+
+    def test_case_insensitive(self):
+        self.assertEqual(main.cast_quality_profile("LOW"), main.cast_quality_profile("low"))
+
+    def test_returns_copy_not_shared(self):
+        a = main.cast_quality_profile("low")
+        a["quality"] = 999
+        self.assertNotEqual(main.cast_quality_profile("low")["quality"], 999)
 
 
 class AuthExemptTests(unittest.TestCase):

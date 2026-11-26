@@ -665,6 +665,15 @@
                 </select>
             </div>
             <div class="row">
+                <label for="setQuality">画质模式</label>
+                <select id="setQuality">
+                    <option value="low">省流（960×540，低码率，隔帧推送）</option>
+                    <option value="medium">均衡（1280×720，推荐）</option>
+                    <option value="high">高清（原始尺寸，高码率）</option>
+                </select>
+                <div class="hint">网络差选省流，网络好用高清。抓屏按分辨率/码率生效；VNC 使用 noVNC 内置质量压缩。首次打开会按浏览器报告的网络自动选一档，之后以你手动保存为准。</div>
+            </div>
+            <div class="row">
                 <label>浏览器镜像 <span id="imageStatusBadge" style="font-size:11px;color:var(--muted)"></span></label>
                 <div class="hint" id="autoUpdateInfo" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">自动更新计划加载中…</div>
                 <button id="btnUpdateAuto" onclick="updateAuto()" style="width:100%" class="btn-primary">立即更新（仅在无实例运行时）</button>
@@ -794,17 +803,42 @@
         }
 
         const SETTINGS_KEY = "cdpManagerSettings";
+        const QUALITY_KEY = "cdpManagerQualitySuggested";
+        // 按浏览器报告的网络自动建议画质档位；仅首次访问、用户未手动保存时生效。
+        function suggestQuality() {
+            try {
+                const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+                if (!c) return "medium";
+                if (c.saveData === true) return "low";
+                const eff = String(c.effectiveType || "");
+                if (eff === "slow-2g" || eff === "2g") return "low";
+                if (eff === "3g") return "medium";
+                if (typeof c.downlink === "number" && c.downlink < 1.5) return "low";
+                return "high";
+            } catch (e) { return "medium"; }
+        }
         function loadSettings() {
             try {
                 const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+                let q = ["low", "medium", "high"].includes(s.quality) ? s.quality : "";
+                if (!q) {
+                    // 没有手动保存过画质：用自动建议，并记住"已建议"，之后仍允许手动覆盖。
+                    if (!localStorage.getItem(QUALITY_KEY)) {
+                        q = suggestQuality();
+                        try { localStorage.setItem(QUALITY_KEY, q); } catch (e) {}
+                    } else {
+                        q = "medium";
+                    }
+                }
                 return {
                     preview: s.preview === "cast" ? "cast" : "vnc",
                     page: s.page === "vnc.html" ? "vnc.html" : "vnc_lite.html",
                     scale: s.scale === "0" ? "0" : "1",
                     screenLocked: s.screenLocked === true,
+                    quality: q,
                 };
             } catch (e) {
-                return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false };
+                return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false, quality: suggestQuality() };
             }
         }
         let settings = loadSettings();
@@ -836,6 +870,7 @@
             $("setPreview").value = settings.preview;
             $("setPage").value = settings.page;
             $("setScale").value = settings.scale;
+            $("setQuality").value = settings.quality || "medium";
             $("settingsMask").classList.add("open");
             // 统一使用缓存数据源，避免与红点轮询结果不一致造成「误报有更新」。
             checkImageStatus();
@@ -848,6 +883,7 @@
                 page: $("setPage").value,
                 scale: $("setScale").value,
                 screenLocked: screenLocked,
+                quality: ["low", "medium", "high"].includes($("setQuality").value) ? $("setQuality").value : "medium",
             };
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
@@ -1350,6 +1386,14 @@
             const isLite = settings.page === "vnc_lite.html";
             const page = settings.page;
             const list = [];
+            // noVNC 画质档位：quality 越高越清晰，compression 越高越省流量。
+            const vncQ = {
+                low: [3, 9],     // 省流
+                medium: [6, 5],  // 均衡
+                high: [9, 2],    // 高清
+            }[settings.quality] || [6, 5];
+            list.push("quality=" + vncQ[0]);
+            list.push("compression=" + vncQ[1]);
             if (!isLite) {
                 list.push("autoconnect=1");
                 if (settings.scale === "1") list.push("resize=scale");
@@ -1372,10 +1416,14 @@
         }
 
         function castWsUrl(i, tid) {
-            const tpl = i.cast_ws || ("/ws/cast/" + i.sid + "/{tid}");
+            let tpl = i.cast_ws || ("/ws/cast/" + i.sid + "/{tid}");
             const proto = location.protocol === "https:" ? "wss:" : "ws:";
             // 远端实例的 cast_ws 已带 /remote/<host> 前缀；WS 无法自定义头，用查询参数传本机密钥。
-            return proto + "//" + location.host + keyQuery(tpl.replace("{tid}", encodeURIComponent(tid)));
+            tpl = keyQuery(tpl.replace("{tid}", encodeURIComponent(tid)));
+            // 画质档位带在 WS 查询串上，后端按档位设置抓屏分辨率/码率。
+            const q = ["low", "medium", "high"].includes(settings.quality) ? settings.quality : "medium";
+            tpl += (tpl.includes("?") ? "&" : "?") + "quality=" + encodeURIComponent(q);
+            return proto + "//" + location.host + tpl;
         }
 
         function statusBadge(i) {
@@ -1978,9 +2026,12 @@
             }
         }
 
-        async function sendCastCommand(method, params) {
+        async function sendCastCommand(method, params, silent = false) {
             const sel = currentSel();
-            if (!sel || !castState) return;
+            if (!sel || !castState) {
+                if (!silent) toast("当前没有可操作的标签页", "error");
+                throw new Error("当前没有可操作的标签页");
+            }
             try {
                 await api(
                     "/api/instance/" + encodeURIComponent(sel.sid) + "/cmd",
@@ -1994,7 +2045,10 @@
                         }),
                     }
                 );
-            } catch (e) { toast("命令失败: " + e.message, "error"); throw e; }
+            } catch (e) {
+                if (!silent) toast("命令失败: " + e.message, "error");
+                throw e;
+            }
         }
 
         // 读取当前标签的 CDP 导航历史：既用于前进/后退按钮的可用状态，
@@ -2081,11 +2135,25 @@
 
         async function reloadCast() {
             if (screenLocked) return;
-            try { await sendCastCommand("Page.reload", { ignoreCache: false }); }
-            catch (e) { return; }
-            toast("已刷新", "ok");
             const sel = currentSel();
-            if (sel && castState) updateCastHistory(sel, castState.tid);
+            if (!sel || !castState || !castState.tid) {
+                toast("当前没有可刷新的标签页", "error");
+                return;
+            }
+            const tid = castState.tid;
+            try {
+                await sendCastCommand("Page.reload", { ignoreCache: false }, true);
+                // 刷新后同步地址栏/历史；稍等页面开始加载再拉取，避免拿到旧条目。
+                setTimeout(() => {
+                    if (castState && castState.sid === sel.sid && castState.tid === tid) {
+                        updateCastHistory(sel, tid);
+                        pollCastTargets();
+                    }
+                }, 700);
+                toast("已刷新", "ok");
+            } catch (e) {
+                toast("刷新失败: " + e.message, "error");
+            }
         }
 
         // 关闭指定标签：标签右侧的 × 用它，关闭的是当前标签时画面会自动切到相邻标签；

@@ -443,6 +443,22 @@ SHM_SIZE = os.environ.get("BROWSER_SHM_SIZE", "512m")
 # 抓屏帧上限与 start.sh 的 1920x1080 窗口对齐，避免大帧拖慢 WS 转发。
 CAST_MAX_WIDTH = int(os.environ.get("CAST_MAX_WIDTH", "1920"))
 CAST_MAX_HEIGHT = int(os.environ.get("CAST_MAX_HEIGHT", "1080"))
+# 抓屏画质三档：省流 / 均衡 / 高清。省流缩小分辨率并隔帧推送，网络差也能看；
+# 高清保持原(start.sh 窗口)上限。前端按档位把参数带在 WS 查询串上。
+CAST_PROFILES = {
+    "low": {"quality": 45, "max_width": 960, "max_height": 540, "every_nth": 2},
+    "medium": {"quality": 65, "max_width": 1280, "max_height": 720, "every_nth": 1},
+    "high": {"quality": 80, "max_width": CAST_MAX_WIDTH, "max_height": CAST_MAX_HEIGHT, "every_nth": 1},
+}
+# 无 screencast 帧时，每隔多久主动 captureScreenshot 补一帧（秒）。
+CAST_KEEPALIVE_SEC = float(os.environ.get("CAST_KEEPALIVE_SEC", "1.5"))
+
+
+def cast_quality_profile(name: str) -> dict:
+    """按档位名返回抓屏参数；未知/空档位回落均衡，避免恶意超大值。"""
+    p = CAST_PROFILES.get(str(name or "").strip().lower())
+    return dict(p or CAST_PROFILES["medium"])
+
 
 INSTANCES: Dict[str, dict] = {}
 LOCK = threading.Lock()
@@ -1916,6 +1932,8 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
         await websocket.close()
         return
 
+    # 画质档位从 WS 查询串读取，未知档位后端回落均衡，前端无需信任用户输入。
+    profile = cast_quality_profile(websocket.query_params.get("quality", ""))
     await websocket.accept()
     upstream = None
     stop = threading.Event()
@@ -1939,38 +1957,61 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             timeout=10,
             suppress_origin=True,
         )
-        # recv 空闲超时设短一点：页面静止时靠超时唤醒循环检查 stop 信号，
-        # 空闲超时会被单独捕获并继续等待，不再误当成断连。
-        upstream.settimeout(2)
+        # recv 空闲超时设短一点：页面静止时靠超时唤醒循环，检查是否需要补帧、
+        # 是否收到 stop 信号；空闲超时会被单独捕获并继续等待，绝不误当断连。
+        upstream.settimeout(1)
 
-        # 帧接收线程：把所有 CDP 消息转发给前端，screencastFrame 自动 Ack。
-        # 关键：页面静止（验证码/挑战页、无动画的静态页）时 CDP 可能几十秒不推帧，
-        # 旧实现把 recv 超时当断连直接 break，画面就永久卡在"未推送画面帧"。
+        # 帧接收线程：转发 screencast 帧 / captureScreenshot 补帧给前端。
+        # 两个关键修复：
+        # 1) recv 空闲超时不再当断连退出 —— 页面静止（挑战页、静态页）时 CDP
+        #    可能几十秒不推帧，旧实现直接 break，画面永久卡住。
+        # 2) 持续补帧 —— 超过 CAST_KEEPALIVE_SEC 没有 screencast 帧，就主动
+        #    captureScreenshot 推一帧，让静止页面也保持"活着"、画面不冻结。
         def pump():
             call_id = 100
-            shot_id = call_id + 3  # 首帧兜底 captureScreenshot 的请求 id
+            ack_id = call_id + 1
+            shot_id = call_id + 2  # captureScreenshot 用递增 id，避免与 ack 混淆
+            pending_shots = set()  # 已发出、尚未收到响应的截图 id（首帧 + 多次补帧可能重叠）
+            q = profile["quality"]
             upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
             upstream_send({
-                "id": call_id + 1,
+                "id": ack_id,
                 "method": "Page.startScreencast",
                 "params": {
                     "format": "jpeg",
-                    "quality": 80,
-                    "everyNthFrame": 1,
-                    "maxWidth": CAST_MAX_WIDTH,
-                    "maxHeight": CAST_MAX_HEIGHT,
+                    "quality": q,
+                    "everyNthFrame": profile["every_nth"],
+                    "maxWidth": profile["max_width"],
+                    "maxHeight": profile["max_height"],
                 },
             })
+
+            def request_shot():
+                nonlocal shot_id
+                shot_id += 1
+                pending_shots.add(shot_id)
+                try:
+                    upstream_send({
+                        "id": shot_id,
+                        "method": "Page.captureScreenshot",
+                        "params": {
+                            "format": "jpeg", "quality": q,
+                            "fromSurface": True,
+                            "captureBeyondViewport": False,
+                        },
+                    })
+                except Exception:
+                    pending_shots.discard(shot_id)
+
             # 首帧兜底：startScreencast 对静止页面可能迟迟不推帧，主动抓当前画面。
-            try:
-                upstream_send({
-                    "id": shot_id,
-                    "method": "Page.captureScreenshot",
-                    "params": {"format": "jpeg", "quality": 80, "fromSurface": True},
-                })
-            except Exception:
-                pass
+            request_shot()
+            last_frame = time.monotonic()
             while not stop.is_set():
+                now = time.monotonic()
+                # 静止超时 → 主动补帧（截图请求发出后，响应在下面按 id 匹配转发）。
+                if now - last_frame >= CAST_KEEPALIVE_SEC:
+                    request_shot()
+                    last_frame = now
                 try:
                     raw = upstream.recv()
                 except ws_client.WebSocketTimeoutException:
@@ -1990,15 +2031,17 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     params = msg.get("params", {})
                     try:
                         upstream_send({
-                            "id": call_id + 2,
+                            "id": ack_id,
                             "method": "Page.screencastFrameAck",
                             "params": {"sessionId": params.get("sessionId", "")},
                         })
                     except Exception:
                         pass
                     data = params.get("data", "")
-                elif msg.get("id") == shot_id and isinstance(msg.get("result"), dict):
-                    # 首帧兜底响应：{id, result:{data}}
+                    last_frame = time.monotonic()  # 收到实帧，重置补帧计时
+                elif msg.get("id") in pending_shots and isinstance(msg.get("result"), dict):
+                    # captureScreenshot 响应：{id, result:{data}}；可能是首帧或任一次补帧。
+                    pending_shots.discard(msg["id"])
                     data = msg["result"].get("data", "")
                 if data:
                     try:

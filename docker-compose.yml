@@ -24,9 +24,10 @@ services:
       # REMOTE_HOSTS: '[{"id":"b","name":"主机B","base":"https://b.example.com","key":"远端API_KEY"}]'
       # 也支持简易格式：b|主机B|https://b.example.com|远端API_KEY;c|主机C|http://10.0.0.2:8000|
       # REMOTE_HOSTS: ${REMOTE_HOSTS:-}
-      # 可选调优：抓屏帧上限 / 每个实例共享内存
+      # 可选调优：抓屏帧上限 / 静止补帧间隔 / 每个实例共享内存
       # CAST_MAX_WIDTH: "1920"
       # CAST_MAX_HEIGHT: "1080"
+      # CAST_KEEPALIVE_SEC: "1.5"  # 静态页无 screencast 帧时主动截图的间隔（秒）
       # BROWSER_SHM_SIZE: 512m
     healthcheck:
       test: ["CMD", "python3", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)"]
