@@ -3,7 +3,8 @@ name: Build & Push CDP Browser Manager
 on:
   push:
     branches: [ main ]
-  # 允许在 Actions 页面手动重建单个镜像/全部镜像，不必为了重打而改代码。
+  # 允许在 Actions 页面手动重建单个镜像/全部镜像：手动触发一律全量重建，
+  # 用于缓存损坏或想强制重打时，不必为了重打而改代码。
   workflow_dispatch:
 
 # 旧构建跑完再跑新的，避免两个 run 同时覆盖 :latest 造成版本错乱。
@@ -12,7 +13,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 关键：按文件变更决定要不要重打镜像。
+  # 过去每次 push（哪怕只改 README）都会重打 full/headless，manifest digest 随之变化，
+  # 面板后台检测到「本地 != 远端」就亮红点——其实浏览器内容根本没变，属于假更新。
+  # 现在浏览器镜像只依赖各自的 Dockerfile 和 start.sh，其它改动一律跳过，digest 保持稳定。
+  changes:
+    name: 检测镜像输入是否变更
+    runs-on: ubuntu-latest
+    outputs:
+      manager: ${{ steps.filter.outputs.manager }}
+      full: ${{ steps.filter.outputs.full }}
+      headless: ${{ steps.filter.outputs.headless }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 计算各镜像是否需要重建
+        id: filter
+        run: |
+          set -euo pipefail
+          all() {
+            echo "manager=true" >> "$GITHUB_OUTPUT"
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "headless=true" >> "$GITHUB_OUTPUT"
+          }
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "手动触发：全量重建"
+            all
+            exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "首次推送：全量重建"
+            all
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" || true)
+          echo "本次变更文件："
+          echo "$CHANGED"
+          m=false; f=false; h=false
+          echo "$CHANGED" | grep -qE '^(Dockerfile\.manager|requirements\.txt|app/)' && m=true || true
+          echo "$CHANGED" | grep -qE '^(Dockerfile\.browser|start\.sh)$' && f=true || true
+          echo "$CHANGED" | grep -qE '^(Dockerfile\.browser-headless|start\.sh)$' && h=true || true
+          echo "manager=$m" >> "$GITHUB_OUTPUT"
+          echo "full=$f" >> "$GITHUB_OUTPUT"
+          echo "headless=$h" >> "$GITHUB_OUTPUT"
+          echo "需要重建：manager=$m full=$f headless=$h"
+
   build:
+    needs: changes
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -29,6 +78,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & Push manager
+        if: needs.changes.outputs.manager == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -40,6 +90,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=manager
 
       - name: Build & Push browser (full)
+        if: needs.changes.outputs.full == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -48,9 +99,13 @@ jobs:
           tags: ghcr.io/forallcodesouls/cdp-browser-full:latest
           cache-from: type=gha,scope=browser-full
           cache-to: type=gha,mode=max,scope=browser-full
+          # 关掉 provenance 证明：它每次构建都带时间戳，即使层完全相同也会让
+          # manifest digest 变化，导致面板误判「有更新」而亮红点。
+          provenance: false
 
       # 两份镜像独立构建：改无头内核只跑这一步，不会重打完整镜像
       - name: Build & Push browser (headless)
+        if: needs.changes.outputs.headless == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -59,6 +114,11 @@ jobs:
           tags: ghcr.io/forallcodesouls/cdp-browser-headless:latest
           cache-from: type=gha,scope=browser-headless
           cache-to: type=gha,mode=max,scope=browser-headless
+          provenance: false
+
+      - name: 记录未重建的镜像
+        run: |
+          echo "本次未触发重建的镜像保持 GHCR 上原 digest 不变（面板不会误报更新）"
 
   manager-smoke:
     name: Manager image smoke test

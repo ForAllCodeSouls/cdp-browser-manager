@@ -713,23 +713,30 @@
         }
 
         // 检测本地浏览器镜像是否落后于 GHCR 远端，落后则在「设置」按钮显示红点。
-        // 只有一个数据源：后端带二次确认 + 10 分钟缓存。force 仅在手动更新后使用。
+        // 只有一个数据源：后端带三次采样确认 + 缓存。force 仅在手动更新后使用。
+        // 红点铁律：只有后台「确认有更新」才亮；检测中 / 失败 / 超时 / 数据为空一律熄灭，
+        // 宁可晚一轮询亮，也不拿不确定或过期的结果误导用户。
         async function checkImageStatus(force = false) {
+            const dot = $("updateDot");
+            const badge = $("imageStatusBadge");
             try {
                 const data = await api("/api/images/status" + (force ? "?force=true" : ""), {}, 20000);
                 const entries = Object.entries(data || {});
-                // local_missing（本地还没镜像）不算「有更新」，否则误报红点。
-                const outdated = entries.filter(([k, v]) => v.update_available && v.status !== "checking");
-                const checking = entries.filter(([k, v]) => v.status === "checking" || (v.unstable && !v.confirmed));
-                const unknown = entries.filter(([k, v]) => v.remote_unknown && !v.local_missing);
-                $("updateDot").style.display = outdated.length ? "block" : "none";
-                const badge = $("imageStatusBadge");
+                if (!entries.length) throw new Error("检测结果为空");
+                // 严格口径：必须后端三次采样确认、状态明确为 update_available 才算有更新。
+                // local_missing（本地还没镜像）与 remote_unknown（远端查不到）都不算，避免误报。
+                const outdated = entries.filter(([k, v]) =>
+                    v && v.confirmed === true && v.status === "update_available" && v.update_available === true);
+                const checking = entries.filter(([k, v]) =>
+                    v && (v.status === "checking" || v.unstable === true ||
+                          v.remote_unknown === true || v.local_missing === true));
+                if (dot) dot.style.display = outdated.length ? "block" : "none";
                 if (badge) {
                     if (outdated.length) {
                         const names = outdated.map(([k]) => (k === "full" ? "完整内核" : "无头内核"));
                         badge.textContent = "● 有更新: " + names.join("、");
                         badge.style.color = "var(--danger)";
-                    } else if (checking.length || unknown.length) {
+                    } else if (checking.length) {
                         // 检测未确认时绝不显示「已是最新」，避免状态反复横跳造成误判。
                         badge.textContent = "… 检测中（远端暂不稳定，稍后自动重试）";
                         badge.style.color = "var(--warn)";
@@ -739,7 +746,13 @@
                     }
                 }
             } catch (e) {
-                // 检测失败不影响主功能，静默降级。
+                // 后台检测失败 / 超时：立刻熄灭红点，徽标如实提示，下一轮轮询会自动重试。
+                // 绝不让上一次的旧红点继续挂着——那正是「刷新一下就有更新、再刷又没了」的来源。
+                if (dot) dot.style.display = "none";
+                if (badge) {
+                    badge.textContent = "… 检测失败，稍后自动重试";
+                    badge.style.color = "var(--warn)";
+                }
             }
         }
 
