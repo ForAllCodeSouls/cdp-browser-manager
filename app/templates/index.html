@@ -233,21 +233,32 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .frame-overlay .hint { font-size: 11px; color: var(--muted); max-width: 420px; line-height: 1.6; }
 
-        /* 屏幕锁：透明拦截层盖住画面，阻止脚本执行期间误点击/误触键盘 */
+        /* 屏幕锁：全透明蒙版盖住画面，画面照常显示，只拦截鼠标/键盘输入 */
         .screen-lock {
             position: absolute; inset: 0; z-index: 4;
-            display: none; flex-direction: column;
-            align-items: center; justify-content: center;
-            gap: 10px; text-align: center; padding: 20px;
-            background: repeating-linear-gradient(
-                45deg, #0f111780, #0f111780 12px, #1a1d2780 12px, #1a1d2780 24px
-            );
-            color: var(--warn); cursor: not-allowed;
+            display: none;
+            background: transparent; cursor: not-allowed;
+            outline: none;
         }
-        .screen-lock.show { display: flex; }
-        .screen-lock .lk-icon { font-size: 30px; line-height: 1; }
-        .screen-lock .lk-title { font-size: 14px; font-weight: 600; }
-        .screen-lock .lk-hint { font-size: 11px; color: var(--muted); max-width: 380px; line-height: 1.6; }
+        .screen-lock.show { display: block; }
+        /* 右上角小角标提示已锁定，不遮挡画面中心 */
+        .screen-lock .lk-badge {
+            position: absolute; top: 10px; right: 12px;
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 10px; border-radius: 999px;
+            background: #0f1117e6; border: 1px solid #6b5426;
+            color: var(--warn); font-size: 11px; font-weight: 600;
+            box-shadow: 0 2px 8px #0008; pointer-events: none;
+        }
+        .screen-lock .lk-badge .lk-pulse {
+            width: 7px; height: 7px; border-radius: 50%; background: var(--warn);
+            animation: lkPulse 1.6s ease-out infinite;
+        }
+        @keyframes lkPulse {
+            0%   { box-shadow: 0 0 0 0 #f0b42999; }
+            70%  { box-shadow: 0 0 0 7px #f0b42900; }
+            100% { box-shadow: 0 0 0 0 #f0b42900; }
+        }
 
         .empty-view {
             flex: 1;
@@ -462,11 +473,8 @@
                     <div class="frame-wrap" id="frameWrap" style="display:none">
                         <div class="frame-overlay" id="frameOverlay"></div>
                         <div class="frame-host" id="frameHost"></div>
-                        <div class="screen-lock" id="screenLock" title="画面已锁定，点击「解锁画面」恢复操作">
-                            <div class="lk-icon">🔒</div>
-                            <div class="lk-title">画面已锁定</div>
-                            <div class="lk-hint">正在执行脚本/自动化操作，鼠标与键盘输入已被拦截，避免误点击。点击右上角「🔒 屏幕锁」或下方按钮解锁。</div>
-                            <button class="btn-locked" onclick="toggleScreenLock()">🔓 解锁画面</button>
+                        <div class="screen-lock" id="screenLock" tabindex="-1" title="画面已锁定：画面照常显示，鼠标/键盘输入已拦截。点击右上角「🔒 已锁定」按钮解锁。">
+                            <div class="lk-badge"><span class="lk-pulse"></span>🔒 画面已锁定 · 输入已拦截</div>
                         </div>
                     </div>
                 </div>
@@ -639,7 +647,13 @@
         // ---- 屏幕锁：拦截画面输入，避免脚本执行期间被误点击打断 ----
         function applyScreenLock() {
             const el = $("screenLock");
-            if (el) el.classList.toggle("show", screenLocked && frameSid !== null);
+            if (el) {
+                el.classList.toggle("show", screenLocked && frameSid !== null);
+                // 锁定时把焦点吸到蒙版本身：键盘事件就不会进入 canvas / VNC iframe。
+                if (screenLocked && frameSid !== null) {
+                    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+                }
+            }
             const btn = $("btnScreenLock");
             if (btn) {
                 btn.textContent = screenLocked ? "🔒 已锁定" : "🔓 屏幕锁";
