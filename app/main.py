@@ -593,7 +593,16 @@ def start_browser_instance(
         if same_net:
             run_kwargs["network"] = same_net
             log.info("实例 %s 加入 manager 网络: %s", sid[:8], same_net)
-        container = client.containers.run(image, **run_kwargs)
+        try:
+            container = client.containers.run(image, **run_kwargs)
+        except docker.errors.APIError as e:
+            if not same_net:
+                raise
+            # 网络名失效（如 compose 项目名变了）时退回默认 bridge，
+            # 后续由 ensure_instances_on_manager_network() 再补接。
+            log.warning("使用网络 %s 创建实例失败，退回默认 bridge: %s", same_net, e)
+            run_kwargs.pop("network", None)
+            container = client.containers.run(image, **run_kwargs)
 
         info = {
             "sid": sid,
@@ -665,14 +674,22 @@ def manager_network() -> str:
     **超时**（不是 ConnectionRefused），表现为 targets 502 / 抓屏不可用。
     让浏览器容器跟 manager 同网即可根治。
     """
-    name = os.environ.get("MANAGER_CONTAINER", "cdp-manager")
+    candidates = [os.environ.get("MANAGER_CONTAINER", "cdp-manager")]
+    # 容器里 socket.gethostname() 就是自身 container id，改过容器名也能找到。
     try:
-        c = client.containers.get(name)
-        for net in (c.attrs.get("NetworkSettings", {}).get("Networks") or {}):
-            if net not in ("host", "none"):
-                return net
-    except Exception as e:
-        log.debug("读取 manager 网络失败，使用默认 bridge: %s", e)
+        candidates.append(socket.gethostname())
+    except Exception:
+        pass
+    for name in candidates:
+        if not name:
+            continue
+        try:
+            c = client.containers.get(name)
+            for net in (c.attrs.get("NetworkSettings", {}).get("Networks") or {}):
+                if net not in ("host", "none"):
+                    return net
+        except Exception as e:
+            log.debug("按 %s 读取 manager 网络失败: %s", name, e)
     return ""
 
 
@@ -778,11 +795,48 @@ def container_diagnostics(container_id: str) -> dict:
     }
 
 
+_LAST_NET_FIX = [0.0]
+
+
+def ensure_instances_on_manager_network() -> None:
+    """把历史遗留的浏览器容器补进 manager 网络（升级后无需删实例重建）。
+
+    老版本创建的实例落在默认 bridge，跨网访问 CDP 会超时。manager 更新后
+    这里会自动 network connect，旧实例随即恢复；已同网的容器是幂等操作。
+    """
+    if time.time() - _LAST_NET_FIX[0] < 30:
+        return
+    _LAST_NET_FIX[0] = time.time()
+    net = manager_network()
+    if not net:
+        return
+    with LOCK:
+        targets = [
+            (sid, item) for sid, item in INSTANCES.items()
+            if item.get("status") == "running"
+        ]
+    for sid, item in targets:
+        try:
+            c = client.containers.get(item.get("container_id", ""))
+            networks = (c.attrs.get("NetworkSettings", {}).get("Networks") or {})
+            if net in networks:
+                continue
+            client.networks.get(net).connect(c)
+            log.info("实例 %s 已接入 manager 网络 %s", sid[:8], net)
+            with LOCK:
+                if sid in INSTANCES:
+                    INSTANCES[sid]["cdp_ready"] = False
+        except Exception as e:
+            log.debug("实例 %s 接入网络 %s 失败: %s", sid[:8], net, e)
+
+
 def cdp_monitor_loop():
     """后台持续探测 running 实例的 CDP 就绪状态，覆盖 restore 恢复的实例。"""
     import urllib.request
 
     while True:
+        # 每轮先自愈网络归属，再探测 CDP；已同网时这里只是几次本地查询。
+        ensure_instances_on_manager_network()
         with LOCK:
             targets = [
                 (sid, item) for sid, item in INSTANCES.items()
