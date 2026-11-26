@@ -43,12 +43,18 @@ class CDPClient:
                 return msg.get("result", {})
         raise RuntimeError(f"CDP 命令 {method} 响应超时")
 
-    def wait_event(self, method: str, timeout: float = 5.0) -> dict:
+    def wait_event(self, method: str, timeout: float = 5.0, predicate=None) -> dict:
         """取出一个已缓存或随后到达的 CDP 事件参数，避免漏掉首帧。"""
         deadline = time.time() + timeout
+
+        def matched(event: dict) -> bool:
+            return event.get("method") == method and (
+                predicate is None or predicate(event.get("params", {}))
+            )
+
         while True:
             for idx, event in enumerate(self.events):
-                if event.get("method") == method:
+                if matched(event):
                     return self.events.pop(idx).get("params", {})
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -67,11 +73,12 @@ class CDPClient:
             pass
 
 
-def _eval(client: CDPClient, expression: str):
+def _eval(client: CDPClient, expression: str, await_promise: bool = False):
     """执行 JS 并按值返回，失败抛错。"""
-    res = client.call(
-        "Runtime.evaluate", {"expression": expression, "returnByValue": True}
-    )
+    params = {"expression": expression, "returnByValue": True}
+    if await_promise:
+        params["awaitPromise"] = True
+    res = client.call("Runtime.evaluate", params)
     if "exceptionDetails" in res:
         raise RuntimeError(str(res["exceptionDetails"]))
     return res.get("result", {}).get("value")
@@ -157,6 +164,7 @@ def run_all(cdp_base: str, emit) -> dict:
             record("Runtime.evaluate 获取页面源码", False, str(e))
 
         # 2b) DOM.getDocument / querySelector / getOuterHTML：通过 CDP 读取节点源码
+        node_id = None
         try:
             client.call("DOM.enable")
             root_id = client.call("DOM.getDocument", {"depth": 1}).get("root", {}).get("nodeId")
@@ -179,6 +187,76 @@ def run_all(cdp_base: str, emit) -> dict:
             record("Page.getResourceTree 读取资源树", bool(url), f"frame url={url[:80]}")
         except Exception as e:
             record("Page.getResourceTree 读取资源树", False, str(e))
+
+        # 2d) Runtime.evaluate：awaitPromise 异步求值
+        try:
+            val = _eval(client, "Promise.resolve(21*2)", await_promise=True)
+            record("Runtime.evaluate awaitPromise 异步求值", val == 42, f"Promise={val}")
+        except Exception as e:
+            record("Runtime.evaluate awaitPromise 异步求值", False, str(e))
+
+        # 2e) Page.reload：刷新后页面内容仍在
+        try:
+            client.call("Page.reload", {"ignoreCache": True})
+            time.sleep(0.5)
+            text = _eval(client, "document.getElementById('t').textContent")
+            record("Page.reload 刷新页面", text == "CDPTEST", f"h1={text}")
+        except Exception as e:
+            record("Page.reload 刷新页面", False, str(e))
+
+        # 2f) Runtime.consoleAPICalled：捕获页面控制台事件
+        try:
+            client.call("Runtime.enable")
+            _eval(client, "console.log('CDPTEST_CONSOLE')")
+            params = client.wait_event(
+                "Runtime.consoleAPICalled",
+                timeout=5,
+                predicate=lambda p: any(
+                    a.get("value") == "CDPTEST_CONSOLE" for a in p.get("args", [])
+                ),
+            )
+            record(
+                "Runtime.consoleAPICalled 控制台事件",
+                params.get("type") == "log",
+                f"type={params.get('type')}",
+            )
+        except Exception as e:
+            record("Runtime.consoleAPICalled 控制台事件", False, str(e))
+
+        # 2g) DOM.getBoxModel：读取元素布局盒模型（reload 后重新取节点）
+        try:
+            root_id = client.call("DOM.getDocument", {"depth": 1}).get("root", {}).get("nodeId")
+            box_node_id = client.call(
+                "DOM.querySelector", {"nodeId": root_id, "selector": "#t"}
+            ).get("nodeId")
+            if not box_node_id:
+                raise RuntimeError("DOM 节点未就绪")
+            model = client.call("DOM.getBoxModel", {"nodeId": box_node_id}).get("model", {})
+            content = model.get("content", [])
+            record("DOM.getBoxModel 读取盒模型", len(content) == 8, f"content={len(content)} 点")
+        except Exception as e:
+            record("DOM.getBoxModel 读取盒模型", False, str(e))
+
+        # 2h) Emulation.setDeviceMetricsOverride：修改并恢复视口尺寸
+        try:
+            client.call(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 800, "height": 600, "deviceScaleFactor": 1, "mobile": False},
+            )
+            width = _eval(client, "window.innerWidth")
+            client.call("Emulation.clearDeviceMetricsOverride")
+            record("Emulation.setDeviceMetricsOverride 视口", width == 800, f"innerWidth={width}")
+        except Exception as e:
+            record("Emulation.setDeviceMetricsOverride 视口", False, str(e))
+
+        # 2i) Performance.getMetrics：读取页面性能指标
+        try:
+            client.call("Performance.enable")
+            metrics = client.call("Performance.getMetrics").get("metrics", [])
+            names = {m.get("name") for m in metrics}
+            record("Performance.getMetrics 性能指标", "Timestamp" in names, f"共 {len(metrics)} 项")
+        except Exception as e:
+            record("Performance.getMetrics 性能指标", False, str(e))
 
         # 3) Runtime.evaluate：表单读写
         try:
@@ -221,6 +299,15 @@ def run_all(cdp_base: str, emit) -> dict:
             record("Input.dispatchKeyEvent 键盘输入", val == "XYZ", f"value={val}")
         except Exception as e:
             record("Input.dispatchKeyEvent 键盘输入", False, str(e))
+
+        # 5a2) Input.insertText：直接插入文本
+        try:
+            _eval(client, "var i=document.getElementById('i');i.focus();i.value=''")
+            client.call("Input.insertText", {"text": "INSERTED"})
+            val = _eval(client, "document.getElementById('i').value")
+            record("Input.insertText 插入文本", val == "INSERTED", f"value={val}")
+        except Exception as e:
+            record("Input.insertText 插入文本", False, str(e))
 
         # 5a) Network.setCookie / getCookies：Cookie 写入并读回
         cookie_url = "https://cdp-selftest.invalid/"
@@ -266,6 +353,30 @@ def run_all(cdp_base: str, emit) -> dict:
             record("Network.deleteCookies 清理 Cookie", count == 0, f"剩余测试 Cookie {count} 个")
         except Exception as e:
             record("Network.deleteCookies 清理 Cookie", False, str(e))
+
+        # 5d) Storage.getUsageAndQuota：读取存储配额
+        try:
+            res = client.call("Storage.getUsageAndQuota", {"origin": cookie_url.rstrip("/")})
+            usage, quota = res.get("usage"), res.get("quota")
+            record(
+                "Storage.getUsageAndQuota 存储配额",
+                isinstance(usage, int) and isinstance(quota, int),
+                f"usage={usage}, quota={quota}",
+            )
+        except Exception as e:
+            record("Storage.getUsageAndQuota 存储配额", False, str(e))
+
+        # 5e) Page.getLayoutMetrics：读取页面布局尺寸
+        try:
+            metrics = client.call("Page.getLayoutMetrics").get("cssLayoutViewport", {})
+            width, height = metrics.get("clientWidth"), metrics.get("clientHeight")
+            record(
+                "Page.getLayoutMetrics 布局尺寸",
+                isinstance(width, int) and isinstance(height, int) and width > 0,
+                f"viewport={width}x{height}",
+            )
+        except Exception as e:
+            record("Page.getLayoutMetrics 布局尺寸", False, str(e))
 
         # 6) Page.captureScreenshot：截图（同时校验 PNG 文件头）
         try:

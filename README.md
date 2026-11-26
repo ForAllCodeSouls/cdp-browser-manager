@@ -186,7 +186,7 @@ services:
 >
 > **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，manager 也会在 2 分钟后自动重试。看到该提示时等 CI 结束后再拉一次，并删除旧实例重建。
 >
-> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 计算、导航与 DOM、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、资源树、Cookie 写入/读取/列举/清理、鼠标点击、键盘输入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
+> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 同步/异步求值、导航与刷新、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、盒模型、资源树、控制台事件、视口与布局尺寸、性能指标、Cookie 写入/读取/列举/清理、存储配额、鼠标点击、键盘输入、文本插入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 
@@ -327,6 +327,7 @@ docker exec <容器名> tail -n 20 /tmp/xvfb.log
 - 容器使用 `--no-sandbox`，适合内网受控环境，不要裸奔公网。
 - manager 挂载了 `docker.sock`，等同于拥有宿主机 Docker 控制权，只能在可信内网使用。
 - 三份镜像均由 GitHub Actions 自动构建推送至 ghcr.io；CI 里是三个独立步骤、独立构建缓存，改无头镜像不会重打完整镜像；同一分支的构建会排队，避免 `latest` 被旧 run 覆盖，也可在 Actions 页面手动触发重建。
+- 每次构建成功后 CI 会自动做两类回归：manager 镜像启动并探测核心接口；full/headless 浏览器镜像分别启动容器，用几种独立的 Python 客户端连接 CDP，验证导航、DOM 读取、JS 执行和截图。测试脚本只在 CI 运行，不进入运行时镜像，也不会在本地开发机安装测试依赖。
 - 创建实例时会扫描宿主机上所有 Docker 容器占用的端口，避让非本管理器创建的 9222/5900/6080 段端口。
 - 旧镜像名 `cdp-browser-browser:latest` 已弃用；升级时执行 `bash upgrade.sh` 会用新镜像重建实例容器。
 - GHCR 仓库名必须全小写，因此镜像路径使用 `forallcodesouls`（对应 GitHub 账号 `ForAllCodeSouls`）。
