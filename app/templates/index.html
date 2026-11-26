@@ -783,7 +783,8 @@
         // 按实例所属主机给管理 API 加路由前缀；单主机时行为与原来完全一致。
         function scopeUrl(url) {
             const s = String(url);
-            const m = s.match(/^\/api\/instance\/([^/?]+)/);
+            // 覆盖 /api/instance/{sid}/... 与 /instance/{sid}/stop 两类实例级接口。
+            const m = s.match(/^\/(?:api\/)?instance\/([^/?]+)/);
             if (!m) return s;
             const inst = instances[decodeURIComponent(m[1])];
             if (inst && inst.host && inst.host !== "local") {
