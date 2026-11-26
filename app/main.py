@@ -3,9 +3,11 @@ import json
 import logging
 import os
 import re
+import socket
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Dict
 from urllib.parse import quote, urlsplit
@@ -21,6 +23,24 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(threadName)s] %(message)s",
 )
 log = logging.getLogger("cdp-manager")
+
+# 内存环形缓冲：即使无法读取自身容器日志（如本地非容器运行），也能提供进程日志。
+LOG_BUFFER = deque(maxlen=int(os.environ.get("LOG_BUFFER_SIZE", "500")))
+
+
+class _BufferHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            LOG_BUFFER.append(self.format(record) + "\n")
+        except Exception:
+            pass
+
+
+_buffer_handler = _BufferHandler(level=logging.NOTSET)
+_buffer_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s")
+)
+logging.getLogger().addHandler(_buffer_handler)
 
 app = FastAPI(title="CDP Browser Manager")
 # 用绝对路径定位模板，避免从别的目录启动 uvicorn 时找不到 templates。
@@ -322,6 +342,11 @@ def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
             container.reload()
             state = container.attrs.get("State", {})
             if state.get("Status") in ("exited", "dead") or state.get("Restarting"):
+                log.warning(
+                    "容器 %s 在 CDP 就绪前已异常退出/重启：status=%s exit=%s restarting=%s error=%s",
+                    container.id[:12], state.get("Status"), state.get("ExitCode"),
+                    state.get("Restarting"), state.get("Error", ""),
+                )
                 return False
         except Exception:
             pass
@@ -481,6 +506,27 @@ def container_logs(container_id: str, tail: int = 120) -> str:
     return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
 
 
+def manager_container_logs(tail: int = 200) -> dict:
+    """读取 manager 自身的全局运行日志（含 uvicorn 访问日志）。
+
+    优先读 manager 容器的 stdout/stderr；读不到时回退到进程内存缓冲。
+    返回 source 字段标明来源，便于前端提示。
+    """
+    name = os.environ.get("MANAGER_CONTAINER", "cdp-manager")
+    try:
+        c = client.containers.get(name)
+        raw = c.logs(tail=tail, stdout=True, stderr=True)
+        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        return {"source": f"container:{name}", "logs": text}
+    except Exception as e:
+        # 容器日志不可用（本地开发、权限不足等）时回退到内存缓冲
+        lines = list(LOG_BUFFER)[-tail:]
+        return {
+            "source": f"memory ({type(e).__name__})",
+            "logs": "".join(lines),
+        }
+
+
 def container_diagnostics(container_id: str) -> dict:
     """返回容器退出码、OOM、重启次数等诊断字段。"""
     c = client.containers.get(container_id)
@@ -520,7 +566,12 @@ def cdp_monitor_loop():
                     ready = False
             with LOCK:
                 if sid in INSTANCES:
+                    prev = INSTANCES[sid].get("cdp_ready")
                     INSTANCES[sid]["cdp_ready"] = ready
+                    if prev is True and ready is False:
+                        log.warning("实例 %s 的 CDP 失联", sid[:8])
+                    elif prev is False and ready is True:
+                        log.info("实例 %s 的 CDP 恢复", sid[:8])
         time.sleep(8)
 
 
@@ -627,6 +678,14 @@ async def api_health():
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Docker 不可用: {e}")
+
+
+@app.get("/api/logs/global")
+async def api_global_logs(tail: int = 200):
+    """manager 自身的全局运行日志，用于整体排查（访问日志、异常堆栈等）。"""
+    if tail < 1 or tail > 2000:
+        tail = 200
+    return await run_in_threadpool(manager_container_logs, tail)
 
 
 @app.get("/api/instance/{sid}/logs")

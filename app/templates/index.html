@@ -262,8 +262,14 @@
             font-size: 13px;
             font-weight: 600;
         }
-        .log-view-sid { color: var(--muted); font-family: ui-monospace, monospace; font-weight: 400; font-size: 11px; }
-        .log-view-actions { display: inline-flex; gap: 8px; font-weight: 400; }
+        .log-view-title { color: var(--text); }
+        .log-view-actions { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; }
+        .log-source-label { color: var(--muted); font-size: 12px; }
+        .log-source {
+            font-size: 12px; padding: 4px 8px;
+            color: var(--text); background: var(--surface-2);
+            border: 1px solid var(--border); border-radius: 6px;
+        }
         .log-diag {
             flex: 0 0 auto;
             padding: 8px 14px;
@@ -349,6 +355,7 @@
             <div class="disclaimer-note">⚠ 仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</div>
         </div>
         <div class="toolbar">
+            <button onclick="openLogsView('global')">运行日志</button>
             <button onclick="openSettings()">⚙ 设置</button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
@@ -376,13 +383,17 @@
             </div>
             <div class="log-view" id="logView" style="display:none">
                 <div class="log-view-head">
-                    <span>容器诊断日志 <span class="log-view-sid" id="logSid"></span></span>
+                    <span class="log-view-title">运行日志</span>
                     <span class="log-view-actions">
-                        <button onclick="loadLogs(activeLogsSid(), true)">刷新</button>
+                        <label class="log-source-label" for="logSource">来源</label>
+                        <select id="logSource" class="log-source" onchange="onLogSourceChange()">
+                            <option value="global">全局 · manager</option>
+                        </select>
+                        <button onclick="loadLogs(force=true)">刷新</button>
                         <button onclick="closeLogsView()">返回画面</button>
                     </span>
                 </div>
-                <div class="log-diag" id="logDiag"></div>
+                <div class="log-diag ok" id="logDiag" style="display:none"></div>
                 <pre class="log-body" id="logBody"></pre>
             </div>
         </section>
@@ -475,9 +486,10 @@
         let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
-        let logsSid = null;         // 当前日志面板所属实例（null 表示不显示日志）
-        let logsDismissed = new Set(); // 用户主动关掉日志的实例，避免轮询时反复自动弹出
-        let logsLoadedSid = null;
+        let logsOpen = false;       // 日志面板是否打开
+        let logSource = "global";   // 日志来源："global" 或某个实例 sid
+        let logsDismissed = false;  // 用户主动关掉后，轮询时不再自动弹出
+        let logsLoadedKey = null;
         let logsLoadedAt = 0;
         let busy = false;
 
@@ -1184,19 +1196,21 @@
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>';
             }
 
-            // 异常实例（非 running）自动打开日志视图，方便直接在页面看到崩溃原因。
-            // 用户手动关掉的实例记入 logsDismissed，轮询时不再反复自动弹出。
-            if (sel && sel.status !== "running" && logsSid !== sel.sid && !logsDismissed.has(sel.sid)) {
-                logsSid = sel.sid;
+            // 存在异常实例（非 running）时自动打开全局日志，方便直接在页面看到整体运行状况与崩溃原因。
+            // 用户主动关掉后 logsDismissed 置位，轮询不再反复弹出。
+            const anyTrouble = list.some(i => i.status !== "running");
+            if (anyTrouble && !logsOpen && !logsDismissed) {
+                logsOpen = true;
+                logSource = "global";
             }
 
-            const logOpen = !!(sel && logsSid === sel.sid);
-            if (logOpen) {
+            if (logsOpen) {
                 clearFrame();
                 $("frameWrap").style.display = "none";
                 $("viewerEmpty").style.display = "none";
                 $("logView").style.display = "flex";
-                loadLogs(sel.sid);
+                renderLogSourceOptions();
+                loadLogs();
             } else {
                 $("logView").style.display = "none";
                 if (!sel || sel.status !== "running") {
@@ -1213,9 +1227,6 @@
         function selectSid(sid) {
             if (selectedSid === sid) return;
             selectedSid = sid;
-            // 切换实例：清除日志面板归属，让新实例按自身状态决定是否自动显示日志。
-            logsSid = null;
-            logsLoadedSid = null;
             render();
         }
 
@@ -1284,49 +1295,84 @@
             }
         }
 
-        function activeLogsSid() { return logsSid || selectedSid; }
+        // 用实例列表刷新日志来源下拉：全局 + 每个实例。
+        function renderLogSourceOptions() {
+            const sel = $("logSource");
+            const opts = ['<option value="global">全局 · manager</option>'];
+            Object.keys(instances).forEach(sid => {
+                const short = sid.slice(0, 8);
+                opts.push('<option value="' + esc(sid) + '">实例 · ' + esc(short) + '</option>');
+            });
+            const html = opts.join("");
+            if (sel.innerHTML !== html) {
+                sel.innerHTML = html;
+            }
+            sel.value = logSource;
+            // 选中的实例已被删除时回退到全局
+            if (logSource !== "global" && !instances[logSource]) {
+                logSource = "global";
+                sel.value = "global";
+            }
+        }
 
-        function openLogsView(sid) {
-            if (!sid) return;
-            logsDismissed.delete(sid);
-            logsSid = sid;
+        function onLogSourceChange() {
+            logSource = $("logSource").value;
+            logsLoadedKey = null; // 强制重新拉取
+            loadLogs(true);
+        }
+
+        function openLogsView(source) {
+            logsDismissed = false;
+            logsOpen = true;
+            logSource = source || "global";
+            logsLoadedKey = null;
             render();
         }
 
         function closeLogsView() {
-            if (logsSid) logsDismissed.add(logsSid);
-            logsSid = null;
+            logsDismissed = true;
+            logsOpen = false;
             render();
         }
 
-        // 加载日志到页面内嵌面板。轮询会自动调用，用 4 秒节流避免频繁打 Docker API；force 用于手动刷新。
-        async function loadLogs(sid, force = false) {
-            if (!sid) return;
+        // 加载日志到页面内嵌面板。轮询会自动调用，用 3 秒节流避免频繁打 Docker API；force 用于手动刷新。
+        async function loadLogs(force = false) {
+            const key = logSource;
             const now = Date.now();
-            if (!force && logsLoadedSid === sid && now - logsLoadedAt < 4000) return;
-            logsLoadedSid = sid;
+            if (!force && logsLoadedKey === key && now - logsLoadedAt < 3000) return;
+            logsLoadedKey = key;
             logsLoadedAt = now;
-            $("logSid").textContent = "(" + sid.slice(0, 8) + ")";
             const diag = $("logDiag");
             const body = $("logBody");
             if (force) body.textContent = "刷新中...";
+            const isGlobal = key === "global";
+            const url = isGlobal
+                ? "/api/logs/global?tail=300"
+                : "/api/instance/" + encodeURIComponent(key) + "/logs?tail=300";
             try {
-                const res = await fetch("/api/instance/" + encodeURIComponent(sid) + "/logs?tail=200", { signal: AbortSignal.timeout(15000) });
+                const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || res.statusText);
-                if (logsSid !== sid) return; // 期间切换了实例，丢弃旧结果
-                const d = data.diagnostics || {};
-                const bad = d.status && d.status !== "running";
-                diag.className = "log-diag" + (bad ? "" : " ok");
-                diag.textContent =
-                    "状态: " + (d.status || "-") +
-                    " | 退出码: " + (d.exit_code === null ? "-" : d.exit_code) +
-                    " | OOM: " + (d.oom_killed ? "是" : "否") +
-                    " | 重启次数: " + (d.restart_count ?? "-") +
-                    (d.error ? " | 错误: " + d.error : "");
+                if (!logsOpen || logSource !== key) return; // 期间切换了来源，丢弃旧结果
+                if (isGlobal) {
+                    diag.style.display = "block";
+                    diag.className = "log-diag ok";
+                    diag.textContent = "日志来源: " + (data.source || "-") + " · 每 10 秒自动刷新";
+                } else {
+                    const d = data.diagnostics || {};
+                    const bad = d.status && d.status !== "running";
+                    diag.style.display = "block";
+                    diag.className = "log-diag" + (bad ? "" : " ok");
+                    diag.textContent =
+                        "状态: " + (d.status || "-") +
+                        " | 退出码: " + (d.exit_code === null ? "-" : d.exit_code) +
+                        " | OOM: " + (d.oom_killed ? "是" : "否") +
+                        " | 重启次数: " + (d.restart_count ?? "-") +
+                        (d.error ? " | 错误: " + d.error : "");
+                }
                 body.textContent = data.logs || "(无日志输出)";
             } catch (e) {
-                if (logsSid !== sid) return;
+                if (!logsOpen || logSource !== key) return;
                 body.textContent = "读取日志失败: " + (e.message || e);
             }
         }
