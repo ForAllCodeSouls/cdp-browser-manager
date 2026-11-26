@@ -26,6 +26,8 @@
 
 > **为什么容器里多了一层 socat 转发**：Chrome 136+ 起把 DevTools 强制绑在 `127.0.0.1`，`--remote-debugging-address=0.0.0.0` 在 148+ 已被完全忽略。若让 Chrome 直接监听 9222，manager 从容器外网桥 IP 访问会超时（表现为「CDP 未响应 / 画面无法连接 / targets 502」）。因此 `start.sh` 让 Chrome 只监听容器内 9223，再由 socat 把 `0.0.0.0:9222` 透明转发到 `127.0.0.1:9223`，对 manager 和外部客户端仍是 9222，完全无感。两份 browser 镜像都内置了 socat。
 
+> **为什么浏览器容器要和 manager 同网**：`docker compose` 会为项目自动创建专属 bridge 网络，而 manager 通过 Docker API 创建的浏览器容器默认落在 `bridge`。两个不同 bridge 网络被 Docker 的隔离规则阻断，manager 按容器 IP 访问 CDP 会**超时**（不是拒绝连接），同样表现为 targets 502 / 抓屏不可用。现在创建实例时会把浏览器容器加入 manager 所在网络；诊断接口 `/api/instance/{sid}/diag` 也会返回 `manager_network` 与 `container_networks` 便于核对。
+
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
 
 > **浏览器顶部提示条已消除**：`--no-sandbox` 会触发 Chrome 76+ 的 "unsupported command-line flag" 安全警告（老参数 `--disable-infobars` 已失效），镜像内置管理策略 `CommandLineFlagSecurityWarningsEnabled: false` 关闭它；Chrome for Testing 的 "only for automated testing" 提示条则由 `--test-type=gpu` 跳过。完整内核 VNC 画面里不会再有这两条占用画面高度的横条。

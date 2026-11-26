@@ -578,17 +578,22 @@ def start_browser_instance(
             published["5900/tcp"] = vnc_port
             published["6080/tcp"] = novnc_port
 
-        container = client.containers.run(
-            image,
-            detach=True,
-            name=f"cdpb-{sid[:8]}",
-            labels=labels,
-            ports=published,
-            environment=environment,
-            volumes=volumes,
-            shm_size=SHM_SIZE,
-            restart_policy={"Name": "unless-stopped"},
-        )
+        run_kwargs = {
+            "detach": True,
+            "name": f"cdpb-{sid[:8]}",
+            "labels": labels,
+            "ports": published,
+            "environment": environment,
+            "volumes": volumes,
+            "shm_size": SHM_SIZE,
+            "restart_policy": {"Name": "unless-stopped"},
+        }
+        # 关键：跟 manager 同网，否则跨 bridge 网络被 Docker 隔离，CDP 必然超时。
+        same_net = manager_network()
+        if same_net:
+            run_kwargs["network"] = same_net
+            log.info("实例 %s 加入 manager 网络: %s", sid[:8], same_net)
+        container = client.containers.run(image, **run_kwargs)
 
         info = {
             "sid": sid,
@@ -649,6 +654,26 @@ def container_ip_by_id(container_id: str) -> str:
         return container_ip(c)
     except Exception:
         return ""
+
+
+def manager_network() -> str:
+    """返回 manager 容器所在的 Docker 网络名。
+
+    docker compose 会自动为项目创建专属 bridge 网络；而 Docker SDK 直接
+    containers.run() 创建的浏览器容器默认落到 `bridge`。不同 bridge 网络之间
+    被 iptables 的 DOCKER-ISOLATION 规则隔离，manager 按容器 IP 访问 CDP 会
+    **超时**（不是 ConnectionRefused），表现为 targets 502 / 抓屏不可用。
+    让浏览器容器跟 manager 同网即可根治。
+    """
+    name = os.environ.get("MANAGER_CONTAINER", "cdp-manager")
+    try:
+        c = client.containers.get(name)
+        for net in (c.attrs.get("NetworkSettings", {}).get("Networks") or {}):
+            if net not in ("host", "none"):
+                return net
+    except Exception as e:
+        log.debug("读取 manager 网络失败，使用默认 bridge: %s", e)
+    return ""
 
 
 def container_logs(container_id: str, tail: int = 120) -> str:
@@ -937,7 +962,14 @@ async def api_instance_diag(sid: str):
     """读取实例容器内的重定向日志与动态库缺失检查，用于定位启动崩溃根因。"""
     item = get_instance(sid)
     try:
-        return await run_in_threadpool(container_diag_files, item["container_id"])
+        result = await run_in_threadpool(container_diag_files, item["container_id"])
+        # 附带网络归属：CDP 超时最常见的原因就是 manager 与浏览器不同网。
+        result["manager_network"] = manager_network()
+        c = client.containers.get(item["container_id"])
+        result["container_networks"] = list(
+            (c.attrs.get("NetworkSettings", {}).get("Networks") or {}).keys()
+        )
+        return result
     except docker.errors.NotFound:
         raise HTTPException(status_code=404, detail="容器已不存在")
     except Exception as e:
