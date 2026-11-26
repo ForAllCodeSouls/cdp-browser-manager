@@ -271,6 +271,8 @@ docker run -d \
 
 新版面板另用 `cdp_addr_proxy`、`cdp_http_proxy`、`vnc_url_proxy`、`novnc_url_proxy` 这四个字段访问同源代理（如 `https://域名/9222`）。`vnc_direct` / `novnc_direct` 是 `vnc_url` / `novnc_url` 的直连别名。也就是说：老脚本读旧字段走直连、新面板读新字段走域名代理，**两种方式并存、互不干扰**。宿主机端口映射始终保留，直连 `http://IP:9222` 不受影响。
 
+实例详情栏会**同时列出两种 CDP 地址**（各自带「复制」按钮）：`CDP(域名)` 是同源代理地址，`CDP(直连)` 是旧格式直连地址；只有后端同时提供新旧字段时才显示两行，旧后端仍只显示一行。
+
 ## 本地构建
 
 ```bash

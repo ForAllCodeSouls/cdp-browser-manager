@@ -2109,6 +2109,9 @@
             } else {
                 const cdp = sel.cdp_addr_proxy || sel.cdp_addr ||
                     (location.hostname + "/" + sel.debug_port);
+                // 新后端同时给出同源代理与旧直连字段时，两种地址都列出来，方便分别复制
+                const cdpProxyFull = sel.cdp_http_proxy || "";
+                const cdpDirectFull = sel.cdp_http || "";
                 const mode = effectiveMode(sel);
                 const headless = isHeadless(sel);
                 // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试。
@@ -2132,8 +2135,13 @@
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
                     statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) + seg +
-                    '<span class="kv">CDP <b id="cdpVal">' + esc(cdp) + '</b>' +
-                        '<button class="copy" onclick="copyCdp()">复制</button></span>' +
+                    '<span class="kv">' + (cdpProxyFull ? "CDP(域名)" : "CDP") +
+                        ' <b id="cdpVal">' + esc(cdp) + '</b>' +
+                        '<button class="copy" onclick="copyCdp(\'domain\')">复制</button></span>' +
+                    (cdpProxyFull && cdpDirectFull
+                        ? '<span class="kv">CDP(直连) <b>' + esc(sel.cdp_addr || cdpDirectFull) + '</b>' +
+                            '<button class="copy" onclick="copyCdp(\'direct\')">复制</button></span>'
+                        : '') +
                     pinfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
@@ -2162,16 +2170,19 @@
             render();
         }
 
-        async function copyCdp() {
+        async function copyCdp(kind) {
             const sel = selectedSid ? instances[selectedSid] : null;
             if (!sel) return;
-            // 复制完整同源 URL（https://域名/端口），自动化客户端可直接连接；
-            // 后端新字段优先；旧后端无 proxy 字段时按当前 origin 构造。
-            const text = sel.cdp_http_proxy ||
-                (location.origin + "/" + sel.debug_port);
+            // domain: 完整同源 URL（https://域名/端口），域名访问下可直接连接；
+            // direct: 旧格式 http://主机:端口，给老项目/局域网直连用。
+            const text = kind === "direct"
+                ? (sel.cdp_http || "")
+                : (sel.cdp_http_proxy || (location.origin + "/" + sel.debug_port));
+            if (!text) return;
+            const label = kind === "direct" ? "CDP 直连地址" : "CDP 域名地址";
             try {
                 await navigator.clipboard.writeText(text);
-                toast("已复制 CDP 地址: " + text, "ok");
+                toast("已复制 " + label + ": " + text, "ok");
             } catch (e) {
                 const ta = document.createElement("textarea");
                 ta.value = text;
@@ -2179,7 +2190,7 @@
                 ta.select();
                 document.execCommand("copy");
                 document.body.removeChild(ta);
-                toast("已复制 CDP 地址", "ok");
+                toast("已复制 " + label, "ok");
             }
         }
 
