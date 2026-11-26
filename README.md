@@ -21,9 +21,9 @@
 |---|---|---|---|
 | 完整内核（full，默认） | `cdp-browser-full` / `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
 | 老无头（headless） | `cdp-browser-headless` / `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；身份由 manager 自动伪装 |
-| 新无头（headless-new） | `cdp-browser-full` / `chrome --headless=new` | 仅 CDP 抓屏 | 复用完整 Chrome 的新无头模式，身份天然是普通 Chrome；不额外新增镜像 |
+| 新无头（headless-new） | `cdp-browser-full` / `chrome --headless=new` | 仅 CDP 抓屏 | 复用完整 Chrome 的新无头模式，无浏览器界面；不额外新增镜像 |
 
-> **关于浏览器身份**：`chrome-headless-shell` 会在 User-Agent 和 `Sec-CH-UA` Client Hints 里写死 `HeadlessChrome`。老无头实例启动后，manager 会挂一条浏览器级 CDP 守护，自动给所有页面（含之后新建的标签）覆盖 UA 与 Client Hints，伪装成与有头实例一致的 `Chrome/主版本.0.0.0`，并让 `navigator.webdriver` 为 `false`。新无头与有头内核身份天然干净，不打补丁。三种方式都不改页面 DOM、不注入页面脚本。注意：`--remote-debugging-port` 是本项目工作的基础，无法隐藏，但普通网页 JS 读不到启动命令行。
+> **关于浏览器身份**：实测 Chrome for Testing 158 的两种无头方式（`chrome-headless-shell` 与完整 Chrome 的 `--headless=new`）都会在 User-Agent 和 `Sec-CH-UA` Client Hints 里报 `HeadlessChrome`。两种无头实例启动后，manager 都会挂一条浏览器级 CDP 守护，自动给所有页面（含之后新建的标签）覆盖 UA 与 Client Hints，伪装成与有头实例一致的 `Chrome/主版本.0.0.0`；三种方式统一加启动参数让 `navigator.webdriver` 为 `false`。守护不改页面 DOM、不注入页面脚本。注意：`--remote-debugging-port` 是本项目工作的基础，无法隐藏，但普通网页 JS 读不到启动命令行。
 
 三种方式的 CDP 端口都是容器内 9222，外部客户端的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
@@ -113,7 +113,7 @@ curl -X POST http://你的IP:8000/instance/new \
   -H 'Content-Type: application/json' \
   -d '{"browser_mode":"headless"}'
 
-# 新建新无头实例（完整 Chrome --headless=new，身份天然干净）
+# 新建新无头实例（完整 Chrome --headless=new，身份同样由 manager 伪装）
 curl -X POST http://你的IP:8000/instance/new \
   -H 'Content-Type: application/json' \
   -d '{"browser_mode":"headless-new"}'

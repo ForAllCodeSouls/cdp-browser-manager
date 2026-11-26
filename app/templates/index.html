@@ -562,9 +562,9 @@
                 <select id="createBrowser">
                     <option value="full">完整 Chrome — 有地址栏/标签栏，支持 VNC 与抓屏</option>
                     <option value="headless">老无头 chrome-headless-shell — 轻量，身份自动伪装</option>
-                    <option value="headless-new">新无头 Chrome --headless=new — 完整内核，身份天然干净</option>
+                    <option value="headless-new">新无头 Chrome --headless=new — 完整内核，身份自动伪装</option>
                 </select>
-                <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。老无头会自动隐藏 HeadlessChrome 身份；两种无头都不提供 VNC。</div>
+                <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。两种无头都会自动隐藏 HeadlessChrome 身份；都不提供 VNC。</div>
             </div>
             <div class="row">
                 <label for="createMode">用户目录模式</label>

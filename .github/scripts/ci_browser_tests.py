@@ -94,10 +94,10 @@ def test_requests(cdp: str):
 
 
 def test_identity_native(cdp: str):
-    """有头与新无头的内核身份应天然干净：无 HeadlessChrome、webdriver=false。
+    """仅在有头内核上验证身份天然干净：无 HeadlessChrome、webdriver=false。
 
-    老无头（headless-shell）的身份由 manager 层 CDP 守护伪装，CI 里没有 manager，
-    因此不在 CI 验证它——那一项由 manager 内置自测覆盖。
+    两种无头（headless-shell 与 --headless=new）实测都会报 HeadlessChrome，
+    身份由 manager 层 CDP 守护伪装；CI 里没有 manager，交给内置自测覆盖。
     """
     import websocket
 
@@ -232,8 +232,8 @@ def main():
 
     print(f"=== CI 浏览器功能测试 mode={args.mode or '-'} cdp={args.cdp} ===")
     check("基础 HTTP 客户端", lambda: test_requests(args.cdp))
-    # 老无头的身份由 manager 守护伪装，CI 无 manager，跳过；由内置自测验证。
-    if args.mode in ("full", "headless-new"):
+    # 两种无头的身份都由 manager 守护伪装，CI 无 manager，跳过；由内置自测验证。
+    if args.mode == "full":
         check("内核身份天然干净", lambda: test_identity_native(args.cdp))
     check("基础 WebSocket 客户端", lambda: test_websocket_client(args.cdp))
     check("Python 自动化客户端 A", lambda: test_pydoll(args.cdp))

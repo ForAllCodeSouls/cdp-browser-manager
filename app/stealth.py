@@ -1,7 +1,8 @@
 """浏览器身份伪装守护。
 
-问题：chrome-headless-shell（老无头内核）会把自己暴露成 HeadlessChrome——
-User-Agent、Sec-CH-UA Client Hints 里都写死，网站一眼就能看出是无头浏览器。
+问题：两种无头方式（chrome-headless-shell 与完整 Chrome 的 --headless=new）
+都会把自己暴露成 HeadlessChrome——User-Agent、Sec-CH-UA Client Hints 里都带，
+网站一眼就能看出是无头浏览器（Chrome for Testing 158 实测两者皆如此）。
 
 解决思路（不注入页面脚本、不改页面 DOM）：
 1. 启动参数层：--disable-blink-features=AutomationControlled 让

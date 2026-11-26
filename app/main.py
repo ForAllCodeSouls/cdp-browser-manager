@@ -70,7 +70,7 @@ BROWSER_IMAGE_HEADLESS = os.environ.get(
 )
 
 
-# 三种启动方式：有头完整 Chrome、老无头壳（身份需补丁）、完整 Chrome 新无头（身份天然干净）。
+# 三种启动方式：有头完整 Chrome、老无头壳、完整 Chrome 新无头；两种无头都需身份补丁。
 # headless-new 复用 full 镜像——里面已有完整 Chrome，加 --headless=new 即可，无需第三份镜像。
 VALID_BROWSER_MODES = ("full", "headless", "headless-new")
 HEADLESS_MODES = ("headless", "headless-new")
@@ -717,13 +717,13 @@ def start_browser_instance(
     return info
 
 
-# 每个实例的身份伪装守护（仅老无头 headless 需要；有头与新无头身份天然干净）。
+# 每个实例的身份伪装守护（两种无头都需要：实测 Chrome 158 的 --headless=new 仍报 HeadlessChrome）。
 STEALTH_GUARDS: dict[str, object] = {}
 STEALTH_LOCK = threading.Lock()
 
 
 def start_stealth_guard(sid: str, ip: str) -> None:
-    """给老无头实例挂身份伪装守护；重复调用幂等。"""
+    """给无头实例挂身份伪装守护；重复调用幂等。"""
     if not ip:
         return
     with STEALTH_LOCK:
@@ -983,9 +983,9 @@ def cdp_monitor_loop():
                         log.warning("实例 %s 的 CDP 失联", sid[:8])
                     elif prev is False and ready is True:
                         log.info("实例 %s 的 CDP 恢复", sid[:8])
-            # 老无头实例在 CDP 首次就绪时挂身份伪装守护（幂等，容器重启后自动重挂）。
-            # 放在锁外，避免联网操作阻塞列表接口；start_stealth_guard 自身幂等。
-            if ready and item.get("browser_mode") == "headless":
+            # 两种无头都挂身份伪装守护（实测 Chrome 158 的 --headless=new 仍报
+            # HeadlessChrome，并非天然干净）。放在锁外避免阻塞列表接口；幂等。
+            if ready and item.get("browser_mode") in HEADLESS_MODES:
                 start_stealth_guard(sid, ip)
         time.sleep(8)
 
@@ -1113,8 +1113,8 @@ def _selftest_one_mode(browser_mode: str) -> dict:
         ip = container_ip(container)
         if not ip:
             raise RuntimeError("临时实例容器网络未就绪")
-        # 老无头临时实例同样要打身份补丁，否则自测里的身份断言会看到 HeadlessChrome。
-        if browser_mode == "headless":
+        # 两种无头的临时实例都要打身份补丁，否则自测里的身份断言会看到 HeadlessChrome。
+        if browser_mode in HEADLESS_MODES:
             start_stealth_guard(sid, ip)
             time.sleep(0.8)  # 给守护一点时间接管现有页面，避免首轮断言读旧值
         # 镜像里 main.py 被平铺到 /app 且以 uvicorn main:app 启动，模块是顶层 selftest；

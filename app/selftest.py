@@ -444,7 +444,7 @@ def run_all(cdp_base: str, emit, browser_mode: str = "full") -> dict:
             record("Runtime.evaluate 读取 UA", False, str(e))
 
         # 10) 身份伪装断言：三种模式都不应暴露 HeadlessChrome。
-        # 老无头靠 manager 的 CDP Emulation 覆盖，新无头靠 --headless=new 天然干净。
+        # 两种无头都靠 manager 的 CDP Emulation 覆盖（实测新无头也报 HeadlessChrome）。
         try:
             fingerprint = _eval(client, (
                 "JSON.stringify({ua:navigator.userAgent,"

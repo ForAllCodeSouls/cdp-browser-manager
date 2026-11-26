@@ -3,7 +3,7 @@
 # 三种启动方式，由 BROWSER_MODE 决定（manager 传入，镜像 ENV 为默认值）：
 #   full        : /usr/bin/chrome               完整浏览器 + Xvfb/VNC，有界面
 #   headless    : /usr/bin/chrome-headless-shell 老无头壳，无界面，仅抓屏；身份由 manager CDP 补丁伪装
-#   headless-new: /usr/bin/chrome --headless=new 完整 Chrome 的新无头模式，无界面，仅抓屏，身份天然干净
+#   headless-new: /usr/bin/chrome --headless=new 完整 Chrome 的新无头模式，无界面，仅抓屏，身份由 manager CDP 补丁伪装
 # 注意：headless-new 用的是 full 镜像里的完整 Chrome，不需要额外镜像；无 VNC/noVNC。
 # 用户目录两种模式（由 manager 通过 PROFILE_DIR 环境变量指定）：
 #   临时模式：PROFILE_DIR=/tmp/cdp-profile        —— 容器删除即清理
@@ -105,8 +105,9 @@ if [ -f /etc/opt/chrome/policies/managed/cdp_browser_manager.json ]; then
 fi
 
 if [ "$BROWSER_MODE" = "headless-new" ]; then
-    # Chrome 112+ 的新无头：与有头共用同一套渲染实现，UA/Client Hints 天然是
-    # 普通 Chrome，无需 Xvfb/VNC，也无需身份补丁。headless-shell 才需要老式无头。
+    # Chrome 112+ 的新无头：与有头共用同一套渲染实现，无需 Xvfb/VNC。
+    # 注意实测 Chrome for Testing 158 的新无头仍报 HeadlessChrome，身份仍需
+    # manager 的 CDP 守护伪装（见 app/stealth.py），这里只负责启动方式。
     CHROME_ARGS+=(--headless=new)
 fi
 
