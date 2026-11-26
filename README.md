@@ -59,7 +59,8 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `BROWSER_IMAGE_FULL` / `BROWSER_IMAGE_HEADLESS` | 官方 GHCR 镜像 | 指定两份 browser 镜像；旧 `BROWSER_IMAGE` 仍作为 full 镜像兼容 |
-| `AUTO_PULL_IMAGES` | `1` | manager 启动后台自动拉取两份浏览器镜像（兼容 Dockge 只更新 manager）；设 `0` 关闭 |
+| `AUTO_PULL_IMAGES` | `1` | 开启定时自动更新；设 `0` 关闭 |
+| `AUTO_UPDATE_INTERVAL_HOURS` | `6` | 定时自动更新的检查间隔（小时，最小 1）：默认每 6 小时检查一次，仅当无运行实例时拉取 |
 | `PUBLIC_HOST` | 空 | 反向代理时填对外地址，如 `https://cdp.example.com`；留空按请求 Host 生成链接 |
 | `MANAGER_ID` | `default` | 多个 manager 共用一台宿主机时，隔离容器标签与持久卷 |
 | `BROWSER_SHM_SIZE` | `512m` | 每个 browser 容器的 `/dev/shm`；启动参数已带 `--disable-dev-shm-usage` |
@@ -176,15 +177,15 @@ services:
 
 > 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。`upgrade.sh` 已带上该参数。
 >
-> **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置兜底——manager 启动后会自动在后台拉取两份浏览器镜像；也可在面板「设置」里更新。镜像更新后需停止并重建实例才会用上新镜像。若不想自动拉取，设 `AUTO_PULL_IMAGES=0`。
+> **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置**定时自动更新**兜底：manager 每 6 小时自动检查一次浏览器镜像，仅当**无任何运行实例**时才拉取更新（避免打断在用浏览器）；启动后也会先做一次检查。设置页会显示「每 6 小时检查一次 / 上次检查结果 / 下次检查时间」，接口为 `GET /api/images/auto-status`。镜像更新后需停止并重建实例才会用上新镜像。若不想自动更新，设 `AUTO_PULL_IMAGES=0`；改间隔设 `AUTO_UPDATE_INTERVAL_HOURS`（小时，最小 1）。
 >
-> **两种更新按钮**：设置里提供「自动更新（仅在无实例运行时）」和「立即更新浏览器镜像（手动）」两个按钮。前者会先检查运行中的实例数，有实例时直接拒绝并提示先停止；后者在点击时弹出确认，提醒你先关闭实例（更新不会应用到已运行实例）。后端对自动更新同样做 409 拦截，双保险。
+> **两种手动按钮**：设置里另有「立即更新（仅在无实例运行时）」和「强制拉取镜像（手动，可跨运行中实例）」。前者先检查运行实例数，有实例时直接拒绝并提示先停止（后端同样做 409 拦截，双保险）；后者不管有无实例都拉取，但不会应用到已运行实例，需重建才生效。定时自动更新与「立即更新」遵循同一规则：有实例就跳过、写日志，下轮无实例时自动补上。
 >
 > **更新红点**：顶栏「⚙ 设置」按钮上的红点表示本地浏览器镜像落后于 GHCR 最新版本（对比镜像摘要，`GET /api/images/status`）；点开设置可看到是完整内核还是无头内核有更新。为避免误报，后端对远端摘要做**二次确认**（连续两次一致且与本地不同才报更新），本地缺镜像不再算「有更新」，红点与设置面板共用同一缓存数据源。红点每 5 分钟自动刷新，后端 10 分钟缓存，无法连接 GHCR 时不亮红点。
 >
 > **浏览器跟随官网自动更新**：`.github/workflows/chrome-auto-update.yml` 每天检查 [Chrome for Testing 官方稳定版](https://googlechromelabs.github.io/chrome-for-testing/)，发现新版本且 linux64 的 `chrome` 与 `chrome-headless-shell` 都可下载时，自动更新两个 Dockerfile 的 `CHROME_VERSION` 并提交，从而触发 `docker-build.yml` 重建 full/headless 镜像。你只需在服务器上更新 manager 并重建实例即可用上新内核。
 >
-> **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，manager 也会在 2 分钟后自动重试。看到该提示时等 CI 结束后再拉一次，并删除旧实例重建。
+> **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，并记为待重试状态，定时自动更新下一轮会再试；手动更新则需等 CI 结束后再拉一次。看到该提示时删除旧实例重建即可用上新版本。
 >
 > **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 同步/异步求值、导航与刷新、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、盒模型、资源树、控制台事件、视口与布局尺寸、性能指标、Cookie 写入/读取/列举/清理、存储配额、鼠标点击、键盘输入、文本插入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
 >

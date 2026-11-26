@@ -80,6 +80,23 @@ def image_for_mode(browser_mode: str) -> str:
 AUTO_PULL_IMAGES = os.environ.get("AUTO_PULL_IMAGES", "1").strip().lower() not in (
     "0", "false", "no", "off"
 )
+# 定时自动更新：manager 每 N 小时检查一次浏览器镜像，仅当无实例运行时才真正拉取。
+try:
+    AUTO_UPDATE_INTERVAL_HOURS = max(1, int(os.environ.get("AUTO_UPDATE_INTERVAL_HOURS", "6")))
+except ValueError:
+    AUTO_UPDATE_INTERVAL_HOURS = 6
+
+# 自动更新运行状态，供设置页展示「上次/下次检查时间、结果」。
+AUTO_UPDATE_STATE = {
+    "enabled": AUTO_PULL_IMAGES,
+    "interval_hours": AUTO_UPDATE_INTERVAL_HOURS,
+    "last_check": 0.0,
+    "next_check": time.time() + 5,
+    "last_status": "pending",   # pending / up_to_date / updated / skipped / error / disabled
+    "last_detail": "尚未检查",
+    "last_result": {},
+}
+AUTO_UPDATE_LOCK = threading.Lock()
 PULL_LOCK = threading.Lock()
 
 # 镜像更新检测缓存：避免面板轮询时反复打 GHCR API。
@@ -894,25 +911,85 @@ def cdp_monitor_loop():
         time.sleep(8)
 
 
-def auto_pull_loop() -> None:
-    """manager 启动后后台拉取最新浏览器镜像，再按较长间隔复查。
+def _auto_update_tick() -> None:
+    """一次定时检查：无实例且远端有更新时才拉取，并记录结果供设置页展示。"""
+    if not AUTO_PULL_IMAGES:
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["last_status"] = "disabled"
+            AUTO_UPDATE_STATE["last_detail"] = "自动更新已在配置中关闭（AUTO_PULL_IMAGES=0）"
+        log.info("[自动更新] 已关闭，跳过本次检查")
+        return
 
-    这是为了兼容 Dockge 等只拉 manager、跳过 profile 占位服务的更新方式：
-    即便用户只在面板点了「更新」，浏览器镜像也会在 manager 重启后自动补齐。
+    running = running_instance_count()
+    if running:
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["last_status"] = "skipped"
+            AUTO_UPDATE_STATE["last_detail"] = f"有 {running} 个运行中的实例，跳过更新；关闭全部实例后下次检查会自动更新"
+        log.info("[自动更新] 有 %d 个运行中的实例，跳过本次检查", running)
+        return
+
+    # 无实例：先比对远端摘要，确实有更新才拉镜像，避免每轮空耗几分钟拉大镜像。
+    try:
+        status = check_images_status(force=True)
+    except Exception as e:
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["last_status"] = "error"
+            AUTO_UPDATE_STATE["last_detail"] = f"检查更新失败: {type(e).__name__}: {e}"
+        log.error("[自动更新] 检查更新失败: %s", e)
+        return
+    outdated = [k for k, v in status.items() if v.get("update_available") or v.get("local_missing")]
+    if not outdated:
+        unknown = [k for k, v in status.items() if v.get("remote_unknown")]
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["last_status"] = "up_to_date"
+            AUTO_UPDATE_STATE["last_detail"] = (
+                "两份镜像均已是最新版本" if not unknown
+                else "无法检测远端，暂不更新（下次检查会重试）"
+            )
+        log.info("[自动更新] 无需更新（有更新=%s，远端未知=%s）", outdated, unknown)
+        return
+
+    log.info("[自动更新] 检测到镜像更新（%s），开始拉取", ", ".join(outdated))
+    result = pull_browser_images()
+    stale = any(v.get("stale") for v in result.values())
+    failed = [k for k, v in result.values() if not v.get("ok")]
+    with AUTO_UPDATE_LOCK:
+        AUTO_UPDATE_STATE["last_result"] = result
+        if failed:
+            AUTO_UPDATE_STATE["last_status"] = "error"
+            AUTO_UPDATE_STATE["last_detail"] = "部分镜像拉取失败，详见运行日志"
+        elif stale:
+            AUTO_UPDATE_STATE["last_status"] = "pending"
+            AUTO_UPDATE_STATE["last_detail"] = "拉到的仍是旧版本，CI 可能仍在构建，下轮会自动重试"
+        else:
+            AUTO_UPDATE_STATE["last_status"] = "updated"
+            AUTO_UPDATE_STATE["last_detail"] = "已自动更新浏览器镜像，新建实例将使用新版本"
+
+
+def auto_pull_loop() -> None:
+    """定时自动更新循环：每 AUTO_UPDATE_INTERVAL_HOURS 小时检查一次。
+
+    启动时先等片刻做一次检查（兼容 Dockge 只更新 manager、跳过 profile 占位服务），
+    之后严格按固定间隔执行；检查间隔与结果写入 AUTO_UPDATE_STATE 供设置页展示。
     """
     # 启动稍等片刻，让 web 服务先可用，拉取大镜像期间面板不卡死。
     time.sleep(5)
+    interval = AUTO_UPDATE_INTERVAL_HOURS * 3600
     while True:
-        delay = 1800
-        if AUTO_PULL_IMAGES:
-            result = pull_browser_images()
-            if any(v.get("stale") for v in result.values()):
-                # CI 正在构建时 pull 到的仍是旧 manifest，2 分钟后重试，
-                # 避免用户以为已更新却仍然 CDP 不通。
-                delay = 120
-                log.warning("浏览器镜像可能仍是旧版本，2 分钟后自动重试")
-        # 每 30 分钟复查一次；检测到拉取到旧版本时缩短到 2 分钟。
-        time.sleep(delay)
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["next_check"] = time.time()
+        try:
+            _auto_update_tick()
+        except Exception as e:
+            log.error("[自动更新] 未预期的异常: %s", e)
+            with AUTO_UPDATE_LOCK:
+                AUTO_UPDATE_STATE["last_status"] = "error"
+                AUTO_UPDATE_STATE["last_detail"] = f"{type(e).__name__}: {e}"
+        with AUTO_UPDATE_LOCK:
+            AUTO_UPDATE_STATE["last_check"] = time.time()
+            AUTO_UPDATE_STATE["next_check"] = time.time() + interval
+        log.info("[自动更新] 本轮完成，下次检查约 %d 小时后", AUTO_UPDATE_INTERVAL_HOURS)
+        time.sleep(interval)
 
 
 threading.Thread(target=cdp_monitor_loop, daemon=True).start()
@@ -1131,6 +1208,16 @@ async def api_images_update_auto():
 async def api_instances_count():
     """返回运行实例数，前端据此在更新前提醒用户关闭浏览器。"""
     return {"running": running_instance_count()}
+
+
+@app.get("/api/images/auto-status")
+async def api_images_auto_status():
+    """定时自动更新的计划与上次结果，设置页据此展示「下次检查时间」。"""
+    with AUTO_UPDATE_LOCK:
+        s = dict(AUTO_UPDATE_STATE)
+    s["running"] = running_instance_count()
+    s["now"] = time.time()
+    return s
 
 
 @app.post("/api/selftest/run")

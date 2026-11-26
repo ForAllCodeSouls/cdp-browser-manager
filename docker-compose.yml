@@ -10,8 +10,10 @@ services:
     environment:
       BROWSER_IMAGE_FULL: ghcr.io/forallcodesouls/cdp-browser-full:latest
       BROWSER_IMAGE_HEADLESS: ghcr.io/forallcodesouls/cdp-browser-headless:latest
-      # manager 启动后自动拉取两份浏览器镜像（兼容 Dockge 只更新 manager 的情况）；设 0 关闭
+      # 定时自动更新：每 6 小时检查一次浏览器镜像，仅当无运行实例时自动拉取。
+      # AUTO_PULL_IMAGES=0 关闭自动更新；AUTO_UPDATE_INTERVAL_HOURS 改检查间隔（小时，最小 1）。
       AUTO_PULL_IMAGES: "1"
+      AUTO_UPDATE_INTERVAL_HOURS: "6"
       # 反向代理时填对外地址，如 https://cdp.example.com；留空则按访问请求的 Host 生成
       PUBLIC_HOST: ${PUBLIC_HOST:-}
       # 可选调优：抓屏帧上限 / 每个实例共享内存
@@ -28,7 +30,7 @@ services:
   # 占位服务：让 `docker compose --profile no-auto-start pull` 能更新两份 browser 镜像。
   # 带 profile 不会被 `docker compose up -d` 启动；manager 按需创建 browser 容器。
   # 注意：Dockge 等面板的「更新」通常跳过带 profile 的服务——此时靠 manager 的
-  # AUTO_PULL_IMAGES 自动拉取，或在设置里点「立即更新浏览器镜像」。
+  # 定时自动更新（每 6 小时、无实例时执行），或在设置里点「立即更新 / 强制拉取」。
   cdp-browser-full-image:
     image: ghcr.io/forallcodesouls/cdp-browser-full:latest
     profiles: ["no-auto-start"]
