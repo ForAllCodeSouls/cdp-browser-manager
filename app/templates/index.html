@@ -448,6 +448,7 @@
                         <div class="log-view-head">
                             <span class="log-view-title">运行日志</span>
                             <span class="log-view-actions">
+                                <button onclick="copyLogs()" title="复制当前日志到剪贴板">复制</button>
                                 <button onclick="loadLogs(true)">刷新</button>
                             </span>
                         </div>
@@ -1442,6 +1443,46 @@
             } catch (e) {
                 if (!logsOpen) return;
                 body.textContent = "读取日志失败: " + (e.message || e);
+            }
+        }
+
+        // 写入剪贴板：HTTP 页面（如 http://IP:8000）下 navigator.clipboard 不可用，
+        // 需用隐藏 textarea + execCommand 兜底，保证复制按钮在公网部署也能用。
+        function writeClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text);
+            }
+            return new Promise(function (resolve, reject) {
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                ta.setAttribute("readonly", "");
+                ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                let ok = false;
+                try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+                document.body.removeChild(ta);
+                ok ? resolve() : reject(new Error("copy failed"));
+            });
+        }
+
+        // 复制日志：优先复制当前显示内容；若为占位/错误文本则重新拉取最新日志。
+        async function copyLogs() {
+            let text = ($("logBody").textContent || "").trim();
+            if (!text || text.indexOf("刷新中") === 0 || text.indexOf("读取日志失败") === 0) {
+                try {
+                    const res = await fetch("/api/logs/global?tail=300", { signal: AbortSignal.timeout(15000) });
+                    const data = await res.json();
+                    if (res.ok) text = (data.logs || "").trim();
+                } catch (e) { /* 拉取失败则用当前内容兜底 */ }
+            }
+            if (!text) { toast("没有可复制的日志", "error"); return; }
+            try {
+                await writeClipboard(text);
+                toast("已复制 " + text.split("\n").length + " 行日志", "ok");
+            } catch (e) {
+                toast("复制失败，请手动选中日志复制", "error");
             }
         }
 
