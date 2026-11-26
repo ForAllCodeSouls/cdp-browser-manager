@@ -1,6 +1,9 @@
 # 约束主版本，避免上游破坏性更新导致升级后管理器起不来。
 fastapi>=0.110,<1
 uvicorn>=0.27,<1
+# uvicorn 裸装不带 WebSocket 协议实现，/ws/cast 抓屏通道会 404
+# （日志：No supported WebSocket library detected）。
+websockets>=12,<16
 jinja2>=3.1,<4
 docker>=7.0,<8
 starlette>=0.36,<1

@@ -26,6 +26,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("cdp-manager")
 
+# uvicorn 裸装不含 WebSocket 协议实现，缺库时 /ws/cast 会静默变成 404，
+# 面板只显示「画面无法连接」。启动时显式报错，便于从全局日志一眼定位。
+try:
+    import websockets  # noqa: F401
+except ImportError:
+    try:
+        import wsproto  # noqa: F401
+    except ImportError:
+        log.error("缺少 WebSocket 协议库：抓屏通道 /ws/cast 将返回 404。请安装 requirements.txt 中的 websockets 后重建 manager 镜像。")
+
 # 内存环形缓冲：即使无法读取自身容器日志（如本地非容器运行），也能提供进程日志。
 LOG_BUFFER = deque(maxlen=int(os.environ.get("LOG_BUFFER_SIZE", "500")))
 
