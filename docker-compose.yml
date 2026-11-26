@@ -10,6 +10,18 @@ services:
     environment:
       BROWSER_IMAGE_FULL: ghcr.io/forallcodesouls/cdp-browser-full:latest
       BROWSER_IMAGE_HEADLESS: ghcr.io/forallcodesouls/cdp-browser-headless:latest
+      # 反向代理时填对外地址，如 https://cdp.example.com；留空则按访问请求的 Host 生成
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      # 可选调优：抓屏帧上限 / 每个实例共享内存
+      # CAST_MAX_WIDTH: "1920"
+      # CAST_MAX_HEIGHT: "1080"
+      # BROWSER_SHM_SIZE: 512m
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   # 占位服务：让 `docker compose pull` 能同时更新两份 browser 大镜像。
   # 带 profile 不会被 `docker compose up -d` 启动；manager 按需创建 browser 容器。

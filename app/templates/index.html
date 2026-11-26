@@ -407,6 +407,19 @@
         </div>
     </div>
 
+    <!-- 容器日志弹窗 -->
+    <div class="mask" id="logsMask" onclick="if(event.target===this) closeLogs()">
+        <div class="panel" style="max-width:820px">
+            <h3>容器诊断日志 <span id="logsSid" style="font-size:12px;color:var(--muted)"></span></h3>
+            <div id="logsDiag" style="font-size:12px;color:var(--warn);margin-bottom:8px"></div>
+            <pre id="logsBody" style="background:#0c0e14;border:1px solid var(--border);border-radius:8px;padding:12px;max-height:52vh;overflow:auto;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-all"></pre>
+            <div class="actions">
+                <button onclick="closeLogs()">关闭</button>
+                <button class="btn-primary" onclick="showLogs(lastLogsSid)">刷新日志</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
@@ -418,6 +431,8 @@
         let castState = null;       // {sid, targets, tid, sig} 当前展示状态
         let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
+        let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
+        let lastLogsSid = null;
         let busy = false;
 
         const SETTINGS_KEY = "cdpManagerSettings";
@@ -509,6 +524,10 @@
                 profileMode = "persistent";
                 profileName = $("createName").value.trim();
                 if (!profileName) { toast("请填写目录名称", "error"); return; }
+                if (!/^[A-Za-z0-9_.-]{1,48}$/.test(profileName)) {
+                    toast("目录名只能包含字母、数字、下划线、点和短横线（1-48 位）", "error");
+                    return;
+                }
             } else if (mode === "reuse") {
                 profileMode = "persistent";
                 profileName = $("reuseName").value;
@@ -559,6 +578,11 @@
             return String(s).replace(/[&<>"']/g, c => ({
                 "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
             }[c]));
+        }
+        // 供内联 onclick 使用：先 JSON 序列化成 JS 字面量，再按 HTML 属性转义。
+        // 这样名字里带引号/反斜杠也不会破坏事件处理器。
+        function jsArg(s) {
+            return esc(JSON.stringify(String(s)));
         }
 
         function vncUrl(i) {
@@ -615,7 +639,11 @@
                 const res = await fetch(url, { ...options, signal: ctrl.signal });
                 if (!res.ok) {
                     let detail = res.statusText;
-                    try { detail = (await res.json()).detail || detail; } catch (e) {}
+                    try {
+                        const body = await res.json();
+                        if (typeof body.detail === "string") detail = body.detail;
+                        else if (body.detail) detail = JSON.stringify(body.detail);
+                    } catch (e) {}
                     throw new Error(detail);
                 }
                 return await res.json();
@@ -738,46 +766,61 @@
             canvas.tabIndex = 0;
             host.appendChild(canvas);
 
-            let gotFrame = false;
-            const ws = new WebSocket(castWsUrl(sel, tid));
-            castWs = ws;
             const mySid = sel.sid;
+            const myTid = tid;
+            const gen = ++castGen;
+            let receivedAny = false;
+            const wsRef = { ws: null };
 
-            ws.onmessage = (ev) => {
-                let msg;
-                try { msg = JSON.parse(ev.data); } catch (e) { return; }
-                if (msg.type === "error") {
-                    frameFailed(mySid, msg.message || "抓屏代理出错");
-                    return;
-                }
-                if (msg.type === "frame" && msg.data) {
-                    const img = new Image();
-                    img.onload = () => {
-                        if (frameSid !== mySid) return;
-                        // 画布尺寸跟随第一帧，保持比例由 CSS object-fit 处理
-                        if (canvas.width !== img.width || canvas.height !== img.height) {
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                        }
-                        const ctx = canvas.getContext("2d");
-                        ctx.drawImage(img, 0, 0);
-                        if (!gotFrame) {
-                            gotFrame = true;
+            // 事件只绑定一次；重连时只替换 wsRef.ws，避免重复监听导致输入被放大。
+            bindCastInput(canvas, wsRef, sel);
+
+            const connect = (attempt) => {
+                if (gen !== castGen || frameSid !== mySid) return;
+                const ws = new WebSocket(castWsUrl(sel, myTid));
+                castWs = ws;
+                wsRef.ws = ws;
+
+                ws.onmessage = (ev) => {
+                    let msg;
+                    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                    if (msg.type === "error") {
+                        frameFailed(mySid, msg.message || "抓屏代理出错");
+                        return;
+                    }
+                    if (msg.type === "frame" && msg.data) {
+                        const img = new Image();
+                        img.onload = () => {
+                            if (gen !== castGen || frameSid !== mySid) return;
+                            if (canvas.width !== img.width || canvas.height !== img.height) {
+                                canvas.width = img.width;
+                                canvas.height = img.height;
+                            }
+                            canvas.getContext("2d").drawImage(img, 0, 0);
+                            receivedAny = true;
                             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
                             $("frameOverlay").className = "frame-overlay";
                             $("frameOverlay").innerHTML = "";
-                        }
-                    };
-                    img.src = "data:image/jpeg;base64," + msg.data;
-                }
+                        };
+                        img.src = "data:image/jpeg;base64," + msg.data;
+                    }
+                };
+                // 交给 onclose 统一处理，避免 onerror + onclose 双重提示。
+                ws.onerror = () => {};
+                ws.onclose = () => {
+                    if (castWs === ws) castWs = null;
+                    if (gen !== castGen || frameSid !== mySid) return;
+                    if (attempt < 2) {
+                        setTimeout(() => connect(attempt + 1), 600 * (attempt + 1));
+                        return;
+                    }
+                    if (!receivedAny) frameFailed(mySid, "抓屏连接失败，请点重试");
+                };
             };
-            ws.onerror = () => { if (frameSid === mySid) frameFailed(mySid, "抓屏 WebSocket 连接失败"); };
-            ws.onclose = () => { if (castWs === ws) castWs = null; };
 
-            bindCastInput(canvas, ws, sel);
-
+            connect(0);
             frameTimer = setTimeout(() => {
-                if (frameSid === mySid && !gotFrame) {
+                if (gen === castGen && frameSid === mySid && !receivedAny) {
                     frameFailed(mySid, "抓屏超时：浏览器未推送画面帧");
                 }
             }, 15000);
@@ -789,7 +832,7 @@
             }
         }
 
-        function bindCastInput(canvas, ws, sel) {
+        function bindCastInput(canvas, wsRef, sel) {
             // 把浏览器内坐标换算成 CDP 视口坐标（canvas 可能被 CSS 缩放）
             const point = (e) => {
                 const r = canvas.getBoundingClientRect();
@@ -798,56 +841,76 @@
                     y: Math.round((e.clientY - r.top) * (canvas.height / r.height)),
                 };
             };
+            const buttonName = (n) => n === 2 ? "right" : n === 1 ? "middle" : "left";
+            const buttonBits = (n) => n === 2 ? 2 : n === 1 ? 4 : 1;
+
+            // mousemove 用 requestAnimationFrame 合并，避免每像素一帧 WS 消息。
+            let pendingMove = null;
             canvas.addEventListener("mousemove", (e) => {
-                const p = point(e);
-                castSend(ws, "Input.dispatchMouseEvent", {
-                    type: "mouseMoved", x: p.x, y: p.y,
-                    modifiers: (e.ctrlKey ? 2 : 0) | (e.altKey ? 1 : 0) | (e.shiftKey ? 8 : 0) | (e.metaKey ? 4 : 0),
+                pendingMove = e;
+                if (pendingMove.__raf) return;
+                pendingMove.__raf = requestAnimationFrame(() => {
+                    const ev = pendingMove;
+                    pendingMove = null;
+                    if (!ev || frameSid !== sel.sid) return;
+                    const p = point(ev);
+                    castSend(wsRef.ws, "Input.dispatchMouseEvent", {
+                        type: "mouseMoved", x: p.x, y: p.y, buttons: ev.buttons,
+                        modifiers: (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 1 : 0) |
+                            (ev.shiftKey ? 8 : 0) | (ev.metaKey ? 4 : 0),
+                    });
                 });
             });
             canvas.addEventListener("mousedown", (e) => {
                 canvas.focus();
                 const p = point(e);
-                castSend(ws, "Input.dispatchMouseEvent", {
-                    type: "mousePressed", x: p.x, y: p.y, button: "left",
-                    clickCount: e.detail || 1,
-                    buttons: 1,
+                castSend(wsRef.ws, "Input.dispatchMouseEvent", {
+                    type: "mousePressed", x: p.x, y: p.y,
+                    button: buttonName(e.button), clickCount: e.detail || 1,
+                    buttons: buttonBits(e.button),
+                    modifiers: (e.ctrlKey ? 2 : 0) | (e.altKey ? 1 : 0) |
+                        (e.shiftKey ? 8 : 0) | (e.metaKey ? 4 : 0),
                 });
             });
             canvas.addEventListener("mouseup", (e) => {
                 const p = point(e);
-                castSend(ws, "Input.dispatchMouseEvent", {
-                    type: "mouseReleased", x: p.x, y: p.y, button: "left",
-                    clickCount: e.detail || 1, buttons: 0,
+                castSend(wsRef.ws, "Input.dispatchMouseEvent", {
+                    type: "mouseReleased", x: p.x, y: p.y,
+                    button: buttonName(e.button), clickCount: e.detail || 1, buttons: 0,
                 });
             });
             canvas.addEventListener("wheel", (e) => {
                 e.preventDefault();
                 const p = point(e);
-                castSend(ws, "Input.dispatchMouseEvent", {
-                    type: "mouseWheel", x: p.x, y: p.y,
-                    deltaX: e.deltaX, deltaY: e.deltaY,
+                castSend(wsRef.ws, "Input.dispatchWheelEvent", {
+                    x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY,
                 });
             }, { passive: false });
             canvas.addEventListener("keydown", (e) => {
-                castSend(ws, "Input.dispatchKeyEvent", {
-                    type: e.char ? "char" : "keyDown",
+                // 新版浏览器里 KeyboardEvent.char 几乎恒为 undefined，
+                // 直接用 e.key 作为 text，否则远程页面输入框打不出字符。
+                const printable = !!e.key && e.key.length === 1;
+                castSend(wsRef.ws, "Input.dispatchKeyEvent", {
+                    type: "keyDown",
                     key: e.key,
                     code: e.code,
                     windowsVirtualKeyCode: e.keyCode,
                     nativeVirtualKeyCode: e.keyCode,
-                    text: e.char || undefined,
+                    text: printable ? e.key : undefined,
+                    unmodifiedText: printable ? e.key : undefined,
                 });
-                if (e.key.length === 1 || ["Enter", "Backspace", "Tab", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+                if (printable || ["Enter", "Backspace", "Tab", "ArrowLeft",
+                    "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
                     e.preventDefault();
                 }
             });
             canvas.addEventListener("keyup", (e) => {
-                castSend(ws, "Input.dispatchKeyEvent", {
+                castSend(wsRef.ws, "Input.dispatchKeyEvent", {
                     type: "keyUp", key: e.key, code: e.code,
                     windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
                 });
             });
+            canvas.addEventListener("contextmenu", (e) => e.preventDefault());
         }
 
         function castSig(targets, tid) {
@@ -867,7 +930,7 @@
 
             const chips = castState.targets.map(t =>
                 '<span class="chip ' + (t.id === castState.tid ? 'on' : '') +
-                '" title="' + esc(t.url) + '" onclick="switchTarget(\'' + t.id + '\')">' +
+                '" title="' + esc(t.url) + '" onclick="switchTarget(' + jsArg(t.id) + ')">' +
                 esc(t.title || t.url || "无标题") + '</span>'
             ).join("");
             const cur = castState.targets.find(t => t.id === castState.tid) || {};
@@ -1016,7 +1079,7 @@
                 $("instanceList").innerHTML = '<div class="side-empty">暂无实例<br>点右上角新建</div>';
             } else {
                 $("instanceList").innerHTML = list.map(i =>
-                    '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(\'' + i.sid + '\')">' +
+                    '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
                         '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
                         '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                             '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
@@ -1034,7 +1097,7 @@
                         '<span class="pname" title="' + esc(p.volume) + '">' + esc(p.name) + '</span>' +
                         (p.used_by
                             ? '<span class="badge running">使用中</span>'
-                            : '<button class="btn-danger btn-mini" onclick="deleteProfile(\'' + esc(p.name) + '\')">删除</button>') +
+                            : '<button class="btn-danger btn-mini" onclick="deleteProfile(' + jsArg(p.name) + ')">删除</button>') +
                     '</div>'
                 ).join("");
             }
@@ -1046,9 +1109,11 @@
                 const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
                 const mode = effectiveMode(sel);
                 const headless = sel.browser_mode === "headless";
-                // 抓屏模式没有独立页面地址，提供 CDP HTTP 便于单独调试
+                // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试
                 const openUrl = mode === "cast"
-                    ? (sel.cdp_http || ("http://" + location.hostname + ":" + sel.debug_port))
+                    ? (sel.cdp_http ||
+                        ("http://" + location.hostname + ":" + sel.debug_port)
+                      ).replace(/\/$/, "") + "/json/version"
                     : vncUrl(sel);
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
@@ -1069,7 +1134,8 @@
                     pinfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
-                    '<button class="btn-danger" onclick="stop(\'' + sel.sid + '\')">停止</button>';
+                    '<button onclick="showLogs(' + jsArg(sel.sid) + ')">日志</button>' +
+                    '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>';
             }
 
             if (!sel || sel.status !== "running") {
@@ -1153,9 +1219,35 @@
             }
         }
 
+        async function showLogs(sid) {
+            if (!sid) return;
+            lastLogsSid = sid;
+            $("logsSid").textContent = "(" + sid.slice(0, 8) + ")";
+            $("logsBody").textContent = "加载中...";
+            $("logsDiag").textContent = "";
+            $("logsMask").style.display = "flex";
+            try {
+                const res = await fetch("/api/instance/" + encodeURIComponent(sid) + "/logs?tail=200", { signal: AbortSignal.timeout(15000) });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || res.statusText);
+                const d = data.diagnostics || {};
+                $("logsDiag").textContent =
+                    "状态: " + (d.status || "-") +
+                    " | 退出码: " + (d.exit_code === null ? "-" : d.exit_code) +
+                    " | OOM: " + (d.oom_killed ? "是" : "否") +
+                    " | 重启次数: " + (d.restart_count ?? "-") +
+                    (d.error ? " | 错误: " + d.error : "");
+                $("logsBody").textContent = data.logs || "(无日志输出)";
+            } catch (e) {
+                $("logsBody").textContent = "读取日志失败: " + (e.message || e);
+            }
+        }
+        function closeLogs() { $("logsMask").style.display = "none"; }
+
         load();
-        setInterval(() => load(true), 10000);
-        setInterval(pollCastTargets, 6000);
+        // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
+        setInterval(() => { if (!document.hidden) load(true); }, 10000);
+        setInterval(() => { if (!document.hidden) pollCastTargets(); }, 6000);
     </script>
 </body>
 </html>

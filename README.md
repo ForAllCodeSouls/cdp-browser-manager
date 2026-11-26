@@ -46,12 +46,28 @@ Chrome 官方 zip 本身约 198 MB，但解压后是 412 MB，再加系统库和
 
 manager 启动后挂载宿主机 Docker socket，按需创建/销毁 browser 容器。完整内核容器内部固定使用 9222（CDP）、5900（VNC）、6080（noVNC），无头内核只使用 9222，再通过端口映射分配宿主机独立端口。`start.sh` 由两份镜像共用，改动它会同时重建两份 browser 镜像；只升级 manager 时大镜像层命中缓存，几乎零下载。
 
+### 可配置环境变量
+
+manager 支持以下环境变量（Compose 中已给出常用项）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `BROWSER_IMAGE_FULL` / `BROWSER_IMAGE_HEADLESS` | 官方 GHCR 镜像 | 指定两份 browser 镜像；旧 `BROWSER_IMAGE` 仍作为 full 镜像兼容 |
+| `PUBLIC_HOST` | 空 | 反向代理时填对外地址，如 `https://cdp.example.com`；留空按请求 Host 生成链接 |
+| `MANAGER_ID` | `default` | 多个 manager 共用一台宿主机时，隔离容器标签与持久卷 |
+| `BROWSER_SHM_SIZE` | `512m` | 每个 browser 容器的 `/dev/shm`；启动参数已带 `--disable-dev-shm-usage` |
+| `CAST_MAX_WIDTH` / `CAST_MAX_HEIGHT` | `1920` / `1080` | 抓屏帧上限，避免高分屏帧拖慢 WS 转发 |
+| `LOG_LEVEL` | `INFO` | manager 日志级别 |
+
+`GET /api/health` 是存活探针：同时检查面板服务与 Docker 守护进程是否可用。镜像内 `HEALTHCHECK` 和 Compose 健康检查都使用它。
+
 ## 功能
 - 一键新建浏览器实例，可选完整/无头内核，自动分配独立 CDP 端口（完整内核另分配 VNC、noVNC）
 - **画面双模式，随时切换**：
   - **VNC**：完整桌面画面，可见地址栏/标签栏（仅完整内核）
   - **CDP 抓屏**：基于 CDP `Page.startScreencast`，画面与自动化共用同一 CDP 端口；支持标签切换、新建/关闭标签、地址栏导航、鼠标键盘交互（两种内核通用，无头内核只能用它）
     - 实现上由 manager 的 `/ws/cast/{sid}/{tid}` 把容器内的 screencast 帧代理到浏览器 canvas，并转发输入事件。不直接用 Chrome 自带的 `devtools/inspector.html`——它的 CSP 只允许 `ws://127.0.0.1`，公网访客连不上。
+    - 输入支持键盘字符、左/右/中键与滚轮；鼠标移动事件按帧合并，WS 意外断开会自动重连，切换实例或标签时会作废旧连接避免画面串台。
 - **用户目录双模式**：
   - **临时目录**：停止实例即清理，适合一次性任务
   - **持久目录**：以 Docker Volume 保存在宿主机，停止实例后数据仍在；新建时可选择「新建持久目录」或「复用已有目录」恢复登录态，需在面板左侧手动点删除才会清除
@@ -107,6 +123,9 @@ curl -X POST http://你的IP:8000/api/instance/{sid}/targets \
 curl -X POST http://你的IP:8000/api/instance/{sid}/cmd \
   -H 'Content-Type: application/json' \
   -d '{"target_id":"标签ID","method":"Page.navigate","params":{"url":"https://example.com"}}'
+
+# 查看容器日志与退出码（实例反复 restarting 时用；面板详情栏也有「日志」按钮）
+curl http://你的IP:8000/api/instance/{sid}/logs?tail=200
 ```
 
 ## 部署（推荐 Docker Compose）
@@ -137,7 +156,7 @@ services:
     profiles: ["no-auto-start"]
 ```
 
-> 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose pull` 把两份 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。
+> 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。`upgrade.sh` 已带上该参数。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 
@@ -150,7 +169,7 @@ bash upgrade.sh
 等价的手动命令：
 
 ```bash
-docker compose pull             # 拉取 manager + full/headless 三份镜像
+docker compose --profile no-auto-start pull   # 拉取 manager + full/headless 三份镜像（含占位服务）
 docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f   # 升级时清理旧浏览器容器
 docker compose up -d            # 后台启动 manager
 docker compose ps              # 查看 manager 状态
@@ -206,6 +225,17 @@ docker build -f Dockerfile.manager         -t ghcr.io/forallcodesouls/cdp-browse
 
 # 若改的是本地 tag，同步修改 compose 里的镜像名后再启动
 docker compose up -d
+```
+
+## 修改后自检
+
+改完代码可以先在本地跑一遍静态检查，确认没有低级错误再提交：
+
+```bash
+python -m py_compile app/main.py                  # 后端语法
+bash -n start.sh upgrade.sh                       # 启动/升级脚本
+docker compose config -q                          # Compose 配置
+curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 ```
 
 ## 故障排查
@@ -266,7 +296,8 @@ docker exec <容器名> tail -n 20 /tmp/xvfb.log
 
 - 容器使用 `--no-sandbox`，适合内网受控环境，不要裸奔公网。
 - manager 挂载了 `docker.sock`，等同于拥有宿主机 Docker 控制权，只能在可信内网使用。
-- 三份镜像均由 GitHub Actions 自动构建推送至 ghcr.io；CI 里是三个独立步骤，改无头镜像不会重打完整镜像。
+- 三份镜像均由 GitHub Actions 自动构建推送至 ghcr.io；CI 里是三个独立步骤、独立构建缓存，改无头镜像不会重打完整镜像；同一分支的构建会排队，避免 `latest` 被旧 run 覆盖，也可在 Actions 页面手动触发重建。
+- 创建实例时会扫描宿主机上所有 Docker 容器占用的端口，避让非本管理器创建的 9222/5900/6080 段端口。
 - 旧镜像名 `cdp-browser-browser:latest` 已弃用；升级时执行 `bash upgrade.sh` 会用新镜像重建实例容器。
 - GHCR 仓库名必须全小写，因此镜像路径使用 `forallcodesouls`（对应 GitHub 账号 `ForAllCodeSouls`）。
 - 若 GHCR 镜像为私有，先执行 `docker login ghcr.io -u ForAllCodeSouls` 再启动。

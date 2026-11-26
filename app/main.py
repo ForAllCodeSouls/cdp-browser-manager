@@ -1,12 +1,14 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Dict
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import docker
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -14,8 +16,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(threadName)s] %(message)s",
+)
+log = logging.getLogger("cdp-manager")
+
 app = FastAPI(title="CDP Browser Manager")
-templates = Jinja2Templates(directory="templates")
+# 用绝对路径定位模板，避免从别的目录启动 uvicorn 时找不到 templates。
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
 client = docker.from_env()
 # 完整内核与无头内核是两份独立镜像，改哪个只重新构建哪个。
@@ -56,6 +65,16 @@ PROFILE_OWNER_LABEL = "cdp.profile.owner"
 BROWSER_MODE_LABEL = "cdp.browser.mode"
 MANAGER_ID = os.environ.get("MANAGER_ID", "default")
 
+# 参数白名单：与前端提示保持一致，避免同名目录映射到同一个 Volume。
+PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,48}$")
+# Chrome 的 target id 是十六进制串，这里放宽到常见的安全字符集即可。
+TARGET_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# 容器共享内存：启动参数已带 --disable-dev-shm-usage，无需给每个实例预留 2GB。
+SHM_SIZE = os.environ.get("BROWSER_SHM_SIZE", "512m")
+# 抓屏帧上限与 start.sh 的 1920x1080 窗口对齐，避免大帧拖慢 WS 转发。
+CAST_MAX_WIDTH = int(os.environ.get("CAST_MAX_WIDTH", "1920"))
+CAST_MAX_HEIGHT = int(os.environ.get("CAST_MAX_HEIGHT", "1080"))
+
 INSTANCES: Dict[str, dict] = {}
 LOCK = threading.Lock()
 
@@ -78,10 +97,58 @@ def find_free(start: int, end: int, used: set) -> int:
     raise RuntimeError(f"端口池耗尽: {start}-{end}")
 
 
+def collect_used_ports() -> dict:
+    """收集宿主机上所有 Docker 容器占用的端口，避让非本 manager 创建的容器。
+
+    只看带 manager 标签的容器会漏掉其它服务占用的 9222/5900/6080 等端口，
+    创建时才会被 Docker 报 "port is already allocated"。这里统一扫描全部容器，
+    并把落在三个端口池内的宿主机端口加入避让集合。
+    """
+    used = {"debug": set(), "vnc": set(), "novnc": set()}
+    try:
+        containers = client.containers.list(all=True)
+    except docker.errors.APIError as e:
+        log.warning("读取容器列表失败，尝试只读取本 manager 的容器: %s", e)
+        try:
+            containers = client.containers.list(
+                all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
+            )
+        except Exception:
+            return used
+    for c in containers:
+        ports = c.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
+        for bindings in ports.values():
+            if not bindings:
+                continue
+            for binding in bindings:
+                raw = binding.get("HostPort") if isinstance(binding, dict) else None
+                if not raw or not str(raw).isdigit():
+                    continue
+                port = int(raw)
+                if PORT_DEBUG_START <= port <= PORT_DEBUG_END:
+                    used["debug"].add(port)
+                elif PORT_VNC_START <= port <= PORT_VNC_END:
+                    used["vnc"].add(port)
+                elif PORT_NOVNC_START <= port <= PORT_NOVNC_END:
+                    used["novnc"].add(port)
+    return used
+
+
 def public_base(request: Request) -> str:
     if PUBLIC_HOST:
         return PUBLIC_HOST
     return f"{request.url.scheme}://{request.headers.get('host', request.client.host)}"
+
+
+def host_from_base(base: str) -> str:
+    """从 public_base 中取纯 host，兼容 IPv6 地址。"""
+    parsed = urlsplit(base if "://" in base else "//" + base)
+    return parsed.hostname or ""
+
+
+def host_for_url(host: str) -> str:
+    """IPv6 地址放进 URL 时需要方括号。"""
+    return f"[{host}]" if ":" in host else host
 
 
 def parse_ports(container) -> dict:
@@ -151,6 +218,7 @@ def remove_profile(name: str) -> bool:
     try:
         v = client.volumes.get(vname)
         v.remove(force=True)
+        log.info("删除持久目录 %s（%s）", name, vname)
         return True
     except docker.errors.NotFound:
         return False
@@ -164,8 +232,17 @@ def sync_instances():
     for sid, item in snapshot:
         try:
             container = client.containers.get(item["container_id"])
-            item["status"] = container.status
-            item.update(parse_ports(container))
+            status = container.status
+            ports = parse_ports(container)
+            # 统一在锁内写回，避免与 cdp 监控线程/创建接口并发改同一字典。
+            with LOCK:
+                current = INSTANCES.get(sid)
+                if current is None:
+                    continue
+                current["status"] = status
+                current.update(ports)
+                if status != "running":
+                    current["cdp_ready"] = False
         except docker.errors.NotFound:
             with LOCK:
                 INSTANCES.pop(sid, None)
@@ -206,8 +283,7 @@ def restore_instances():
 def to_view(item: dict, request: Request) -> dict:
     data = dict(item)
     base = public_base(request)
-    host_only = base.split("://", 1)[-1]
-    host = host_only.split(":")[0]
+    host = host_for_url(host_from_base(base))
     debug = item.get("debug_port")
     vnc = item.get("vnc_port")
     novnc = item.get("novnc_port")
@@ -276,21 +352,7 @@ def start_browser_instance(
     ensure_image_available(image_for_mode(browser_mode))
     # 端口分配必须在锁内完成，避免并发创建分配到同一端口
     with LOCK:
-        used = {"debug": set(), "vnc": set(), "novnc": set()}
-        # parse_ports 返回的是 debug_port/vnc_port/novnc_port，需做键名映射
-        key_map = {
-            "debug": "debug_port",
-            "vnc": "vnc_port",
-            "novnc": "novnc_port",
-        }
-        for c in client.containers.list(
-            all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
-        ):
-            ports = parse_ports(c)
-            for short_key, long_key in key_map.items():
-                value = ports.get(long_key)
-                if value is not None:
-                    used[short_key].add(value)
+        used = collect_used_ports()
 
         debug_port = find_free(PORT_DEBUG_START, PORT_DEBUG_END, used["debug"])
         if browser_mode == "headless":
@@ -347,7 +409,7 @@ def start_browser_instance(
             ports=published,
             environment=environment,
             volumes=volumes,
-            shm_size="2gb",
+            shm_size=SHM_SIZE,
             restart_policy={"Name": "unless-stopped"},
         )
 
@@ -365,6 +427,10 @@ def start_browser_instance(
         }
         INSTANCES[sid] = info
 
+    log.info(
+        "创建实例 %s：内核=%s 镜像=%s CDP=%s VNC=%s",
+        sid[:8], browser_mode, image, debug_port, vnc_port,
+    )
     # 锁外等待 CDP 就绪，避免阻塞其他请求查询；超时也标记状态而非无限阻塞
     info["cdp_ready"] = wait_cdp_ready(container)
     return info
@@ -372,19 +438,30 @@ def start_browser_instance(
 
 def stop_instance(sid: str) -> bool:
     with LOCK:
-        item = INSTANCES.pop(sid, None)
+        item = INSTANCES.get(sid)
     if not item:
         return False
     try:
         c = client.containers.get(item["container_id"])
         c.remove(force=True)
-    except (docker.errors.NotFound, docker.errors.APIError):
+    except docker.errors.NotFound:
         pass
+    except docker.errors.APIError as e:
+        log.warning("删除实例 %s 的容器失败: %s", sid[:8], e)
+    finally:
+        # 无论 Docker 删除是否报错，都从面板移除，避免"幽灵实例"一直卡在列表里。
+        with LOCK:
+            INSTANCES.pop(sid, None)
     # 持久模式的 volume 不随容器删除，数据保留
+    log.info("停止实例 %s", sid[:8])
     return True
 
 
-restore_instances()
+try:
+    restore_instances()
+except Exception as e:
+    # Docker 暂时不可用时仍允许 manager 启动，后续接口给出明确错误。
+    log.error("恢复已有实例失败（不影响新建）: %s", e)
 
 
 def container_ip_by_id(container_id: str) -> str:
@@ -395,6 +472,29 @@ def container_ip_by_id(container_id: str) -> str:
         return container_ip(c)
     except Exception:
         return ""
+
+
+def container_logs(container_id: str, tail: int = 120) -> str:
+    """读取 browser 容器的 stdout/stderr，用于排查启动崩溃。"""
+    c = client.containers.get(container_id)
+    raw = c.logs(tail=tail, stdout=True, stderr=True)
+    return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+
+
+def container_diagnostics(container_id: str) -> dict:
+    """返回容器退出码、OOM、重启次数等诊断字段。"""
+    c = client.containers.get(container_id)
+    c.reload()
+    state = c.attrs.get("State", {}) or {}
+    return {
+        "status": c.status,
+        "exit_code": state.get("ExitCode"),
+        "oom_killed": bool(state.get("OOMKilled")),
+        "error": state.get("Error", "") or "",
+        "restart_count": state.get("RestartCount", 0),
+        "started_at": state.get("StartedAt", ""),
+        "finished_at": state.get("FinishedAt", ""),
+    }
 
 
 def cdp_monitor_loop():
@@ -439,10 +539,16 @@ def get_instance(sid: str) -> dict:
     return item
 
 
+def valid_target_id(tid: str) -> bool:
+    return bool(TARGET_ID_RE.fullmatch(tid or ""))
+
+
 def cdp_http(sid: str, path: str, method: str = "GET") -> object:
     """从容器内网访问 CDP HTTP 端点，返回解析后的 JSON。"""
     import urllib.request
 
+    if not path.startswith("/"):
+        raise RuntimeError("非法 CDP 路径")
     item = get_instance(sid)
     ip = container_ip_by_id(item.get("container_id"))
     if not ip:
@@ -513,6 +619,30 @@ async def api_list(request: Request):
     }
 
 
+@app.get("/api/health")
+async def api_health():
+    """存活探针：面板在线且 Docker 守护进程可达。"""
+    try:
+        await run_in_threadpool(client.ping)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Docker 不可用: {e}")
+
+
+@app.get("/api/instance/{sid}/logs")
+async def api_instance_logs(sid: str, tail: int = 120):
+    """读取实例容器日志与退出状态；容器反复重启时用它定位根因。"""
+    item = get_instance(sid)
+    try:
+        logs = await run_in_threadpool(container_logs, item["container_id"], tail)
+        diag = await run_in_threadpool(container_diagnostics, item["container_id"])
+        return {"ok": True, "diagnostics": diag, "logs": logs}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail="容器已不存在")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/api/profiles")
 async def api_profiles():
     return {"profiles": await run_in_threadpool(list_profiles)}
@@ -535,6 +665,11 @@ async def new_instance(request: Request):
         raise HTTPException(status_code=400, detail="profile_mode 只能是 ephemeral 或 persistent")
     if browser_mode not in ("full", "headless"):
         raise HTTPException(status_code=400, detail="browser_mode 只能是 full 或 headless")
+    if mode == "persistent" and not PROFILE_NAME_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=400,
+            detail="目录名只能包含字母、数字、下划线、点和短横线，长度 1-48",
+        )
     try:
         sid = str(uuid.uuid4())
         data = await run_in_threadpool(
@@ -542,6 +677,7 @@ async def new_instance(request: Request):
         )
         return JSONResponse(to_view(data, request))
     except Exception as e:
+        log.warning("创建实例失败: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -592,6 +728,8 @@ async def api_new_target(sid: str, request: Request):
 
 @app.post("/api/instance/{sid}/targets/{tid}/activate")
 async def api_activate_target(sid: str, tid: str):
+    if not valid_target_id(tid):
+        raise HTTPException(status_code=400, detail="非法的标签 ID")
     try:
         await run_in_threadpool(cdp_http, sid, "/json/activate/" + quote(tid, safe=""))
     except HTTPException:
@@ -603,6 +741,8 @@ async def api_activate_target(sid: str, tid: str):
 
 @app.delete("/api/instance/{sid}/targets/{tid}")
 async def api_close_target(sid: str, tid: str):
+    if not valid_target_id(tid):
+        raise HTTPException(status_code=400, detail="非法的标签 ID")
     try:
         await run_in_threadpool(cdp_http, sid, "/json/close/" + quote(tid, safe=""))
     except HTTPException:
@@ -624,6 +764,8 @@ async def api_cdp_cmd(sid: str, request: Request):
     params = payload.get("params") or {}
     if not tid or not method:
         raise HTTPException(status_code=400, detail="缺少 target_id 或 method")
+    if not valid_target_id(tid):
+        raise HTTPException(status_code=400, detail="非法的标签 ID")
     allowed = {"Page.navigate", "Page.reload", "Page.bringToFront", "Runtime.evaluate"}
     if method not in allowed:
         raise HTTPException(status_code=400, detail="不支持的 CDP 命令: " + method)
@@ -645,10 +787,22 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
     """
     import websocket as ws_client
 
+    if not valid_target_id(tid):
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "非法的标签 ID"})
+        await websocket.close()
+        return
+
     await websocket.accept()
     upstream = None
     stop = threading.Event()
+    send_lock = threading.Lock()
     loop = asyncio.get_running_loop()
+
+    def upstream_send(payload: dict) -> None:
+        # websocket-client 的 send 不是线程安全的：帧泵与事件循环都会调用它。
+        with send_lock:
+            upstream.send(json.dumps(payload))
 
     try:
         item = get_instance(sid)
@@ -666,14 +820,18 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
         # 帧接收线程：把所有 CDP 消息转发给前端，screencastFrame 自动 Ack
         def pump():
             call_id = 100
-            upstream.send(json.dumps({
-                "id": call_id, "method": "Page.enable", "params": {}
-            }))
-            upstream.send(json.dumps({
+            upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
+            upstream_send({
                 "id": call_id + 1,
                 "method": "Page.startScreencast",
-                "params": {"format": "jpeg", "quality": 80, "everyNthFrame": 1},
-            }))
+                "params": {
+                    "format": "jpeg",
+                    "quality": 80,
+                    "everyNthFrame": 1,
+                    "maxWidth": CAST_MAX_WIDTH,
+                    "maxHeight": CAST_MAX_HEIGHT,
+                },
+            })
             while not stop.is_set():
                 try:
                     raw = upstream.recv()
@@ -689,11 +847,11 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                 if method == "Page.screencastFrame":
                     params = msg.get("params", {})
                     try:
-                        upstream.send(json.dumps({
+                        upstream_send({
                             "id": call_id + 2,
                             "method": "Page.screencastFrameAck",
                             "params": {"sessionId": params.get("sessionId", "")},
-                        }))
+                        })
                     except Exception:
                         pass
                     try:
@@ -727,14 +885,14 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     "Input.dispatchWheelEvent",
                 ):
                     try:
-                        upstream.send(json.dumps({
+                        upstream_send({
                             "id": 200, "method": method, "params": data.get("params", {})
-                        }))
+                        })
                     except Exception:
                         break
             elif kind == "viewport":
                 try:
-                    upstream.send(json.dumps({
+                    upstream_send({
                         "id": 201,
                         "method": "Emulation.setDeviceMetricsOverride",
                         "params": {
@@ -743,7 +901,7 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                             "deviceScaleFactor": 1,
                             "mobile": False,
                         },
-                    }))
+                    })
                 except Exception:
                     break
     except Exception as e:
@@ -755,9 +913,7 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
         stop.set()
         if upstream is not None:
             try:
-                upstream.send(json.dumps({
-                    "id": 999, "method": "Page.stopScreencast", "params": {}
-                }))
+                upstream_send({"id": 999, "method": "Page.stopScreencast", "params": {}})
             except Exception:
                 pass
             try:

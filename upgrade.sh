@@ -9,16 +9,28 @@ echo "==> 1/5 拉取最新 compose 配置"
 git pull
 
 echo "==> 2/5 拉取最新镜像（manager + full/headless 两份 browser 镜像）"
-docker compose pull
+# 显式带上 profile，确保两份带 profile 的占位服务也被拉取。
+docker compose --profile no-auto-start pull
 
 echo "==> 3/5 删除所有旧的 browser 实例容器（持久目录 Volume 会保留，不会删数据）"
 docker ps -aq --filter label=cdp.browser.manager | xargs -r docker rm -f
 
 echo "==> 4/5 重建 manager"
-docker compose up -d
+docker compose up -d --remove-orphans
 
-echo "==> 5/5 等待 manager 就绪并校验"
-sleep 3
+echo "==> 5/5 等待 manager 就绪并校验（最多 30 秒）"
+ready=0
+for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+        ready=1
+        echo "manager 已就绪"
+        break
+    fi
+    sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+    echo "警告：manager 30 秒内未就绪，请执行 docker compose logs -f 查看原因。"
+fi
 curl -fsS http://127.0.0.1:8000/api/list >/dev/null 2>&1 || true
 
 echo

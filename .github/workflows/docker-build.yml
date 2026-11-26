@@ -3,6 +3,13 @@ name: Build & Push CDP Browser Manager
 on:
   push:
     branches: [ main ]
+  # 允许在 Actions 页面手动重建单个镜像/全部镜像，不必为了重打而改代码。
+  workflow_dispatch:
+
+# 旧构建跑完再跑新的，避免两个 run 同时覆盖 :latest 造成版本错乱。
+concurrency:
+  group: cdp-browser-manager-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,6 +35,9 @@ jobs:
           file: ./Dockerfile.manager
           push: true
           tags: ghcr.io/forallcodesouls/cdp-browser-manager:latest
+          # scope 分开，三份镜像的缓存互不污染。
+          cache-from: type=gha,scope=manager
+          cache-to: type=gha,mode=max,scope=manager
 
       - name: Build & Push browser (full)
         uses: docker/build-push-action@v6
@@ -36,6 +46,8 @@ jobs:
           file: ./Dockerfile.browser
           push: true
           tags: ghcr.io/forallcodesouls/cdp-browser-full:latest
+          cache-from: type=gha,scope=browser-full
+          cache-to: type=gha,mode=max,scope=browser-full
 
       # 两份镜像独立构建：改无头内核只跑这一步，不会重打完整镜像
       - name: Build & Push browser (headless)
@@ -45,3 +57,5 @@ jobs:
           file: ./Dockerfile.browser-headless
           push: true
           tags: ghcr.io/forallcodesouls/cdp-browser-headless:latest
+          cache-from: type=gha,scope=browser-headless
+          cache-to: type=gha,mode=max,scope=browser-headless
