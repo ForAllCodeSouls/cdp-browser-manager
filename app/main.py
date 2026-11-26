@@ -1031,7 +1031,10 @@ def _auto_update_tick() -> None:
     log.info("[自动更新] 检测到镜像更新（%s），开始拉取", ", ".join(outdated))
     result = pull_browser_images()
     stale = any(v.get("stale") for v in result.values())
-    failed = [k for k, v in result.values() if not v.get("ok")]
+    # 必须遍历 items()：values() 给出的是结果字典（含 image/ok/stale/local/remote 五个键），
+    # 用 k, v 解包会把字典的 5 个键拆给两个变量，抛 "too many values to unpack (expected 2)"，
+    # 导致每次自动更新拉取完镜像后都在这里崩溃、状态被误记为 error。
+    failed = [k for k, v in result.items() if not v.get("ok")]
     with AUTO_UPDATE_LOCK:
         AUTO_UPDATE_STATE["last_result"] = result
         if failed:
