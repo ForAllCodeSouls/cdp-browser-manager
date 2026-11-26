@@ -1101,10 +1101,17 @@
                     "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
                 );
                 if (frameSid !== sel.sid) return;
-                const targets = data.targets || [];
+                let targets = data.targets || [];
                 if (!targets.length) {
-                    frameFailed(sel.sid, "浏览器里没有可抓屏的标签页");
-                    return;
+                    const tid = await ensureBlankTarget(sel);
+                    if (frameSid !== sel.sid) return;
+                    if (!tid) { frameFailed(sel.sid, "浏览器里没有可抓屏的标签页，且自动新建失败"); return; }
+                    const fresh = await api(
+                        "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
+                    );
+                    targets = fresh.targets || [];
+                    if (!targets.length) { frameFailed(sel.sid, "浏览器里没有可抓屏的标签页"); return; }
+                    castPreferredTid = tid;
                 }
                 let tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
                 if (!targets.some(t => t.id === tid)) tid = targets[0].id;
@@ -1305,7 +1312,8 @@
                 '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
                 '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
                 '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
-                '<button class="btn-mini btn-danger" onclick="closeTarget()">关闭</button>';
+                '<button class="btn-mini btn-danger" onclick="closeTarget()" ' +
+                'title="关闭最后一个标签时会自动新建空白页，画面不会中断（与 VNC 行为一致）">关闭</button>';
             const input = $("castUrl");
             input.onkeydown = (e) => { if (e.key === "Enter") navigateCast(); };
             if (focused) input.focus();
@@ -1346,6 +1354,28 @@
                 if (created && created.id) castPreferredTid = created.id;
                 await remountCurrent();
             } catch (e) { toast("新建标签失败: " + e.message, "error"); }
+        }
+
+        // 抓屏时发现浏览器没有任何标签页（例如被外部关闭），自动补一个空白页，
+        // 与 VNC/Chrome 的行为对齐，避免画面停在"没有可抓屏的标签页"。
+        // 返回新标签 id；失败返回空字符串。
+        async function ensureBlankTarget(sel) {
+            try {
+                const created = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: "about:blank" }),
+                    }
+                );
+                const tid = created && created.id ? created.id : "";
+                toast("浏览器已无标签页，已自动新建空白页以保持画面连接", "ok");
+                return tid;
+            } catch (e) {
+                toast("自动新建空白页失败：" + e.message, "error");
+                return "";
+            }
         }
 
         async function sendCastCommand(method, params) {
@@ -1396,14 +1426,23 @@
         async function closeTarget() {
             const sel = currentSel();
             if (!sel || !castState) return;
-            if (!confirm("关闭当前标签页？")) return;
+            const isLast = (castState.targets || []).length <= 1;
+            const tip = isLast
+                ? "这是最后一个标签页。关闭后会自动新建一个空白页（和 VNC 行为一致），画面不会中断。\n\n确定关闭吗？"
+                : "关闭当前标签页？";
+            if (!confirm(tip)) return;
             try {
-                await api(
+                const res = await api(
                     "/api/instance/" + encodeURIComponent(sel.sid) +
                         "/targets/" + encodeURIComponent(castState.tid),
                     { method: "DELETE" }
                 );
-                castPreferredTid = "";
+                if (res && res.recreated && res.tid) {
+                    castPreferredTid = res.tid;
+                    toast("已关闭最后一个标签，自动新建了空白页以保持画面连接", "ok");
+                } else {
+                    castPreferredTid = "";
+                }
                 await remountCurrent();
             } catch (e) { toast("关闭标签失败: " + e.message, "error"); }
         }
@@ -1416,16 +1455,24 @@
                 const data = await api(
                     "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
                 );
-                const targets = data.targets || [];
+                let targets = data.targets || [];
+                if (!targets.length) {
+                    // 标签被外部关光时自动补一个空白页，避免画面断连（与 VNC 行为一致）。
+                    const tid = await ensureBlankTarget(sel);
+                    if (!tid) return;
+                    const fresh = await api(
+                        "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
+                    );
+                    targets = fresh.targets || [];
+                    if (!targets.length) return;
+                    castPreferredTid = tid;
+                    await remountCurrent();
+                    return;
+                }
                 castState.targets = targets;
                 if (!targets.some(t => t.id === castState.tid)) {
-                    if (targets.length) {
-                        castPreferredTid = targets[0].id;
-                        await remountCurrent();
-                    } else {
-                        clearFrame();
-                        frameFailed(sel.sid, "浏览器里没有可抓屏的标签页");
-                    }
+                    castPreferredTid = targets[0].id;
+                    await remountCurrent();
                     return;
                 }
                 renderCastBar(sel);

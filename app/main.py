@@ -1453,7 +1453,27 @@ async def api_close_target(sid: str, tid: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    return {"ok": True}
+
+    # 关掉最后一个页面后 Chrome 会没有可抓屏目标，抓屏画面会断（VNC 下 Chrome
+    # 会自动补一个 about:blank，行为不一致）。这里对齐 VNC：自动补一个空白页，
+    # 并把新 id 返回给前端直接切过去，避免"关闭唯一窗口后连不上"。
+    recreated = False
+    new_tid = ""
+    try:
+        remaining = await run_in_threadpool(cdp_http, sid, "/json/list")
+        pages = [t for t in (remaining or []) if t.get("type") == "page"]
+        if not pages:
+            created = await run_in_threadpool(
+                cdp_http, sid, "/json/new?" + quote("about:blank", safe=""), "PUT"
+            )
+            if isinstance(created, dict):
+                new_tid = str(created.get("id", "") or "")
+            recreated = True
+            log.info("实例 %s 关闭了最后一个标签，已自动补建空白页 %s", sid[:8], new_tid[:12])
+    except Exception as e:
+        # 补建失败不影响"关闭成功"这一主结果，仅记录日志。
+        log.warning("实例 %s 补建空白页失败: %s", sid[:8], e)
+    return {"ok": True, "recreated": recreated, "tid": new_tid}
 
 
 @app.post("/api/instance/{sid}/cmd")
