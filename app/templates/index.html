@@ -63,6 +63,13 @@
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
         .btn-mini { font-size: 11px; padding: 3px 8px; }
+        /* 地址栏左侧的后退/前进/刷新：纯图标，与浏览器地址栏一致 */
+        .btn-nav {
+            width: 30px; height: 28px; padding: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+            flex: none;
+        }
+        .btn-nav .ico { width: 16px; height: 16px; }
         .btn-locked { color: var(--warn); border-color: #6b5426; background: #3a2f1a; }
         .btn-locked:hover:not(:disabled) { background: #4a3b20; }
 
@@ -135,6 +142,8 @@
             flex-direction: column;
             gap: 12px;
             padding: 14px 18px 18px;
+            /* 各区块之间的 12px 间隙露出面板色，而不是页面底色的深色带 */
+            background: var(--surface);
         }
         .detail {
             display: flex;
@@ -1726,19 +1735,26 @@
                     '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
                 '</div>' +
                 '<div class="navrow">' +
-                    '<button class="btn-mini" title="后退到上一个页面" onclick="historyStep(-1)"' +
+                    '<button class="btn-mini btn-nav" title="后退到上一个页面" onclick="historyStep(-1)"' +
                         (canBack ? '' : ' disabled') + '>' +
-                        '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-back"/></svg>后退</button>' +
-                    '<button class="btn-mini" title="前进到下一个页面" onclick="historyStep(1)"' +
+                        '<svg class="ico"><use href="#i-back"/></svg></button>' +
+                    '<button class="btn-mini btn-nav" title="前进到下一个页面" onclick="historyStep(1)"' +
                         (canForward ? '' : ' disabled') + '>' +
-                        '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-forward"/></svg>前进</button>' +
-                    '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
-                    '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
-                    '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
+                        '<svg class="ico"><use href="#i-forward"/></svg></button>' +
+                    '<button class="btn-mini btn-nav" title="刷新当前页面" onclick="reloadCast()">' +
+                        '<svg class="ico"><use href="#i-refresh"/></svg></button>' +
+                    '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后按回车跳转">' +
                     lockTip +
                 '</div>';
             const input = $("castUrl");
-            input.onkeydown = (e) => { if (e.key === "Enter") navigateCast(); };
+            // 回车跳转：排除输入法组字中的回车，阻止默认提交，取事件目标的值，
+            // 避免轮询恰好重建输入框时取到空值导致「回车没反应」。
+            input.onkeydown = (e) => {
+                if (e.key !== "Enter" || e.isComposing) return;
+                e.preventDefault();
+                const raw = (e.target && e.target.value) || "";
+                navigateCast(raw);
+            };
             // 点击地址栏即全选当前网址，直接输入新地址覆盖，不必手动选中。
             // 只在 click 时做，不用 focus：轮询重建导航条后会自动恢复焦点，
             // 那边若触发全选会把用户正在输入的半截地址抹掉。
@@ -1914,10 +1930,13 @@
             return "https://" + s;
         }
 
-        async function navigateCast() {
+        async function navigateCast(rawValue) {
             if (screenLocked) return;
+            // 回车时直接传事件目标的值；无参数时（兼容旧调用）再读输入框。
             const input = $("castUrl");
-            const url = normalizeCastUrl(input ? input.value : "");
+            const raw = rawValue !== undefined && rawValue !== null
+                ? rawValue : (input ? input.value : "");
+            const url = normalizeCastUrl(raw);
             if (!url) return;
             try {
                 await sendCastCommand("Page.navigate", { url: url });
