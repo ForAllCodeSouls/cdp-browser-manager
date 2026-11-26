@@ -262,6 +262,23 @@ class BinaryFrameForwardingTests(unittest.TestCase):
         seg = src[i:i + 3200]
         self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
 
+    def test_cdp_devtools_ws_forwards_by_frame_type(self):
+        # CDP 透传的双向都必须按帧类型处理：上游二进制响应按 bytes 转发，
+        # 客户端二进制命令用 BINARY opcode 上送，文本帧保持默认 TEXT。
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("async def cdp_devtools_ws")
+        seg = src[i:i + 3000]
+        self.assertIn("send_bytes", seg)
+        self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
+        self.assertNotIn("receive_text()", seg)
+
+    def test_remote_query_uses_imported_urlencode(self):
+        # 防回归：不用 urllib.parse.xxx 的隐式属性访问（依赖父包已加载，脆弱）。
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("urllib.parse.urlencode", src)
+
     def test_keepalive_caps_pending_shots(self):
         # 补帧在途请求设上限，页面卡死时不会无限堆积 captureScreenshot。
         with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:

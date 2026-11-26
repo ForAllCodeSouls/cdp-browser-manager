@@ -2259,7 +2259,7 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
         return
 
     # 本机鉴权用的 key 不转发；认证远端改用服务端配置的 header。
-    query = urllib.parse.urlencode([
+    query = urlencode([
         (k, v) for k, v in websocket.query_params.multi_items() if k != "key"
     ])
     parsed = urlsplit(host["base"])
@@ -2412,7 +2412,13 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
             if not raw:
                 break
             try:
-                asyncio.run_coroutine_threadsafe(websocket.send_text(raw), loop).result(timeout=3)
+                # CDP 几乎全是文本帧（JSON），但截图/二进制响应按协议可能以
+                # 二进制帧送达；按类型转发避免 send_text 收到 bytes 抛错断连。
+                if isinstance(raw, (bytes, bytearray)):
+                    coro = websocket.send_bytes(bytes(raw))
+                else:
+                    coro = websocket.send_text(raw)
+                asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=3)
             except Exception:
                 break
 
@@ -2423,13 +2429,22 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
         threading.Thread(target=pump, daemon=True).start()
         while True:
             try:
-                data = await websocket.receive_text()
-            except WebSocketDisconnect:
-                break
+                msg = await websocket.receive()
             except Exception:
                 break
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes") if msg.get("bytes") is not None else msg.get("text")
+            if data is None:
+                continue
+            # 与 noVNC/远端代理同理：二进制帧显式 BINARY opcode，文本帧走默认 TEXT。
             try:
-                await run_in_threadpool(upstream.send, data)
+                if isinstance(data, (bytes, bytearray)):
+                    await run_in_threadpool(
+                        upstream.send, data, ws_client.ABNF.OPCODE_BINARY
+                    )
+                else:
+                    await run_in_threadpool(upstream.send, data)
             except Exception:
                 break
     except Exception as e:
@@ -2504,7 +2519,7 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
         return
 
     # noVNC 靠 binary 子协议决定用二进制帧解析 RFB 数据。必须原样回显浏览器
-    # 请求的子协议；否则 it 会退回 base64 模式，把二进制字节当 base64 解，
+    # 请求的子协议；否则它会退回 base64 模式，把二进制字节当 base64 解，
     # 画面永远停在 Connecting。上游 websockify 也用同一子协议连接，帧模式一致。
     requested = ws_requested_subprotocols(websocket.headers)
     subprotocol = "binary" if "binary" in requested else (requested[0] if requested else None)
