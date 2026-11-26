@@ -476,6 +476,14 @@
             <path d="M20 11a8 8 0 1 0-2.3 6.3"/>
             <path d="M20 5v6h-6"/>
         </symbol>
+        <symbol id="i-back" viewBox="0 0 24 24">
+            <path d="M19 12H5"/>
+            <path d="m11 6-6 6 6 6"/>
+        </symbol>
+        <symbol id="i-forward" viewBox="0 0 24 24">
+            <path d="M5 12h14"/>
+            <path d="m13 6 6 6-6 6"/>
+        </symbol>
         <symbol id="i-warn" viewBox="0 0 24 24">
             <path d="M12 3 2 20h20L12 3z"/>
             <path d="M12 9v5M12 17.6h.01"/>
@@ -655,6 +663,7 @@
         let frameTimer = null;
         let currentFrameUrl = "";
         let castState = null;       // {sid, targets, tid, sig} 当前展示状态
+        let castHistory = null;     // {sid, tid, index, ids} 当前标签的 CDP 导航历史
         let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
@@ -681,6 +690,28 @@
         }
         let settings = loadSettings();
         screenLocked = settings.screenLocked === true;
+
+        // 记住当前所在的实例与标签：管理页面刷新后回到原来的画面，而不是跳回列表第一个。
+        const LAST_VIEW_KEY = "cdpManagerLastView";
+        let restoreView = null;
+        try {
+            const lv = JSON.parse(localStorage.getItem(LAST_VIEW_KEY) || "null");
+            if (lv && typeof lv === "object") {
+                restoreView = { sid: String(lv.sid || ""), tid: String(lv.tid || "") };
+            }
+        } catch (e) {}
+        function saveLastView() {
+            try {
+                localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({
+                    sid: selectedSid || "",
+                    tid: castPreferredTid || "",
+                }));
+            } catch (e) {}
+        }
+        function setPreferredTid(tid) {
+            castPreferredTid = tid || "";
+            saveLastView();
+        }
 
         function openSettings() {
             $("setPreview").value = settings.preview;
@@ -1265,6 +1296,13 @@
                 const data = await api("/api/list");
                 instances = data.instances || {};
                 profiles = data.profiles || [];
+                if (restoreView) {
+                    // 只在首次加载恢复一次；实例已不存在时回落到 render() 的自动选择。
+                    const rv = restoreView;
+                    restoreView = null;
+                    if (rv.sid && instances[rv.sid]) selectedSid = rv.sid;
+                    if (rv.tid) castPreferredTid = rv.tid;
+                }
                 render();
             } catch (e) {
                 if (!quiet) toast("加载失败: " + e.message, "error");
@@ -1384,7 +1422,7 @@
             let tid = castPreferredTid ||
                 (castState && castState.sid === sel.sid ? castState.tid : "");
             if (!targets.some(t => t.id === tid)) tid = targets[0].id;
-            castPreferredTid = tid;
+            setPreferredTid(tid);
             return tid;
         }
 
@@ -1399,7 +1437,7 @@
                     if (frameSid !== sel.sid || !tid) return;
                     targets = await fetchTargets(sel);
                     if (!targets.length) return;
-                    castPreferredTid = tid;
+                    setPreferredTid(tid);
                 }
                 const tid = pickTid(targets, sel);
                 const changed = !castState || castState.sid !== sel.sid ||
@@ -1415,6 +1453,7 @@
                     } catch (e) { /* 激活失败不影响导航条展示 */ }
                 }
                 renderCastBar(sel, force);
+                updateCastHistory(sel, tid);
             } catch (e) {
                 // VNC 画面本身已可用，导航条加载失败静默降级
             }
@@ -1436,13 +1475,14 @@
                     );
                     targets = fresh.targets || [];
                     if (!targets.length) { frameFailed(sel.sid, "浏览器里没有可抓屏的标签页"); return; }
-                    castPreferredTid = tid;
+                    setPreferredTid(tid);
                 }
                 let tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
                 if (!targets.some(t => t.id === tid)) tid = targets[0].id;
-                castPreferredTid = tid;
+                setPreferredTid(tid);
                 castState = { sid: sel.sid, targets: targets, tid: tid, sig: "" };
                 renderCastBar(sel, true);
+                updateCastHistory(sel, tid);
                 mountCastCanvas(sel, tid);
             } catch (e) {
                 frameFailed(sel.sid, "读取标签页失败: " + e.message);
@@ -1624,7 +1664,10 @@
         }
 
         function castSig(targets, tid) {
-            return tid + "|" + targets.map(t => t.id + ":" + t.title).join(",");
+            // 历史位置也参与签名：前进/后退走到头时按钮要立刻变成禁用态。
+            const h = castHistory && castHistory.sid === castState.sid && castHistory.tid === tid
+                ? castHistory.index + "/" + castHistory.ids.length : "-";
+            return tid + "|" + h + "|" + targets.map(t => t.id + ":" + t.title).join(",");
         }
 
         function renderCastBar(sel, force = false) {
@@ -1645,6 +1688,10 @@
             ).join("");
             const cur = castState.targets.find(t => t.id === castState.tid) || {};
             const urlValue = focused && typed !== null ? typed : (cur.url || "");
+            const hist = castHistory && castHistory.sid === sel.sid && castHistory.tid === castState.tid
+                ? castHistory : null;
+            const canBack = !!hist && hist.index > 0;
+            const canForward = !!hist && hist.index < hist.ids.length - 1;
 
             bar.className = "castbar show" + (screenLocked ? " locked" : "");
             const modeTip = effectiveMode(sel) === "vnc"
@@ -1658,6 +1705,12 @@
                 '<span style="color:var(--muted)">标签</span>' +
                 '<span class="tabs">' + chips + '</span>' +
                 '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
+                '<button class="btn-mini" title="后退到上一个页面" onclick="historyStep(-1)"' +
+                    (canBack ? '' : ' disabled') + '>' +
+                    '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-back"/></svg>后退</button>' +
+                '<button class="btn-mini" title="前进到下一个页面" onclick="historyStep(1)"' +
+                    (canForward ? '' : ' disabled') + '>' +
+                    '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-forward"/></svg>前进</button>' +
                 '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
                 '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
                 '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
@@ -1693,7 +1746,7 @@
             if (screenLocked) return;
             const sel = currentSel();
             if (!sel) return;
-            castPreferredTid = tid;
+            setPreferredTid(tid);
             if (effectiveMode(sel) === "vnc") {
                 // VNC 画面显示的是当前激活标签：切换后激活目标标签，
                 // 无需重载 iframe（重载会闪一下），只更新导航条选中态。
@@ -1730,7 +1783,7 @@
                         body: JSON.stringify({ url: url || "about:blank" }),
                     }
                 );
-                if (created && created.id) castPreferredTid = created.id;
+                if (created && created.id) setPreferredTid(created.id);
                 await refreshAfterNavChange();
             } catch (e) { toast("新建标签失败: " + e.message, "error"); }
         }
@@ -1776,6 +1829,58 @@
             } catch (e) { toast("命令失败: " + e.message, "error"); throw e; }
         }
 
+        // 读取当前标签的 CDP 导航历史：既用于前进/后退按钮的可用状态，
+        // 也保存 entryId 供 Page.navigateToHistoryEntry 使用。
+        async function updateCastHistory(sel, tid) {
+            if (!sel || !tid) return;
+            try {
+                const res = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/cmd",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            target_id: tid,
+                            method: "Page.getNavigationHistory",
+                            params: {},
+                        }),
+                    },
+                    8000
+                );
+                const r = res && res.result;
+                if (!r || !Array.isArray(r.entries)) return;
+                castHistory = {
+                    sid: sel.sid,
+                    tid: tid,
+                    index: Number(r.currentIndex) || 0,
+                    ids: r.entries.map(e => e.id),
+                };
+                if (castState && castState.sid === sel.sid && castState.tid === tid) {
+                    renderCastBar(sel);
+                }
+            } catch (e) {
+                // 历史读取失败只让前进/后退保持禁用，不影响地址栏导航和刷新。
+            }
+        }
+
+        // 在当前标签的浏览历史里移动一步（delta = -1 后退，+1 前进）。
+        async function historyStep(delta) {
+            if (screenLocked || !castState) return;
+            const sel = currentSel();
+            if (!sel) return;
+            const hist = castHistory && castHistory.sid === sel.sid && castHistory.tid === castState.tid
+                ? castHistory : null;
+            if (!hist) { await updateCastHistory(sel, castState.tid); return; }
+            const idx = hist.index + delta;
+            const entryId = hist.ids[idx];
+            if (idx < 0 || idx >= hist.ids.length || entryId === undefined) return;
+            try {
+                await sendCastCommand("Page.navigateToHistoryEntry", { entryId: entryId });
+                await updateCastHistory(sel, castState.tid);
+                setTimeout(pollCastTargets, 800);
+            } catch (e) {}
+        }
+
         function normalizeCastUrl(raw) {
             const s = (raw || "").trim();
             if (!s) return "";
@@ -1793,6 +1898,12 @@
             try {
                 await sendCastCommand("Page.navigate", { url: url });
                 toast("已导航: " + url, "ok");
+                const sel = currentSel();
+                setTimeout(() => {
+                    if (sel && castState && castState.sid === sel.sid) {
+                        updateCastHistory(sel, castState.tid);
+                    }
+                }, 900);
                 setTimeout(pollCastTargets, 1200);
             } catch (e) {}
         }
@@ -1802,6 +1913,8 @@
             try { await sendCastCommand("Page.reload", { ignoreCache: false }); }
             catch (e) { return; }
             toast("已刷新", "ok");
+            const sel = currentSel();
+            if (sel && castState) updateCastHistory(sel, castState.tid);
         }
 
         async function closeTarget() {
@@ -1820,10 +1933,10 @@
                     { method: "DELETE" }
                 );
                 if (res && res.recreated && res.tid) {
-                    castPreferredTid = res.tid;
+                    setPreferredTid(res.tid);
                     toast("已关闭最后一个标签，自动新建了空白页以保持画面连接", "ok");
                 } else {
-                    castPreferredTid = "";
+                    setPreferredTid("");
                 }
                 await refreshAfterNavChange();
             } catch (e) { toast("关闭标签失败: " + e.message, "error"); }
@@ -1841,7 +1954,7 @@
                     if (!tid) return;
                     targets = await fetchTargets(sel);
                     if (!targets.length) return;
-                    castPreferredTid = tid;
+                    setPreferredTid(tid);
                     castState.targets = targets;
                     castState.tid = tid;
                     if (vncMode) {
@@ -1853,7 +1966,7 @@
                 }
                 castState.targets = targets;
                 if (!targets.some(t => t.id === castState.tid)) {
-                    castPreferredTid = targets[0].id;
+                    setPreferredTid(targets[0].id);
                     castState.tid = targets[0].id;
                     if (vncMode) {
                         // VNC 模式：重载 iframe 会闪屏，只更新导航条并激活新标签。
@@ -1871,6 +1984,7 @@
                     return;
                 }
                 renderCastBar(sel);
+                await updateCastHistory(sel, castState.tid);
             } catch (e) { /* 轮询失败静默忽略，避免打扰 */ }
         }
 
@@ -1886,6 +2000,7 @@
             if (!list.some(i => i.sid === selectedSid)) {
                 const first = list.find(i => i.status === "running") || list[0];
                 selectedSid = first ? first.sid : null;
+                saveLastView();
             }
 
             if (!list.length) {
@@ -1968,6 +2083,7 @@
         function selectSid(sid) {
             if (selectedSid === sid) return;
             selectedSid = sid;
+            saveLastView();
             render();
         }
 

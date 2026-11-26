@@ -1600,7 +1600,16 @@ async def api_cdp_cmd(sid: str, request: Request):
         raise HTTPException(status_code=400, detail="缺少 target_id 或 method")
     if not valid_target_id(tid):
         raise HTTPException(status_code=400, detail="非法的标签 ID")
-    allowed = {"Page.navigate", "Page.reload", "Page.bringToFront", "Runtime.evaluate"}
+    # 导航条的后退/前进需要读取历史栈并按 entryId 回退/前进；
+    # 与 Page.navigate 一样作用在当前 target 上，不接触其他标签页。
+    allowed = {
+        "Page.navigate",
+        "Page.reload",
+        "Page.bringToFront",
+        "Page.getNavigationHistory",
+        "Page.navigateToHistoryEntry",
+        "Runtime.evaluate",
+    }
     if method not in allowed:
         raise HTTPException(status_code=400, detail="不支持的 CDP 命令: " + method)
     if method == "Page.navigate" and isinstance(params, dict) and "url" in params:
