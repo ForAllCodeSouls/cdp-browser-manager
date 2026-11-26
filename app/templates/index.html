@@ -527,6 +527,10 @@
             <circle cx="8" cy="15" r="4"/>
             <path d="m11 12 8-8M16 5l3 3M14 8l3 3"/>
         </symbol>
+        <symbol id="i-link" viewBox="0 0 24 24">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -541,6 +545,7 @@
                 <span class="switch"></span>
             </label>
             <button id="btnKey" onclick="openKey()" class="btn-icon" title="设置本机 API 密钥（多主机时需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
+            <button id="btnRemote" onclick="openRemote()" class="btn-icon" title="远程接入：添加远端主机，或生成本机接入令牌给其他主机远控"><svg class="ico"><use href="#i-link"/></svg><span>远程</span></button>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
             <button onclick="load()">刷新</button>
@@ -709,6 +714,38 @@
         </div>
     </div>
 
+    <!-- 远程接入弹窗：控制端添加远端主机 / 被控端生成本机接入令牌 -->
+    <div class="mask" id="remoteMask" onclick="if(event.target===this) closeRemote()">
+        <div class="panel">
+            <h3>远程接入</h3>
+            <div class="row">
+                <label for="remoteLinkInput">添加远程主机</label>
+                <input id="remoteLinkInput" placeholder="粘贴连接串：https://b.example.com|接入令牌" autocomplete="off">
+                <div class="hint">到目标主机的面板「远程」里生成接入令牌得到连接串，粘贴到这里即可接入。添加后可在「新建实例 → 目标主机」里选择它，直接远控那台主机的浏览器。</div>
+                <button class="btn-primary" id="btnAddRemote" onclick="addRemoteHost()" style="width:100%;margin-top:8px">添加远程主机</button>
+            </div>
+            <div class="row">
+                <label>已接入的远程主机 <span id="remoteHostStat" style="font-size:11px;color:var(--muted)"></span></label>
+                <div id="remoteHostList" class="hint" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px">加载中…</div>
+            </div>
+            <div class="row">
+                <label>本机接入令牌（把本机提供给其他主机远控）</label>
+                <button id="btnGenToken" onclick="genLinkToken()" style="width:100%">生成接入令牌</button>
+                <div id="linkTokenBox" style="display:none;margin-top:8px">
+                    <input id="linkSelfBase" placeholder="本机对外地址，如 https://a.example.com（默认按当前访问地址）" style="margin-bottom:8px">
+                    <div class="hint" id="linkSelfConn" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;user-select:all;word-break:break-all"></div>
+                    <button onclick="copyLinkConn()" style="width:100%;margin-top:8px">复制连接串</button>
+                </div>
+                <div class="hint" id="linkTokenList"></div>
+            </div>
+            <div class="foot">连接串 = 地址|令牌。令牌等同本机完整管理权限，只发给自己的其他主机；保存在服务端数据目录，重启不丢；吊销后旧连接串立即失效。若本机已设置 API_KEY，令牌与它等效。</div>
+            <div class="actions">
+                <button onclick="closeRemote()">关闭</button>
+                <button onclick="refreshRemotePanel()">刷新</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const $ = (id) => document.getElementById(id);
         let instances = {};
@@ -758,6 +795,178 @@
             $("keyHint").textContent = msg || "服务端设置了 API_KEY 时，所有管理请求都需要它。密钥只保存在当前浏览器。";
             openKey();
         }
+
+        // ---- 远程接入：控制端添加远端主机 / 被控端生成本机接入令牌 ----
+        let latestLinkToken = "";
+        function addQuery(url, k, v) {
+            return url + (url.includes("?") ? "&" : "?") + k + "=" + encodeURIComponent(v);
+        }
+        function openRemote() { $("remoteMask").classList.add("open"); refreshRemotePanel(); }
+        function closeRemote() { $("remoteMask").classList.remove("open"); }
+
+        async function refreshRemotePanel() {
+            try {
+                const res = await fetch(keyQuery("/api/hosts"), { headers: authHeaders() });
+                const data = await res.json();
+                renderRemoteHosts((data && data.hosts) || []);
+            } catch (e) {
+                $("remoteHostList").textContent = "主机列表加载失败：" + e.message;
+            }
+            try {
+                const res = await fetch(keyQuery("/api/link/token"), { headers: authHeaders() });
+                if (res.status === 401) {
+                    $("linkTokenList").textContent = "本机启用了密钥，请先在「密钥」里输入后再管理令牌。";
+                    return;
+                }
+                const data = await res.json();
+                renderLinkTokens((data && data.tokens) || []);
+            } catch (e) {
+                $("linkTokenList").textContent = "令牌信息加载失败：" + e.message;
+            }
+        }
+
+        function renderRemoteHosts(list) {
+            const remotes = list.filter(h => h.id !== "local");
+            $("remoteHostStat").textContent = remotes.length ? remotes.length + " 台" : "";
+            const box = $("remoteHostList");
+            if (!remotes.length) {
+                box.textContent = "暂无远程主机，粘贴上方连接串添加。";
+                return;
+            }
+            box.innerHTML = remotes.map(h =>
+                '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+                '<span class="badge host">' + esc(h.id) + '</span>' +
+                '<span style="flex:1;word-break:break-all">' + esc(h.name) + ' · ' + esc(h.base) + '</span>' +
+                (h.removable ? '<button onclick="delRemoteHost(\'' + esc(h.id) + '\')">删除</button>' : '') +
+                '</div>').join("");
+        }
+
+        async function addRemoteHost() {
+            const link = ($("remoteLinkInput").value || "").trim();
+            if (!link) { toast("请先粘贴连接串（地址|令牌）"); return; }
+            const btn = $("btnAddRemote");
+            btn.disabled = true; btn.textContent = "正在连接…";
+            try {
+                const res = await fetch(keyQuery("/api/hosts"), {
+                    method: "POST",
+                    headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+                    body: JSON.stringify({ link: link })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+                $("remoteLinkInput").value = "";
+                toast("已添加远程主机：" + ((data.host && (data.host.name || data.host.id)) || ""), "ok");
+                await initHosts();
+                await load();
+                await refreshRemotePanel();
+            } catch (e) {
+                toast("添加失败：" + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = "添加远程主机";
+            }
+        }
+
+        async function delRemoteHost(id) {
+            if (!confirm("删除远程主机 " + id + "？只移除接入关系，远端实例不受影响。")) return;
+            try {
+                const res = await fetch(keyQuery("/api/hosts/" + encodeURIComponent(id)), {
+                    method: "DELETE", headers: authHeaders()
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    throw new Error(d.detail || ("HTTP " + res.status));
+                }
+                toast("已删除远程主机 " + id, "ok");
+                await initHosts();
+                await load();
+                await refreshRemotePanel();
+            } catch (e) {
+                toast("删除失败：" + e.message);
+            }
+        }
+
+        async function genLinkToken() {
+            const btn = $("btnGenToken");
+            btn.disabled = true;
+            try {
+                const res = await fetch(keyQuery("/api/link/token"), {
+                    method: "POST", headers: authHeaders()
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+                latestLinkToken = data.token || "";
+                updateSelfConn();
+                toast("接入令牌已生成，复制连接串发给要接入你的主机", "ok");
+            } catch (e) {
+                toast("生成失败：" + e.message);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function renderLinkTokens(tokens) {
+            const box = $("linkTokenList");
+            if (!tokens.length) {
+                latestLinkToken = "";
+                $("linkTokenBox").style.display = "none";
+                box.textContent = "还没有令牌。生成后把「本机对外地址|令牌」连接串发给要接入你的那台主机。";
+                return;
+            }
+            box.innerHTML = tokens.map(t =>
+                '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+                '<span style="flex:1;font-family:monospace;word-break:break-all">' + esc(t.masked || t.token) + '</span>' +
+                '<button onclick="revokeLinkToken(\'' + esc(t.token) + '\')">吊销</button>' +
+                '</div>').join("");
+            $("linkTokenBox").style.display = "block";
+            if (!$("linkSelfBase").value) $("linkSelfBase").value = location.origin;
+            if (!latestLinkToken) latestLinkToken = tokens[tokens.length - 1].token || "";
+            updateSelfConn();
+        }
+
+        function updateSelfConn() {
+            if (!latestLinkToken) return;
+            const base = (($("linkSelfBase").value || location.origin) + "").trim().replace(/\/+$/, "");
+            $("linkSelfConn").textContent = base + "|" + latestLinkToken;
+        }
+
+        async function revokeLinkToken(token) {
+            if (!confirm("吊销该令牌？使用它的连接串会立即失效。")) return;
+            try {
+                const res = await fetch(addQuery(keyQuery("/api/link/token"), "token", token), {
+                    method: "DELETE", headers: authHeaders()
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    throw new Error(d.detail || ("HTTP " + res.status));
+                }
+                latestLinkToken = "";
+                toast("令牌已吊销", "ok");
+                await refreshRemotePanel();
+            } catch (e) {
+                toast("吊销失败：" + e.message);
+            }
+        }
+
+        async function copyLinkConn() {
+            const text = $("linkSelfConn").textContent || "";
+            if (!text) { toast("先生成接入令牌"); return; }
+            try {
+                await navigator.clipboard.writeText(text);
+                toast("连接串已复制", "ok");
+            } catch (e) {
+                // 剪贴板 API 不可用（非 HTTPS 等）时退回选中复制
+                const range = document.createRange();
+                range.selectNodeContents($("linkSelfConn"));
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                document.execCommand("copy");
+                sel.removeAllRanges();
+                toast("连接串已复制", "ok");
+            }
+        }
+        $("linkSelfBase").addEventListener("input", updateSelfConn);
+
         function fillHostSelect() {
             const sel = $("createHost");
             if (!sel) return;

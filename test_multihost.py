@@ -10,8 +10,10 @@
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -323,9 +325,15 @@ class CastQualityProfileTests(unittest.TestCase):
 
 class AuthExemptTests(unittest.TestCase):
     def test_exempt_paths(self):
-        for path in ("/", "/api/health", "/api/hosts", "/7901/vnc_lite.html",
+        for path in ("/", "/api/health", "/7901/vnc_lite.html",
                      "/7901/app.js", "/7901/core/rfb.js"):
             self.assertTrue(main.auth_exempt(path, "GET"), path)
+
+    def test_hosts_list_get_exempt_but_writes_protected(self):
+        # 面板添加/删除远程主机是写操作，设置 API_KEY 后绝不能免鉴权。
+        self.assertTrue(main.auth_exempt("/api/hosts", "GET"))
+        self.assertFalse(main.auth_exempt("/api/hosts", "POST"))
+        self.assertFalse(main.auth_exempt("/api/hosts", "DELETE"))
 
     def test_protected_paths(self):
         for path, method in (("/api/list", "GET"), ("/instance/new", "POST"),
@@ -340,6 +348,88 @@ class AuthExemptTests(unittest.TestCase):
             self.assertTrue(main.key_ok("secret"))
             self.assertFalse(main.key_ok(""))
             self.assertFalse(main.key_ok("wrong"))
+
+
+class LinkTokenKeyTests(unittest.TestCase):
+    """面板生成的接入令牌必须能当 API_KEY 用（远端主机拿令牌调用本机）。"""
+
+    def test_token_accepted(self):
+        with patch.object(main, "API_KEY", "secret"), \
+                patch.object(main, "LINK_TOKENS", {"tok-abc": {"created": 1}}):
+            self.assertTrue(main.key_ok("secret"))
+            self.assertTrue(main.key_ok("tok-abc"))
+            self.assertFalse(main.key_ok("wrong"))
+            self.assertFalse(main.key_ok(""))
+
+    def test_open_when_no_api_key(self):
+        with patch.object(main, "API_KEY", ""), \
+                patch.object(main, "LINK_TOKENS", {"tok-abc": {"created": 1}}):
+            self.assertTrue(main.key_ok(""))
+
+
+class HostStoreTests(unittest.TestCase):
+    """面板添加的远程主机 / 接入令牌的持久化与合并逻辑。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cdpmgr-test-")
+        self.patches = [
+            patch.object(main, "UI_HOSTS_FILE", Path(self.tmp) / "remote_hosts.json"),
+            patch.object(main, "LINK_TOKENS_FILE", Path(self.tmp) / "link_tokens.json"),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+
+    def test_valid_host_entry(self):
+        entry = main.valid_host_entry({"id": "b", "name": "主机B", "base": "https://b.example.com/", "key": "k"})
+        self.assertEqual(entry["base"], "https://b.example.com")
+        self.assertEqual(entry["key"], "k")
+        for bad in ({"id": "../evil", "base": "https://x"},
+                    {"id": "local", "base": "https://x"},
+                    {"id": "ok", "base": "ftp://x"}):
+            with self.assertRaises(ValueError):
+                main.valid_host_entry(bad)
+
+    def test_derive_host_id_sanitizes_and_dedupes(self):
+        with patch.object(main, "REMOTE_HOSTS", [{"id": "127-0-0-1", "name": "x", "base": "http://x"}]):
+            self.assertEqual(main._derive_host_id("http://127.0.0.1:8000"), "127-0-0-1-2")
+            self.assertEqual(main._derive_host_id("https://b.example.com"), "b-example-com")
+
+    def test_ui_hosts_roundtrip(self):
+        main.UI_REMOTE_HOSTS[:] = [main.valid_host_entry(
+            {"id": "b", "name": "主机B", "base": "https://b.example.com", "key": "k"})]
+        self.assertTrue(main.save_ui_hosts())
+        main.UI_REMOTE_HOSTS[:] = []
+        main.load_ui_hosts()
+        self.assertEqual(len(main.UI_REMOTE_HOSTS), 1)
+        self.assertEqual(main.UI_REMOTE_HOSTS[0]["id"], "b")
+        main.UI_REMOTE_HOSTS[:] = []
+
+    def test_reload_hosts_merges_ui_over_env(self):
+        env = [{"id": "b", "name": "envB", "base": "https://env-b", "key": "k1"}]
+        ui = [{"id": "b", "name": "uiB", "base": "https://ui-b", "key": "k2"},
+              {"id": "c", "name": "C", "base": "https://c.example.com", "key": ""}]
+        with patch.object(main, "REMOTE_HOSTS_ENV", env), \
+                patch.object(main, "UI_REMOTE_HOSTS", ui), \
+                patch.object(main, "REMOTE_HOSTS", []):
+            main.reload_hosts()
+            ids = {h["id"]: h for h in main.REMOTE_HOSTS}
+            self.assertEqual(set(ids), {"b", "c"})
+            # 同 id 时面板配置覆盖环境变量
+            self.assertEqual(ids["b"]["base"], "https://ui-b")
+
+    def test_link_tokens_roundtrip(self):
+        main.LINK_TOKENS.clear()
+        main.LINK_TOKENS["tok-1"] = {"created": 123}
+        self.assertTrue(main.save_link_tokens())
+        main.LINK_TOKENS.clear()
+        main.load_link_tokens()
+        self.assertIn("tok-1", main.LINK_TOKENS)
+        self.assertEqual(main.LINK_TOKENS["tok-1"]["created"], 123)
+        main.LINK_TOKENS.clear()
 
 
 class AddressRewriteTests(unittest.TestCase):
@@ -434,9 +524,15 @@ class IntegrationTests(unittest.TestCase):
         main.sync_instances = lambda: None
         main.list_profiles = lambda: []
         main.INSTANCES.clear()
+        self.tmp = tempfile.mkdtemp(prefix="cdpmgr-it-")
         self.patches = [
             patch.object(main, "API_KEY", ""),
-            patch.object(main, "REMOTE_HOSTS", self.hosts),
+            # 每个测试用独立的 REMOTE_HOSTS 副本：添加主机会原地改写列表，避免污染类状态
+            patch.object(main, "REMOTE_HOSTS", list(self.hosts)),
+            patch.object(main, "UI_REMOTE_HOSTS", []),
+            patch.object(main, "DATA_DIR", Path(self.tmp)),
+            patch.object(main, "UI_HOSTS_FILE", Path(self.tmp) / "remote_hosts.json"),
+            patch.object(main, "LINK_TOKENS_FILE", Path(self.tmp) / "link_tokens.json"),
         ]
         for p in self.patches:
             p.start()
@@ -495,6 +591,70 @@ class IntegrationTests(unittest.TestCase):
             # noVNC 静态资源免鉴权（返回 404 说明已穿过中间件，未被 401 拦截）
             self.assertNotEqual(client.get("/7901/vnc_lite.html").status_code, 401)
 
+    def test_panel_add_and_delete_host_via_link(self):
+        """面板粘贴连接串（地址|令牌）添加远程主机，再从界面删除。"""
+        client = TestClient(main.app)
+        r = client.post("/api/hosts", json={"link": self.base + "|remote-secret"})
+        self.assertEqual(r.status_code, 200, r.text)
+        hid = r.json()["host"]["id"]
+        self.assertTrue(hid)
+        hosts = {h["id"]: h for h in client.get("/api/hosts").json()["hosts"]}
+        self.assertIn(hid, hosts)
+        self.assertTrue(hosts[hid]["removable"])
+        # 添加后立即可聚合出远端实例（等价于环境变量配置）
+        r = client.get("/api/list")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("remote-sid", r.json()["instances"])
+        # 删除只移除接入关系
+        r = client.delete("/api/hosts/" + hid)
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(hid, [h["id"] for h in client.get("/api/hosts").json()["hosts"]])
+
+    def test_panel_add_host_bad_key_rejected(self):
+        client = TestClient(main.app)
+        r = client.post("/api/hosts", json={"link": self.base + "|wrong-key"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("令牌", r.json()["detail"])
+
+    def test_panel_add_host_bad_link_format(self):
+        client = TestClient(main.app)
+        r = client.post("/api/hosts", json={"link": "no-pipe-here"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("连接串", r.json()["detail"])
+
+    def test_panel_add_host_unreachable(self):
+        client = TestClient(main.app)
+        r = client.post("/api/hosts", json={"link": "http://127.0.0.1:1|k"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("无法连接", r.json()["detail"])
+
+    def test_panel_add_host_requires_key_when_api_key_set(self):
+        with patch.object(main, "API_KEY", "local-secret"):
+            client = TestClient(main.app)
+            r = client.post("/api/hosts", json={"link": self.base + "|remote-secret"})
+            self.assertEqual(r.status_code, 401)
+            r = client.delete("/api/hosts/b")
+            self.assertEqual(r.status_code, 401)
+
+    def test_link_token_generate_list_revoke(self):
+        client = TestClient(main.app)
+        r = client.post("/api/link/token")
+        self.assertEqual(r.status_code, 200, r.text)
+        tok = r.json()["token"]
+        self.assertEqual(len(tok), 48)
+        # 令牌能通过本机鉴权（模拟远端面板拿令牌调用本机）
+        self.assertTrue(main.key_ok(tok))
+        listed = client.get("/api/link/token").json()["tokens"]
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["token"], tok)
+        # 吊销后立即失效
+        self.assertEqual(client.delete("/api/link/token?token=" + tok).status_code, 200)
+        self.assertEqual(client.get("/api/link/token").json()["tokens"], [])
+        with patch.object(main, "API_KEY", "secret"):
+            self.assertFalse(main.key_ok(tok))
+        # 吊销不存在的令牌返回 404
+        self.assertEqual(client.delete("/api/link/token?token=" + tok).status_code, 404)
+
     def test_websocket_key_guard(self):
         from starlette.websockets import WebSocketDisconnect
 
@@ -527,6 +687,50 @@ class IntegrationTests(unittest.TestCase):
             ) as ws:
                 self.assertEqual(ws.accepted_subprotocol, "binary")
                 self.assertEqual(ws.receive_text(), "up")
+
+
+class RemotePanelJsTests(unittest.TestCase):
+    """「远程」接入面板的关键 JS 片段，防回归。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            cls.src = f.read()
+
+    def test_modal_and_toolbar_button_exist(self):
+        self.assertIn('id="remoteMask"', self.src)
+        self.assertIn('id="btnRemote"', self.src)
+        self.assertIn("function openRemote()", self.src)
+
+    def test_add_remote_host_posts_link(self):
+        i = self.src.index("async function addRemoteHost")
+        seg = self.src[i:i + 800]
+        self.assertIn('"/api/hosts"', seg)
+        self.assertIn('"POST"', seg)
+        self.assertIn("{ link: link }", seg)
+
+    def test_delete_remote_host_calls_delete_api(self):
+        i = self.src.index("async function delRemoteHost")
+        seg = self.src[i:i + 700]
+        self.assertIn("/api/hosts/", seg)
+        self.assertIn('"DELETE"', seg)
+
+    def test_link_token_generate_and_revoke(self):
+        i = self.src.index("async function genLinkToken")
+        self.assertIn('"/api/link/token"', self.src[i:i + 600])
+        i = self.src.index("async function revokeLinkToken")
+        seg = self.src[i:i + 700]
+        self.assertIn('"/api/link/token"', seg)
+        self.assertIn('"DELETE"', seg)
+        # 连接串 = 地址|令牌，复制给对方
+        self.assertIn("updateSelfConn", self.src)
+        self.assertIn('base + "|" + latestLinkToken', self.src)
+
+    def test_panel_refreshes_hosts_and_instances(self):
+        i = self.src.index("async function addRemoteHost")
+        seg = self.src[i:i + 1300]
+        self.assertIn("initHosts()", seg)
+        self.assertIn("load()", seg)
 
 
 if __name__ == "__main__":

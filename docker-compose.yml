@@ -7,6 +7,8 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # 面板里添加的远程主机 / 本机接入令牌的持久化目录（容器重建不丢）
+      - ./manager-data:/app/data
     environment:
       BROWSER_IMAGE_FULL: ghcr.io/forallcodesouls/cdp-browser-full:latest
       BROWSER_IMAGE_HEADLESS: ghcr.io/forallcodesouls/cdp-browser-headless:latest
@@ -24,6 +26,9 @@ services:
       # REMOTE_HOSTS: '[{"id":"b","name":"主机B","base":"https://b.example.com","key":"远端API_KEY"}]'
       # 也支持简易格式：b|主机B|https://b.example.com|远端API_KEY;c|主机C|http://10.0.0.2:8000|
       # REMOTE_HOSTS: ${REMOTE_HOSTS:-}
+      # 远程主机也可以不用环境变量：在面板顶栏「远程」里互相接入——
+      # 被控主机生成接入令牌得到连接串（地址|令牌），控制主机粘贴即接入，
+      # 以上配置持久化在 ./manager-data。环境变量与面板接入的主机会合并生效。
       # 可选调优：抓屏帧上限 / 静止补帧间隔 / 每个实例共享内存
       # CAST_MAX_WIDTH: "1920"
       # CAST_MAX_HEIGHT: "1080"

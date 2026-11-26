@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import socket
 import tarfile
 import threading
@@ -65,7 +66,18 @@ API_KEY = os.environ.get("API_KEY", "").strip()
 def key_ok(supplied: str) -> bool:
     if not API_KEY:
         return True
-    return bool(supplied) and hmac.compare_digest(str(supplied), API_KEY)
+    supplied = str(supplied or "")
+    if not supplied:
+        return False
+    if hmac.compare_digest(supplied, API_KEY):
+        return True
+    # 面板生成的接入令牌同样可用：远端主机的面板拿连接串里的令牌调用本机。
+    with _STORE_LOCK:
+        tokens = list(LINK_TOKENS)
+    for tok in tokens:
+        if hmac.compare_digest(supplied, tok):
+            return True
+    return False
 
 
 # ---------- 多主机聚合（后端代理，浏览器只连本机） ----------
@@ -119,7 +131,88 @@ def parse_remote_hosts(raw: str) -> list:
     return list(result.values())
 
 
-REMOTE_HOSTS = parse_remote_hosts(os.environ.get("REMOTE_HOSTS", ""))
+REMOTE_HOSTS_ENV = parse_remote_hosts(os.environ.get("REMOTE_HOSTS", ""))
+UI_REMOTE_HOSTS: list = []                       # 面板里添加的远程主机，持久化在 DATA_DIR
+REMOTE_HOSTS: list = list(REMOTE_HOSTS_ENV)      # 合并结果，reload_hosts() 原地刷新
+
+
+# ---------- 数据目录：面板添加的远程主机 / 本机接入令牌 ----------
+# Docker 部署时把宿主机目录挂到 /app/data（compose 里已预留），容器重建不丢配置。
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parent / "data")))
+UI_HOSTS_FILE = DATA_DIR / "remote_hosts.json"
+LINK_TOKENS_FILE = DATA_DIR / "link_tokens.json"
+
+# 用 RLock：reload_hosts() 内部也加锁，而 api_hosts_add 等调用方在持锁状态下
+# 再次调用它，普通 Lock 会直接死锁。
+_STORE_LOCK = threading.RLock()
+
+
+def _load_json(path: Path, default):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return default
+    return data if data is not None else default
+
+
+def _save_json(path: Path, data) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp.replace(path)
+        return True
+    except Exception as e:
+        log.warning("持久化 %s 失败: %s", path, e)
+        return False
+
+
+def valid_host_entry(entry: dict) -> dict:
+    """校验并规范化一条远程主机记录（环境变量与面板写入共用）。"""
+    hid = str(entry.get("id") or "").strip()
+    base = str(entry.get("base") or entry.get("url") or "").strip().rstrip("/")
+    if not REMOTE_HOST_ID_RE.fullmatch(hid) or hid == "local":
+        raise ValueError(f"主机标识不合法: {hid!r}")
+    if not base.startswith(("http://", "https://")):
+        raise ValueError(f"主机地址不合法: {base!r}")
+    return {
+        "id": hid,
+        "name": str(entry.get("name") or hid),
+        "base": base,
+        "key": str(entry.get("key") or entry.get("api_key") or "").strip(),
+    }
+
+
+def load_ui_hosts():
+    raw = _load_json(UI_HOSTS_FILE, [])
+    hosts = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                try:
+                    hosts.append(valid_host_entry(entry))
+                except ValueError as e:
+                    log.warning("忽略 %s 里的非法主机: %s", UI_HOSTS_FILE, e)
+    UI_REMOTE_HOSTS[:] = hosts
+
+
+def save_ui_hosts() -> bool:
+    return _save_json(UI_HOSTS_FILE, UI_REMOTE_HOSTS)
+
+
+def reload_hosts():
+    """环境变量主机 + 面板添加主机合并生效；同 id 时面板添加的覆盖环境变量。"""
+    with _STORE_LOCK:
+        merged = {h["id"]: h for h in REMOTE_HOSTS_ENV}
+        for h in UI_REMOTE_HOSTS:
+            merged[h["id"]] = h
+        REMOTE_HOSTS[:] = list(merged.values())
+
+
+load_ui_hosts()
+reload_hosts()
 
 
 def get_remote(host_id: str):
@@ -127,6 +220,32 @@ def get_remote(host_id: str):
         if host["id"] == host_id:
             return host
     return None
+
+
+# ---------- 本机接入令牌（被控端） ----------
+# 在面板「远程接入」里生成，供其他主机的面板粘贴连接串（本机地址|令牌）后
+# 远控本机。令牌等同本机 API_KEY 的访问权限，保存在数据目录，重启不丢。
+LINK_TOKENS: dict = {}   # token -> {"created": ts}
+
+
+def load_link_tokens():
+    raw = _load_json(LINK_TOKENS_FILE, {"tokens": {}})
+    toks = raw.get("tokens") if isinstance(raw, dict) else None
+    result = {}
+    if isinstance(toks, dict):
+        for tok, meta in toks.items():
+            tok = str(tok).strip()
+            if tok:
+                result[tok] = meta if isinstance(meta, dict) else {"created": 0}
+    LINK_TOKENS.clear()
+    LINK_TOKENS.update(result)
+
+
+def save_link_tokens() -> bool:
+    return _save_json(LINK_TOKENS_FILE, {"tokens": LINK_TOKENS})
+
+
+load_link_tokens()
 
 
 def ws_requested_subprotocols(headers) -> list:
@@ -144,12 +263,16 @@ def ws_requested_subprotocols(headers) -> list:
 
 
 def auth_exempt(path: str, method: str) -> bool:
-    """免鉴权路径：面板首页、健康检查、主机列表，以及 noVNC 静态资源。
+    """免鉴权路径：面板首页、健康检查、主机列表（仅 GET），以及 noVNC 静态资源。
 
     noVNC 页面里的 <script>/<link> 无法携带 X-API-Key 头，且这些资源不含敏感
     信息，因此按扩展名放行；CDP 的 /<port>/json/* 仍然必须带密钥。
+    注意 /api/hosts 只豁免 GET：POST/DELETE 是面板添加/删除远程主机的写操作，
+    必须鉴权，否则设置 API_KEY 后任何人都能往本机挂载远程主机。
     """
-    if path in ("/", "/api/health", "/api/hosts"):
+    if path in ("/", "/api/health"):
+        return True
+    if path == "/api/hosts" and method == "GET":
         return True
     m = re.match(r"^/\d+/(.+)$", path)
     if m and method == "GET":
@@ -1540,20 +1663,172 @@ async def api_hosts(request: Request):
     """主机列表（免鉴权，供面板在输入密钥前判断是否需要鉴权）。
 
     未通过本机鉴权时不泄露远端主机信息，只返回 needs_key。
+    removable=True 表示是面板里添加的，可在界面删除；
+    环境变量 REMOTE_HOSTS 配置的主机需在服务端修改。
     """
     needs_key = bool(API_KEY) and not key_ok(
         request.headers.get("x-api-key") or request.query_params.get("key", "")
     )
+    with _STORE_LOCK:
+        ui_ids = {h["id"] for h in UI_REMOTE_HOSTS}
     return {
         "auth_required": bool(API_KEY),
         "needs_key": needs_key,
         "hosts": [] if needs_key else [
-            {"id": "local", "name": "本机", "base": ""}
+            {"id": "local", "name": "本机", "base": "", "removable": False}
         ] + [
-            {"id": h["id"], "name": h["name"], "base": h["base"]}
+            {"id": h["id"], "name": h["name"], "base": h["base"],
+             "removable": h["id"] in ui_ids}
             for h in REMOTE_HOSTS
         ],
     }
+
+
+def _derive_host_id(base: str) -> str:
+    """从地址推导一个不冲突的主机标识，如 b.example.com -> b-example-com。"""
+    host = (urlsplit(base).hostname or "").lower()
+    slug = re.sub(r"[^a-z0-9_-]+", "-", host).strip("-")[:24] or "host"
+    with _STORE_LOCK:
+        existing = {h["id"] for h in REMOTE_HOSTS} | {"local"}
+    hid, n = slug, 2
+    while hid in existing:
+        hid = f"{slug}-{n}"
+        n += 1
+    return hid
+
+
+def _probe_remote(base: str, key: str):
+    """添加前先试连远端 /api/list，验证地址可达且密钥正确。"""
+    probe = {"id": "probe", "name": "probe", "base": base, "key": key}
+    status, raw, _ = remote_request(probe, "/api/list", "GET", None, 10.0)
+    body = json.loads(raw.decode("utf-8", "replace"))
+    if status != 200 or not isinstance(body, dict) or "instances" not in body:
+        raise ValueError(f"远端返回异常（HTTP {status}）")
+
+
+@app.post("/api/hosts")
+async def api_hosts_add(request: Request):
+    """面板添加远程主机：粘贴对方面板「远程接入」生成的连接串（地址|令牌）。"""
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    link = str(payload.get("link") or "").strip()
+    if link:
+        # 连接串格式：地址|令牌（令牌可为空，对方未启用鉴权时允许）
+        if "|" not in link:
+            raise HTTPException(
+                status_code=400,
+                detail="连接串格式应为：地址|令牌，例如 https://b.example.com|令牌",
+            )
+        base, key = link.split("|", 1)
+        payload = {"base": base.strip(), "key": key.strip()}
+    base = str(payload.get("base") or "").strip().rstrip("/")
+    key = str(payload.get("key") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    if not base.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="地址必须以 http:// 或 https:// 开头")
+    try:
+        await run_in_threadpool(_probe_remote, base, key)
+    except Exception as e:
+        text = str(e)
+        if "401" in text or "Unauthorized" in text:
+            raise HTTPException(
+                status_code=400,
+                detail="远端开启了 API_KEY 鉴权，但连接串里的令牌无效",
+            )
+        raise HTTPException(
+            status_code=400, detail="无法连接远端面板，请确认地址与网络可达：" + text
+        )
+    hid = str(payload.get("id") or "").strip() or _derive_host_id(base)
+    try:
+        entry = valid_host_entry({
+            "id": hid, "name": name or (urlsplit(base).hostname or hid), "base": base, "key": key,
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with _STORE_LOCK:
+        UI_REMOTE_HOSTS[:] = [h for h in UI_REMOTE_HOSTS if h["id"] != entry["id"]]
+        UI_REMOTE_HOSTS.append(entry)
+        saved = save_ui_hosts()
+        reload_hosts()
+    if not saved:
+        log.warning("远程主机 %s 已加入内存但未能写入 %s（检查 DATA_DIR 挂载）", entry["id"], UI_HOSTS_FILE)
+    log.info("面板添加远程主机 %s -> %s", entry["id"], entry["base"])
+    return {"ok": True, "host": {"id": entry["id"], "name": entry["name"], "base": entry["base"]}}
+
+
+@app.delete("/api/hosts/{host_id}")
+async def api_hosts_delete(host_id: str, request: Request):
+    """删除面板添加的远程主机（只移除接入关系，远端实例不受影响）。"""
+    with _STORE_LOCK:
+        before = len(UI_REMOTE_HOSTS)
+        UI_REMOTE_HOSTS[:] = [h for h in UI_REMOTE_HOSTS if h["id"] != host_id]
+        if len(UI_REMOTE_HOSTS) == before:
+            raise HTTPException(
+                status_code=400,
+                detail="该主机不是面板添加的（环境变量 REMOTE_HOSTS 配置的需在服务端修改）",
+            )
+        save_ui_hosts()
+        reload_hosts()
+    log.info("面板删除远程主机 %s", host_id)
+    return {"ok": True}
+
+
+@app.get("/api/link/token")
+async def api_link_tokens(request: Request):
+    """列出本机接入令牌（被控端）。已生成令牌的掩码摘要不回传完整值。"""
+    if API_KEY and not key_ok(
+        request.headers.get("x-api-key") or request.query_params.get("key", "")
+    ):
+        raise HTTPException(status_code=401, detail="API 密钥无效或缺失")
+    with _STORE_LOCK:
+        tokens = [
+            {"masked": t[:10] + "…" + t[-6:], "created": int((m or {}).get("created", 0)), "token": t}
+            for t, m in LINK_TOKENS.items()
+        ]
+    return {"auth_required": bool(API_KEY), "tokens": tokens}
+
+
+@app.post("/api/link/token")
+async def api_link_token_create(request: Request):
+    """生成本机接入令牌：给其他主机的面板粘贴连接串（本机地址|令牌）用。"""
+    if API_KEY and not key_ok(
+        request.headers.get("x-api-key") or request.query_params.get("key", "")
+    ):
+        raise HTTPException(status_code=401, detail="API 密钥无效或缺失")
+    token = secrets.token_hex(24)
+    with _STORE_LOCK:
+        LINK_TOKENS[token] = {"created": int(time.time())}
+        saved = save_link_tokens()
+    if not saved:
+        raise HTTPException(
+            status_code=500,
+            detail="令牌保存失败（数据目录不可写），请检查 DATA_DIR 挂载",
+        )
+    log.info("生成新的本机接入令牌（当前共 %d 个）", len(LINK_TOKENS))
+    return {"ok": True, "token": token, "created": int(time.time())}
+
+
+@app.delete("/api/link/token")
+async def api_link_token_revoke(request: Request, token: str = ""):
+    """吊销接入令牌：token 为空时吊销全部。吊销后旧连接串立即失效。"""
+    if API_KEY and not key_ok(
+        request.headers.get("x-api-key") or request.query_params.get("key", "")
+    ):
+        raise HTTPException(status_code=401, detail="API 密钥无效或缺失")
+    with _STORE_LOCK:
+        if token:
+            if token not in LINK_TOKENS:
+                raise HTTPException(status_code=404, detail="令牌不存在或已吊销")
+            del LINK_TOKENS[token]
+        else:
+            LINK_TOKENS.clear()
+        save_link_tokens()
+    log.info("吊销接入令牌%s（剩余 %d 个）", "全部" if not token else " " + token[:10] + "…", len(LINK_TOKENS))
+    return {"ok": True}
 
 
 @app.get("/api/list")
