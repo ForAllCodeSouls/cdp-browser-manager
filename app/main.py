@@ -65,6 +65,35 @@ def image_for_mode(browser_mode: str) -> str:
     return BROWSER_IMAGE_HEADLESS if browser_mode == "headless" else BROWSER_IMAGE_FULL
 
 
+# 是否由 manager 自行拉取浏览器镜像。默认开启：Dockge / 部分 compose 面板更新时会跳过
+# 带 profile 的占位服务，导致两份 browser 镜像长期停留在旧版本，容器启动即崩溃。
+AUTO_PULL_IMAGES = os.environ.get("AUTO_PULL_IMAGES", "1").strip().lower() not in (
+    "0", "false", "no", "off"
+)
+PULL_LOCK = threading.Lock()
+
+
+def pull_browser_images() -> dict:
+    """拉取 full + headless 两份浏览器镜像，返回每份结果。线程安全、失败不影响 manager。"""
+    targets = (("full", BROWSER_IMAGE_FULL), ("headless", BROWSER_IMAGE_HEADLESS))
+    seen = set()
+    results = {}
+    with PULL_LOCK:
+        for label, image in targets:
+            if image in seen:
+                continue
+            seen.add(image)
+            try:
+                log.info("开始拉取 %s 浏览器镜像: %s", label, image)
+                client.images.pull(image)
+                results[label] = {"image": image, "ok": True}
+                log.info("浏览器镜像已更新: %s (%s)", label, image)
+            except Exception as e:
+                results[label] = {"image": image, "ok": False, "error": str(e)}
+                log.warning("浏览器镜像拉取失败: %s (%s) - %s", label, image, e)
+    return results
+
+
 def ensure_image_available(image: str) -> None:
     """创建前确认镜像已在本地，避免 containers.run 触发漫长 pull 并卡住全局锁。
 
@@ -74,8 +103,9 @@ def ensure_image_available(image: str) -> None:
         client.images.get(image)
     except docker.errors.ImageNotFound:
         raise RuntimeError(
-            f"镜像 {image} 尚未拉取到本地。请先在服务器执行 "
-            f"docker compose pull 或 bash upgrade.sh，再创建实例。"
+            f"镜像 {image} 尚未拉取到本地。manager 会在启动后自动拉取（约几分钟），"
+            f"请稍候重试；也可在设置里点「立即更新浏览器镜像」，"
+            f"或在服务器执行 docker compose --profile no-auto-start pull。"
         )
     except docker.errors.APIError as e:
         raise RuntimeError(f"检查镜像失败: {e}")
@@ -641,7 +671,23 @@ def cdp_monitor_loop():
         time.sleep(8)
 
 
+def auto_pull_loop() -> None:
+    """manager 启动后后台拉取最新浏览器镜像，再按较长间隔复查。
+
+    这是为了兼容 Dockge 等只拉 manager、跳过 profile 占位服务的更新方式：
+    即便用户只在面板点了「更新」，浏览器镜像也会在 manager 重启后自动补齐。
+    """
+    # 启动稍等片刻，让 web 服务先可用，拉取大镜像期间面板不卡死。
+    time.sleep(5)
+    while True:
+        if AUTO_PULL_IMAGES:
+            pull_browser_images()
+        # 每 30 分钟复查一次，平时命中本地缓存开销很小。
+        time.sleep(1800)
+
+
 threading.Thread(target=cdp_monitor_loop, daemon=True).start()
+threading.Thread(target=auto_pull_loop, daemon=True, name="browser-image-puller").start()
 
 
 # ---------- CDP 代理：供面板的 screencast 视图管理标签与下发命令 ----------
@@ -744,6 +790,12 @@ async def api_health():
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Docker 不可用: {e}")
+
+
+@app.post("/api/images/pull")
+async def api_pull_images():
+    """手动拉取最新的 full/headless 浏览器镜像（Dockge 只更新 manager 时用）。"""
+    return await run_in_threadpool(pull_browser_images)
 
 
 @app.get("/api/logs/global")

@@ -53,6 +53,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `BROWSER_IMAGE_FULL` / `BROWSER_IMAGE_HEADLESS` | 官方 GHCR 镜像 | 指定两份 browser 镜像；旧 `BROWSER_IMAGE` 仍作为 full 镜像兼容 |
+| `AUTO_PULL_IMAGES` | `1` | manager 启动后台自动拉取两份浏览器镜像（兼容 Dockge 只更新 manager）；设 `0` 关闭 |
 | `PUBLIC_HOST` | 空 | 反向代理时填对外地址，如 `https://cdp.example.com`；留空按请求 Host 生成链接 |
 | `MANAGER_ID` | `default` | 多个 manager 共用一台宿主机时，隔离容器标签与持久卷 |
 | `BROWSER_SHM_SIZE` | `512m` | 每个 browser 容器的 `/dev/shm`；启动参数已带 `--disable-dev-shm-usage` |
@@ -167,7 +168,9 @@ services:
     profiles: ["no-auto-start"]
 ```
 
-> 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。**升级时务必先 pull**，否则 manager 会用本地缓存的旧 browser 镜像创建容器，导致 CDP 无法连接。`upgrade.sh` 已带上该参数。
+> 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。`upgrade.sh` 已带上该参数。
+>
+> **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置兜底——manager 启动后会自动在后台拉取两份浏览器镜像；也可打开面板「设置 → 立即更新浏览器镜像」手动触发。镜像更新后需停止并重建实例才会用上新镜像。若不想自动拉取，设 `AUTO_PULL_IMAGES=0`。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 
