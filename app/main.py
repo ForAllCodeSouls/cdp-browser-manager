@@ -1,9 +1,11 @@
 import asyncio
+import io
 import json
 import logging
 import os
 import re
 import socket
+import tarfile
 import threading
 import time
 import uuid
@@ -347,6 +349,12 @@ def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
                     container.id[:12], state.get("Status"), state.get("ExitCode"),
                     state.get("Restarting"), state.get("Error", ""),
                 )
+                # start.sh 把 chrome 报错重定向到 /tmp/chromium.log，容器 stdout 看不到。
+                # 主动从容器文件系统读出来写进全局日志，一眼就能定位根因。
+                for p in ("/tmp/chromium.log", "/tmp/xvfb.log", "/tmp/websockify.log"):
+                    inner = read_container_file(container.id, p, tail=40)
+                    if inner.strip():
+                        log.error("容器 %s 的 %s:\n%s", container.id[:12], p, inner)
                 return False
         except Exception:
             pass
@@ -504,6 +512,64 @@ def container_logs(container_id: str, tail: int = 120) -> str:
     c = client.containers.get(container_id)
     raw = c.logs(tail=tail, stdout=True, stderr=True)
     return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+
+
+def read_container_file(container_id: str, path: str, tail: int = 120) -> str:
+    """从容器文件系统读取一个文件（容器退出后仍可读）。
+
+    start.sh 把 chrome 报错重定向到 /tmp/*.log，容器 stdout 看不到；
+    这个函数通过 get_archive 把文件从容器里取出来。
+    """
+    c = client.containers.get(container_id)
+    try:
+        bits, _stat = c.get_archive(path)
+        buf = io.BytesIO()
+        for chunk in bits:
+            buf.write(chunk)
+        buf.seek(0)
+        with tarfile.open(fileobj=buf, mode="r:") as tf:
+            member = next((m for m in tf.getmembers() if m.isfile()), None)
+            if member is None:
+                return ""
+            f = tf.extractfile(member)
+            data = f.read() if f else b""
+        text = data.decode("utf-8", "replace")
+        lines = text.splitlines()
+        return "\n".join(lines[-tail:])
+    except Exception:
+        return ""
+
+
+def container_diag_files(container_id: str) -> dict:
+    """在容器内搜集启动诊断：各后台服务日志 + chrome 动态库缺失检查。
+
+    start.sh 把 chrome/Xvfb 的输出重定向到 /tmp/*.log，容器 stdout 看不到，
+    崩溃根因都在这里。容器反复重启时用 exec 在存活窗口读取。
+    """
+    c = client.containers.get(container_id)
+    result = {"files": {}, "ldd": "", "error": ""}
+    # 1) 读取容器内重定向的日志文件（退出容器也能读）
+    for path in ("/tmp/chromium.log", "/tmp/xvfb.log", "/tmp/x11vnc.log", "/tmp/websockify.log"):
+        text = read_container_file(container_id, path, tail=120)
+        if text.strip():
+            result["files"][path] = text
+    # 2) 尝试用 exec 检查 chrome 动态库（仅容器短暂 running 时可用，失败不影响文件读取）
+    try:
+        c.reload()
+        mode = next(
+            (v for v in c.attrs.get("Config", {}).get("Env", []) if str(v).startswith("BROWSER_MODE=")),
+            "",
+        )
+        bin_path = "/usr/bin/chrome-headless-shell" if "headless" in str(mode) else "/usr/bin/chrome"
+        result["checked_bin"] = bin_path
+        code, out = c.exec_run(
+            ["sh", "-c", f"ldd {bin_path} 2>&1 | grep -i 'not found' || true"]
+        )
+        text = out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)
+        result["ldd"] = text
+    except Exception as e:
+        result["ldd"] = "(exec 不可用，容器未在 running: " + type(e).__name__ + ")"
+    return result
 
 
 def manager_container_logs(tail: int = 200) -> dict:
@@ -686,6 +752,18 @@ async def api_global_logs(tail: int = 200):
     if tail < 1 or tail > 2000:
         tail = 200
     return await run_in_threadpool(manager_container_logs, tail)
+
+
+@app.get("/api/instance/{sid}/diag")
+async def api_instance_diag(sid: str):
+    """读取实例容器内的重定向日志与动态库缺失检查，用于定位启动崩溃根因。"""
+    item = get_instance(sid)
+    try:
+        return await run_in_threadpool(container_diag_files, item["container_id"])
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail="容器已不存在")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/api/instance/{sid}/logs")

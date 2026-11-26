@@ -131,6 +131,10 @@ curl http://你的IP:8000/api/logs/global?tail=300
 # 查看某个 browser 实例容器的日志与退出码（实例反复 restarting 时用）
 # 面板「运行日志」里的「来源」下拉可切换到单个实例
 curl http://你的IP:8000/api/instance/{sid}/logs?tail=200
+
+# 深入诊断：读取容器内 /tmp/chromium.log 等重定向日志 + 动态库缺失检查
+# start.sh 把 chrome 报错写进文件而非 stdout，容器日志接口看不到，用这个
+curl http://你的IP:8000/api/instance/{sid}/diag
 ```
 
 > 面板顶栏「运行日志」默认展示全局日志，每 10 秒自动刷新。存在异常实例时会自动打开，

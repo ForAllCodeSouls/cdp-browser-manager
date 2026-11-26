@@ -16,6 +16,23 @@ else
     CHROME_BIN=/usr/bin/chrome
 fi
 
+# 启动自检：直接打到 stdout，让 manager 的实例日志/全局日志能看到。
+# 之前 chrome 报错被重定向进文件，崩溃时只剩 exit 127 无从排查。
+echo "=== browser start: mode=$BROWSER_MODE bin=$CHROME_BIN ==="
+if [ ! -x "$CHROME_BIN" ]; then
+    echo "FATAL: 浏览器二进制不存在或不可执行: $CHROME_BIN" >&2
+    ls -l "$CHROME_BIN" >&2 2>&1 || true
+    exit 127
+fi
+if command -v ldd >/dev/null 2>&1; then
+    MISSING=$(ldd "$CHROME_BIN" 2>&1 | grep -i 'not found' || true)
+    if [ -n "$MISSING" ]; then
+        echo "FATAL: 浏览器缺失动态库:" >&2
+        echo "$MISSING" >&2
+        exit 127
+    fi
+fi
+
 DISPLAY_NUM=99
 DISPLAY=":${DISPLAY_NUM}"
 export DISPLAY
@@ -82,7 +99,10 @@ fi
 #   --user-data-dir          Chrome 136+ 起远程调试必须用非默认目录，否则 CDP 静默失效
 #   --remote-debugging-*     监听 0.0.0.0，供宿主机端口映射后外部连接
 #   about:blank              启动时打开空白页，不进新标签页推广内容
-"$CHROME_BIN" "${CHROME_ARGS[@]}" about:blank >/tmp/chromium.log 2>&1 &
+# 关键：不要把 chrome 输出重定向到文件。之前写进 /tmp/chromium.log 导致
+# docker logs / 全局日志看不到任何报错，崩溃时只显示 exit 127 却查不到原因。
+# 直接输出到 stdout/stderr，让 manager 的实例日志接口能拿到真实错误。
+"$CHROME_BIN" "${CHROME_ARGS[@]}" about:blank &
 
 # 任一关键进程退出即结束脚本，借助 restart_policy 让容器自愈重建。
 # Debian bookworm 的 bash 5.x 支持 wait -n。
