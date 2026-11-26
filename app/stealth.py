@@ -134,9 +134,19 @@ class StealthGuard:
                     for msg in pending:
                         self._handle_event(ws, msg, ua, major)
                     try:
-                        msg = json.loads(ws.recv())
+                        raw = ws.recv()
+                    except websocket.WebSocketTimeoutException:
+                        # CDP 在无事件时不会主动推送，10 秒读超时是预期的空闲，
+                        # 不是断连。若当断连处理，就会每 11 秒重建一次会话、
+                        # 清空 _patched 并对所有页面重新 attach，既刷屏又会
+                        # 触发重复 attach 导致 Client Hints brands 变空。
+                        continue
                     except Exception:
                         break
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        continue
                     if msg.get("method"):
                         self._handle_event(ws, msg, ua, major)
             except Exception as e:
@@ -249,7 +259,12 @@ class StealthGuard:
         ws.send(json.dumps(frame))
         deadline = time.time() + 10
         while time.time() < deadline:
-            msg = json.loads(ws.recv())
+            try:
+                msg = json.loads(ws.recv())
+            except websocket.WebSocketTimeoutException:
+                # 同样把空闲读超时视为正常等待命令响应，不要炸到外层
+                # 触发无谓重连（重连会撤销已下发的身份覆盖）。
+                continue
             if msg.get("method"):
                 self._events.append(msg)
                 continue
