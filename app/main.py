@@ -563,18 +563,26 @@ def to_view(item: dict, request: Request) -> dict:
     debug = item.get("debug_port")
     vnc = item.get("vnc_port")
     novnc = item.get("novnc_port")
-    # CDP 走 manager 同源代理（/<port>/...），不再暴露浏览器容器的主机端口：
-    # 域名只转发 443 到 manager，直连端口在公网不可达；Chrome 还校验 Host。
-    data["cdp_addr"] = f"{host}/{debug}" if debug else ""
-    data["cdp_http"] = f"{base}/{debug}" if debug else ""
-    # VNC/noVNC 同样走 manager 同源代理（/<port>/...）：域名只转发 443 到 manager，
-    # 浏览器容器发布的主机端口经域名带端口访问不可达。保留直连字段供局域网直连用。
+    # ---- 旧字段：保持历史格式（host:port / http://host:port），老项目零影响 ----
+    # 这些字段被外部自动化脚本读取用于拼接连接地址。之前两版把它们改成了
+    # 「域名/端口」的同源格式，会破坏仍在用直连方式的老项目，故全部恢复原样。
+    data["cdp_addr"] = f"{host}:{debug}" if debug else ""
+    data["cdp_http"] = f"http://{host}:{debug}" if debug else ""
+    data["vnc_url"] = f"http://{host}:{vnc}" if vnc else ""
+    # novnc 包不提供根目录 index.html。这里返回基础地址，
+    # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
+    data["novnc_url"] = f"http://{host}:{novnc}" if novnc else ""
+    # 直连别名（与旧字段同义，供明确区分语义的调用方使用）
     data["vnc_direct"] = f"http://{host}:{vnc}" if vnc else ""
     data["novnc_direct"] = f"http://{host}:{novnc}" if novnc else ""
-    data["vnc_url"] = f"{base}/{vnc}" if vnc else ""
-    # novnc 包不提供根目录 index.html。这里返回同源基础地址，
-    # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
-    data["novnc_url"] = f"{base}/{novnc}" if novnc else ""
+
+    # ---- 新字段：同源代理地址（/<port>/...），供新版面板在域名下使用 ----
+    # 域名只转发 443 到 manager，浏览器容器发布的主机端口经域名带端口不可达；
+    # manager 新增的同源代理按路径端口转发到容器内网，两者共存互不干扰。
+    data["cdp_addr_proxy"] = f"{host}/{debug}" if debug else ""
+    data["cdp_http_proxy"] = f"{base}/{debug}" if debug else ""
+    data["vnc_url_proxy"] = f"{base}/{vnc}" if vnc else ""
+    data["novnc_url_proxy"] = f"{base}/{novnc}" if novnc else ""
     # screencast 前端模板：把 {tid} 换成标签页 id 即可。
     # inspector.html 由浏览器自带的 CDP HTTP 服务提供，页面与 WS 同源，避免 CORS。
     # 抓屏走 manager 的 WS 代理（见 /ws/cast），不依赖浏览器自带 devtools 前端。

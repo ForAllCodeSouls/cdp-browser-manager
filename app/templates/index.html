@@ -1241,8 +1241,16 @@
             return esc(JSON.stringify(String(s)));
         }
 
+        // 同源代理地址：优先用后端新字段；后端未重建（只有旧直连字段）时，
+        // 用当前面板 origin + 实例端口自行构造同源 base，保证域名下也能用。
+        function proxyBase(i, port, proxyField) {
+            if (i[proxyField]) return String(i[proxyField]).replace(/\/$/, "");
+            if (!port) return "";
+            return location.origin + "/" + port;
+        }
+
         function vncUrl(i) {
-            const base = (i.novnc_url || ("http://" + location.hostname + ":" + i.novnc_port))
+            const base = proxyBase(i, i.novnc_port, "novnc_url_proxy")
                 .split("?")[0]
                 .replace(/\/vnc(_lite|_auto)?\.html\/?$/, "");
             const isLite = settings.page === "vnc_lite.html";
@@ -2099,14 +2107,16 @@
             if (!sel) {
                 $("detail").innerHTML = "";
             } else {
-                const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
+                const cdp = sel.cdp_addr_proxy || sel.cdp_addr ||
+                    (location.hostname + "/" + sel.debug_port);
                 const mode = effectiveMode(sel);
                 const headless = isHeadless(sel);
-                // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试
+                // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试。
+                // 同源地址优先；旧后端无 proxy 字段时回退到旧字段（直连格式）。
+                const cdpBase = sel.cdp_http_proxy || sel.cdp_http ||
+                    (location.origin + "/" + sel.debug_port);
                 const openUrl = mode === "cast"
-                    ? (sel.cdp_http ||
-                        ("http://" + location.hostname + ":" + sel.debug_port)
-                      ).replace(/\/$/, "") + "/json/version"
+                    ? cdpBase.replace(/\/$/, "") + "/json/version"
                     : vncUrl(sel);
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
@@ -2156,8 +2166,9 @@
             const sel = selectedSid ? instances[selectedSid] : null;
             if (!sel) return;
             // 复制完整同源 URL（https://域名/端口），自动化客户端可直接连接；
-            // 面板上显示的仍是简短的「域名/端口」。
-            const text = sel.cdp_http || (location.protocol + "//" + location.host + "/" + sel.debug_port);
+            // 后端新字段优先；旧后端无 proxy 字段时按当前 origin 构造。
+            const text = sel.cdp_http_proxy ||
+                (location.origin + "/" + sel.debug_port);
             try {
                 await navigator.clipboard.writeText(text);
                 toast("已复制 CDP 地址: " + text, "ok");
