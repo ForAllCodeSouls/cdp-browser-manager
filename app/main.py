@@ -1034,16 +1034,34 @@ threading.Thread(target=auto_pull_loop, daemon=True, name="browser-image-puller"
 
 
 # ---------- 内置 CDP 自测：临时有头/无头实例上跑官方 CDP WebSocket 用例 ----------
-SELFTEST_STATE = {"running": False, "started": 0.0, "result": {}, "error": ""}
+SELFTEST_STATE = {
+    "running": False, "started": 0.0, "result": {}, "error": "",
+    # 当前正在自测的临时实例信息，供前端把画面临时挂到被测浏览器上依次展示。
+    # {"sid": ..., "mode": "full"|"headless", "phase": "starting"|"running"|"display"}
+    "current": None,
+}
 SELFTEST_LOCK = threading.Lock()
+# 每个内核测完后让临时实例多存活几秒，供面板画面区展示被测浏览器。
+SELFTEST_DISPLAY_SECONDS = 6.0
+
+
+def _selftest_set_current(sid: str, mode: str, phase: str):
+    with SELFTEST_LOCK:
+        SELFTEST_STATE["current"] = {"sid": sid, "mode": mode, "phase": phase}
 
 
 def _selftest_one_mode(browser_mode: str) -> dict:
-    """在一份临时实例上跑完整自测，无论成败都在结束时销毁实例。"""
+    """在一份临时实例上跑完整自测，无论成败都在结束时销毁实例。
+
+    过程中把临时实例信息写进 SELFTEST_STATE["current"]，并在测试跑完后
+    刻意多存活 SELFTEST_DISPLAY_SECONDS 秒（phase=display），让面板画面区
+    能挂载并展示这个被测浏览器，然后才销毁。
+    """
     sid = str(uuid.uuid4())
     created = False
     try:
         log.info("[自测] 创建临时实例：内核=%s sid=%s", browser_mode, sid[:8])
+        _selftest_set_current(sid, browser_mode, "starting")
         info = start_browser_instance(sid, "ephemeral", "", browser_mode)
         created = True
         container = client.containers.get(info["container_id"])
@@ -1063,7 +1081,12 @@ def _selftest_one_mode(browser_mode: str) -> dict:
         def emit(level, name, detail):
             log.info("[自测][%s][%s] %s %s", browser_mode, level, name, detail)
 
-        return run_all(f"http://{ip}:9222", emit)
+        _selftest_set_current(sid, browser_mode, "running")
+        result = run_all(f"http://{ip}:9222", emit)
+        # 测试全部跑完，留一段展示窗口，前端趁此把画面挂到该临时实例上。
+        _selftest_set_current(sid, browser_mode, "display")
+        time.sleep(SELFTEST_DISPLAY_SECONDS)
+        return result
     except Exception as e:
         log.error("[自测][%s] 执行异常: %s", browser_mode, e)
         return {"passed": 0, "failed": 1, "cases": [], "error": f"{type(e).__name__}: {e}"}
@@ -1079,12 +1102,22 @@ def _selftest_one_mode(browser_mode: str) -> dict:
 def selftest_worker():
     log.info("========== 开始内置 CDP 自测（临时有头 + 无头实例）==========")
     result = {"full": {}, "headless": {}}
+    # 先发布空壳结果，前端据此逐卡渲染（full 先出结果、headless 后出）。
+    with SELFTEST_LOCK:
+        SELFTEST_STATE["result"] = {"modes": result, "passed": 0, "failed": 0}
     # 先跑完整内核，日志顺序与设置页结果顺序一致，避免误以为只测了无头。
     for mode in ("full", "headless"):
         label = "完整内核(full)" if mode == "full" else "无头内核(headless)"
         log.info("---------- 自测开始：%s ----------", label)
-        result[mode] = _selftest_one_mode(mode)
-        one = result[mode]
+        one = _selftest_one_mode(mode)
+        result[mode] = one
+        # 每跑完一个内核就发布一次，前端能逐个看到卡片结果，不必等全部结束。
+        with SELFTEST_LOCK:
+            SELFTEST_STATE["result"] = {
+                "modes": result,
+                "passed": sum(result[m].get("passed", 0) for m in result),
+                "failed": sum(result[m].get("failed", 0) for m in result),
+            }
         log.info(
             "---------- 自测结束：%s 通过 %d / 失败 %d ----------",
             label,
@@ -1099,6 +1132,7 @@ def selftest_worker():
     )
     with SELFTEST_LOCK:
         SELFTEST_STATE["running"] = False
+        SELFTEST_STATE["current"] = None
         SELFTEST_STATE["result"] = {
             "modes": result,
             "passed": total_pass,
@@ -1267,6 +1301,7 @@ async def api_selftest_run():
         SELFTEST_STATE["started"] = time.time()
         SELFTEST_STATE["result"] = {}
         SELFTEST_STATE["error"] = ""
+        SELFTEST_STATE["current"] = None
     threading.Thread(target=selftest_worker, daemon=True, name="cdp-selftest").start()
     return {"started": True}
 
@@ -1279,6 +1314,7 @@ async def api_selftest_status():
             "running": SELFTEST_STATE["running"],
             "result": SELFTEST_STATE["result"],
             "error": SELFTEST_STATE["error"],
+            "current": SELFTEST_STATE.get("current"),
         }
 
 

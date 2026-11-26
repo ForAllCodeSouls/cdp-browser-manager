@@ -260,6 +260,22 @@
             100% { box-shadow: 0 0 0 0 #f0b42900; }
         }
 
+        /* 自测结果：有头 / 无头双栏卡片 */
+        .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+        @media (max-width: 760px) { .st-grid { grid-template-columns: 1fr; } }
+        .st-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-height: 110px; }
+        .st-card h4 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .st-card .st-sum { font-size: 11px; font-weight: 600; white-space: nowrap; }
+        .st-card .st-ok { color: var(--success); }
+        .st-card .st-bad { color: var(--danger); }
+        .st-card .st-wait { color: var(--muted); }
+        .st-cases { max-height: 210px; overflow: auto; font-size: 11px; line-height: 1.6; }
+        .st-case { display: flex; gap: 6px; padding: 1px 0; }
+        .st-case .st-m { flex: none; }
+        .st-case.pass .st-m { color: var(--success); }
+        .st-case.fail .st-m { color: var(--danger); }
+        .st-case .st-detail { color: var(--muted); }
+
         .empty-view {
             flex: 1;
             display: flex;
@@ -573,7 +589,11 @@
                 <label>连接自测 <span style="font-size:11px;color:var(--muted)">官方 CDP WebSocket</span></label>
                 <button id="btnSelftest" onclick="runSelftest()" style="width:100%">运行自测（临时开有头+无头实例）</button>
                 <div class="hint">用官方 CDP 协议测试导航/刷新 / JS 同步与异步 / 页面源码 / DOM 源码与盒模型 / 控制台事件 / 视口与布局 / 性能指标 / Cookie 读写列举清理 / 存储配额 / 鼠标 / 键盘 / 文本插入 / 截图（校验 PNG）/ 抓屏 / 多标签等。临时实例用完即销毁，不影响正在运行的实例；结果写入「运行日志」。</div>
-                <pre id="selftestResult" style="max-height:280px;overflow:auto;font-size:11px;margin-top:8px;display:none"></pre>
+                <div id="selftestResult" class="st-grid" style="display:none">
+                    <div class="st-card" id="stCardFull"></div>
+                    <div class="st-card" id="stCardHeadless"></div>
+                </div>
+                <div id="selftestViewTip" class="hint" style="display:none;color:var(--accent)">画面区正在依次展示被测浏览器（有头 → 无头），结束后自动切回你原来的实例。</div>
                 <button id="btnSelftestLogs" onclick="openLogsForSelftest()" style="width:100%;margin-top:8px;display:none">查看完整运行日志 →</button>
             </div>
             <div class="foot">画面设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
@@ -861,43 +881,104 @@
         }
 
         // 内置 CDP 自测：后台临时开有头+无头实例跑测试，日志写入运行日志。
+        let selftestPollTimer = null;
+        let selftestPrevSid = null;      // 自测前选中的实例，结束后恢复
+        let selftestFollowedSid = null;  // 当前画面正在跟随的临时实例
+
+        // 把自测结果渲染成「有头 / 无头」双栏卡片；后端每跑完一个内核就发布一次，
+        // 因此这里会被反复调用，逐卡填充，不必等全部结束。
+        function renderSelftestCards(r, running) {
+            const defs = [["full", "完整内核（有头）", "stCardFull"], ["headless", "无头内核", "stCardHeadless"]];
+            for (const [mode, label, id] of defs) {
+                const card = $(id);
+                if (!card) continue;
+                const mr = (r && r.modes && r.modes[mode]) || {};
+                const has = mr.passed !== undefined || mr.failed !== undefined || (mr.cases || []).length;
+                if (!has) {
+                    card.innerHTML = '<h4>' + esc(label) +
+                        '<span class="st-sum st-wait">' + (running ? "测试中…" : "未运行") + '</span></h4>' +
+                        '<div class="st-wait" style="font-size:11px">' +
+                        (running ? "正在准备该内核的临时实例，请稍候" : "—") + '</div>';
+                    continue;
+                }
+                const p = mr.passed || 0, f = mr.failed || 0;
+                let html = '<h4>' + esc(label) +
+                    '<span class="st-sum"><span class="st-ok">✓ ' + p + '</span> · ' +
+                    '<span class="' + (f ? "st-bad" : "st-wait") + '">✗ ' + f + '</span></span></h4>' +
+                    '<div class="st-cases">';
+                for (const c of (mr.cases || [])) {
+                    html += '<div class="st-case ' + (c.ok ? "pass" : "fail") + '">' +
+                        '<span class="st-m">' + (c.ok ? "✓" : "✗") + '</span><span>' + esc(c.name) +
+                        (c.detail ? ' <span class="st-detail">— ' + esc(c.detail) + '</span>' : '') + '</span></div>';
+                }
+                if (mr.error) html += '<div class="st-case fail"><span class="st-m">✗</span><span>错误: ' + esc(mr.error) + '</span></div>';
+                card.innerHTML = html + '</div>';
+            }
+        }
+
+        // 把画面临时挂到当前被测的临时实例上（临时实例也在 /api/list 里）。
+        async function followSelftestInstance(cur) {
+            if (selftestFollowedSid === cur.sid) return;
+            // 只刷新实例表、不 render，避免画面先挂回旧实例又切走造成抖动。
+            try {
+                const data = await api("/api/list", {}, 10000);
+                instances = data.instances || {};
+                profiles = data.profiles || [];
+            } catch (e) { return; }                  // 拉取失败，下一轮重试
+            if (!instances[cur.sid]) return;          // 容器可能刚被销毁，等下一轮
+            selectedSid = cur.sid;
+            render();
+            selftestFollowedSid = cur.sid;            // 挂载成功后再标记，避免失败被永久跳过
+        }
+
+        function restoreAfterSelftest() {
+            selftestFollowedSid = null;
+            const back = (selftestPrevSid && instances[selftestPrevSid])
+                ? selftestPrevSid : (Object.keys(instances)[0] || null);
+            selectedSid = back;
+            render();
+        }
+
         async function runSelftest() {
             const btn = $("btnSelftest");
-            const pre = $("selftestResult");
+            const grid = $("selftestResult");
+            const tip = $("selftestViewTip");
             const logsBtn = $("btnSelftestLogs");
             if (btn.disabled) return;
             btn.disabled = true;
             const original = btn.textContent;
-            pre.style.display = "block";
+            grid.style.display = "grid";
+            tip.style.display = "block";
             logsBtn.style.display = "block";
-            pre.textContent = "正在启动自测（临时创建有头 + 无头实例）…\n详细进度见「运行日志」。";
+            selftestPrevSid = selectedSid;
+            selftestFollowedSid = null;
+            renderSelftestCards({ modes: { full: {}, headless: {} } }, true);
             try {
                 await api("/api/selftest/run", { method: "POST" }, 20000);
-                toast("自测已启动，可在「运行日志」实时查看", "ok");
+                toast("自测已启动，画面将依次展示被测浏览器", "ok");
                 openLogsForSelftest();
-                // 轮询结果摘要
-                const timer = setInterval(async () => {
+                if (selftestPollTimer) clearInterval(selftestPollTimer);
+                selftestPollTimer = setInterval(async () => {
                     try {
                         const s = await api("/api/selftest/status", {}, 10000);
-                        if (!s.running && s.result && s.result.modes) {
-                            clearInterval(timer);
-                            const r = s.result;
-                            let text = "自测完成：通过 " + r.passed + " / 失败 " + r.failed + "\n";
-                            for (const [mode, mr] of Object.entries(r.modes)) {
-                                text += "\n[" + (mode === "full" ? "完整内核" : "无头内核") + "] " +
-                                    "通过 " + (mr.passed || 0) + " / 失败 " + (mr.failed || 0) + "\n";
-                                for (const c of (mr.cases || [])) {
-                                    text += "  " + (c.ok ? "✓" : "✗") + " " + c.name +
-                                        (c.detail ? "  — " + c.detail : "") + "\n";
-                                }
-                                if (mr.error) text += "  错误: " + mr.error + "\n";
-                            }
-                            pre.textContent = text;
+                        if (s.result && s.result.modes) renderSelftestCards(s.result, s.running);
+                        if (s.current && s.current.sid) {
+                            await followSelftestInstance(s.current);
                         }
-                    } catch (e) { clearInterval(timer); }
-                }, 2000);
+                        if (!s.running) {
+                            clearInterval(selftestPollTimer);
+                            selftestPollTimer = null;
+                            tip.style.display = "none";
+                            if (s.result && s.result.modes) renderSelftestCards(s.result, false);
+                            restoreAfterSelftest();
+                            toast("自测完成：通过 " + ((s.result && s.result.passed) || 0) +
+                                " / 失败 " + ((s.result && s.result.failed) || 0), "ok");
+                        }
+                    } catch (e) { /* 单次轮询失败不中断结果收集，下一轮再试 */ }
+                }, 1000);
             } catch (e) {
-                pre.textContent = "自测启动失败: " + (e.message || e);
+                grid.innerHTML = '<div class="st-card">自测启动失败: ' + esc(e.message || e) + '</div>';
+                tip.style.display = "none";
                 toast("自测启动失败: " + (e.message || e), "error");
             } finally {
                 btn.disabled = false;
