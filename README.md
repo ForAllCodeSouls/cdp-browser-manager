@@ -246,16 +246,18 @@ docker run -d \
 
 每个实例都暴露标准的 Chrome DevTools Protocol（CDP）端点，任何实现 CDP 客户端的库都可以直接连接，无需针对本项目做适配。
 
-连接信息从面板的实例详情里复制，包含两部分：
+连接信息从面板的实例详情里复制「CDP」地址，包含两部分：
 
-- **HTTP 地址**：如 `http://你的IP:9222`，用于发现目标和读取元信息
+- **HTTP 地址**：如 `https://你的域名/9222`，用于发现目标和读取元信息
   - `GET /json/version` —— 浏览器版本，以及 `webSocketDebuggerUrl`
   - `GET /json/list` —— 当前标签页列表，含每个页面的 `id` 与 `webSocketDebuggerUrl`
-- **WebSocket 地址**：如 `ws://你的IP:9222/devtools/browser/...`（浏览器级）或 `ws://你的IP:9222/devtools/page/<id>`（页面级），连接后按 CDP 协议发送 `Page.navigate`、`Runtime.evaluate` 等命令即可。
+- **WebSocket 地址**：如 `wss://你的域名/9222/devtools/browser/...`（浏览器级）或 `wss://你的域名/9222/devtools/page/<id>`（页面级），连接后按 CDP 协议发送 `Page.navigate`、`Runtime.evaluate` 等命令即可。
+
+**CDP 走 manager 同源代理**：面板显示的 CDP 地址是 `域名/端口`（不是 `域名:端口`）。manager 按路径里的端口找到对应实例，从容器内网访问真实 CDP，并把响应里的 WebSocket 地址改写成同源 `wss://...`。这样做的原因是反向代理通常只把 443 转给 manager、不转发浏览器的 CDP 端口，而且 Chrome 会拒绝 Host 非本机地址的直连。因此**只要能打开面板的域名，就能直接用同一域名连接 CDP**，无需暴露任何额外端口，也不必改动反向代理配置。直连宿主机 `http://IP:9222` 在宿主机本地仍可用。
 
 三种方式的 CDP 端口与协议完全一致，连接代码不需要区分；无头实例只是不提供 VNC/noVNC 端口。
 
-端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`（无头内核只分配 CDP 端口）。页面显示的是宿主机端口，可直接在宿主机上连接。
+端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`（无头内核只分配 CDP 端口）。页面显示的是宿主机端口，代理路由里的 `9222` 就是该端口。
 
 ## 本地构建
 

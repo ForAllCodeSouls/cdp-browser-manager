@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit
 
 import docker
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
@@ -404,6 +404,29 @@ def host_for_url(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
 
+def external_base(request: Request) -> str:
+    """对外可访问的 base（协议 + host），用于同源 CDP 代理改写地址。
+
+    反向代理场景下 request.url.scheme 常是 http（nginx→manager 是明文），
+    因此优先取 X-Forwarded-Proto；host 直接用请求头，保持用户访问的域名。
+    """
+    if PUBLIC_HOST:
+        return PUBLIC_HOST
+    host = request.headers.get("host", "")
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    if forwarded:
+        scheme = forwarded
+    elif host and not re.match(r"^[\d.:\[\]]+(:\d+)?$", host):
+        # 纯域名（无端口，如 browservnc.example.com）走 443 反代，按 https 处理；
+        # IP 或带端口的 Host 是直连，沿用请求实际 scheme。
+        scheme = "https"
+    else:
+        scheme = request.url.scheme
+    if host:
+        return f"{scheme}://{host}"
+    return str(request.base_url).rstrip("/")
+
+
 def parse_ports(container) -> dict:
     ports = container.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
     result = {}
@@ -535,13 +558,15 @@ def restore_instances():
 
 def to_view(item: dict, request: Request) -> dict:
     data = dict(item)
-    base = public_base(request)
+    base = external_base(request)
     host = host_for_url(host_from_base(base))
     debug = item.get("debug_port")
     vnc = item.get("vnc_port")
     novnc = item.get("novnc_port")
-    data["cdp_addr"] = f"{host}:{debug}" if debug else ""
-    data["cdp_http"] = f"http://{host}:{debug}" if debug else ""
+    # CDP 走 manager 同源代理（/<port>/...），不再暴露浏览器容器的主机端口：
+    # 域名只转发 443 到 manager，直连端口在公网不可达；Chrome 还校验 Host。
+    data["cdp_addr"] = f"{host}/{debug}" if debug else ""
+    data["cdp_http"] = f"{base}/{debug}" if debug else ""
     data["vnc_url"] = f"http://{host}:{vnc}" if vnc else ""
     # novnc 包不提供根目录 index.html。这里返回基础地址，
     # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
@@ -1220,6 +1245,15 @@ def valid_target_id(tid: str) -> bool:
     return bool(TARGET_ID_RE.fullmatch(tid or ""))
 
 
+def instance_by_port(port: int) -> dict | None:
+    """按对外 CDP 端口找运行中的实例（同源代理用 /<port>/... 定位目标）。"""
+    with LOCK:
+        for item in INSTANCES.values():
+            if item.get("debug_port") == port and item.get("status") == "running":
+                return dict(item)
+    return None
+
+
 def cdp_http(sid: str, path: str, method: str = "GET") -> object:
     """从容器内网访问 CDP HTTP 端点，返回解析后的 JSON。"""
     import urllib.request
@@ -1764,6 +1798,131 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                 upstream_send({"id": 999, "method": "Page.stopScreencast", "params": {}})
             except Exception:
                 pass
+            try:
+                upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ---------- 同源 CDP 代理：让 /<port>/... 等价于直连浏览器 CDP 端口 ----------
+# 背景：反向代理通常只把 443 转给 manager，浏览器 CDP 端口发布在主机上却无法
+# 通过域名访问；且 Chrome 校验 Host，用域名直连 CDP 会被拒。这里由 manager
+# 按路径里的端口找到实例，从容器内网访问真实 CDP，并把响应里的 WS 地址改写
+# 成同源地址。这样 Playwright/Puppeteer 等客户端用 https://域名/<port> 即可连接。
+
+def rewrite_cdp_ws_urls(text: str, request: Request, port: int) -> str:
+    """把 CDP JSON 里 ws://127.0.0.1:9223/devtools/... 改成同源 wss 地址。"""
+    base = external_base(request)
+    ws_base = "wss://" + base.split("://", 1)[-1] if base.startswith("https://") else "ws://" + base.split("://", 1)[-1]
+    # 保留 /devtools/... 之后的部分，替换协议与主机端口。
+    pattern = re.compile(r'"(webSocketDebuggerUrl|wss?Url|wsUrl)"\s*:\s*"wss?://[^"]*?(/devtools/[^"]*)"')
+
+    def repl(m):
+        return '"' + m.group(1) + '":"' + ws_base + "/" + str(port) + m.group(2) + '"'
+
+    return pattern.sub(repl, text)
+
+
+@app.api_route("/{port}/json/{rest:path}", methods=["GET", "PUT", "POST", "DELETE"])
+async def cdp_json_proxy(port: int, rest: str, request: Request):
+    """CDP HTTP 端点同源代理：/9222/json/version -> 容器 CDP /json/version。"""
+    item = instance_by_port(port)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的实例")
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise HTTPException(status_code=502, detail="容器网络未就绪")
+
+    path = "/json/" + rest
+    if request.url.query:
+        path += "?" + request.url.query
+    body = await request.body()
+
+    def do():
+        import urllib.request
+        req = urllib.request.Request(
+            f"http://{ip}:9222{path}",
+            data=body if body else None,
+            method=request.method,
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode("utf-8", "replace")
+
+    try:
+        raw = await run_in_threadpool(do)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CDP 请求失败: {e}")
+
+    try:
+        json.loads(raw)
+        raw = rewrite_cdp_ws_urls(raw, request, port)
+    except Exception:
+        pass
+    return Response(content=raw, media_type="application/json; charset=utf-8")
+
+
+@app.websocket("/{port}/devtools/{rest:path}")
+async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
+    """CDP WebSocket 通用透传：browser 级与 page 级都支持，供自动化客户端连接。"""
+    import websocket as ws_client
+
+    await websocket.accept()
+    item = instance_by_port(port)
+    if not item:
+        await websocket.send_json({"error": f"端口 {port} 没有运行中的实例"})
+        await websocket.close()
+        return
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        await websocket.send_json({"error": "容器网络未就绪"})
+        await websocket.close()
+        return
+
+    upstream = None
+    stop = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def pump():
+        while not stop.is_set():
+            try:
+                raw = upstream.recv()
+            except Exception:
+                break
+            if not raw:
+                break
+            try:
+                asyncio.run_coroutine_threadsafe(websocket.send_text(raw), loop).result(timeout=3)
+            except Exception:
+                break
+
+    try:
+        upstream = ws_client.create_connection(
+            f"ws://{ip}:9222/devtools/{rest}", timeout=10, suppress_origin=True
+        )
+        threading.Thread(target=pump, daemon=True).start()
+        while True:
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+            try:
+                await run_in_threadpool(upstream.send, data)
+            except Exception:
+                break
+    except Exception as e:
+        try:
+            await websocket.send_json({"error": str(e)[:200]})
+        except Exception:
+            pass
+    finally:
+        stop.set()
+        if upstream is not None:
             try:
                 upstream.close()
             except Exception:
