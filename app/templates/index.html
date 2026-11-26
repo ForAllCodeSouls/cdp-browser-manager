@@ -169,16 +169,15 @@
         }
         .castbar.show { display: flex; }
         .castbar.locked { opacity: .55; pointer-events: none; }
-        /* 第一行标签、第二行导航，和常见浏览器布局一致；标签多了第一行横向滚动 */
+        /* 第一行标签、第二行导航，和常见浏览器布局一致；
+           标签多了同行压缩，挤到放不下标题时激活标签就只剩 × */
         .castbar .tabrow,
         .castbar .navrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
-        .castbar .tabrow { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
-        .castbar .tabrow::-webkit-scrollbar { height: 4px; }
-        .castbar .tabrow::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .castbar .tabrow { flex-wrap: nowrap; overflow: hidden; padding-bottom: 2px; }
         .castbar .lock-tip { color: var(--warn); font-size: 11px; margin-left: auto; }
         .chip {
-            flex: 0 0 auto;
-            width: 132px;
+            flex: 0 1 132px;
+            min-width: 26px;
             display: inline-flex;
             align-items: center;
             gap: 4px;
@@ -190,12 +189,15 @@
             font-size: 11px;
         }
         .chip:hover { filter: brightness(1.2); }
-        .chip.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; }
+        /* 只有当前标签显示 ×，并保证窄到极限时也放得下它 */
+        .chip.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; min-width: 42px; }
         .chip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chip-x {
+            display: none;
             flex: none; width: 16px; height: 16px; line-height: 14px; text-align: center;
             border-radius: 50%; color: var(--muted); font-size: 13px;
         }
+        .chip.on .chip-x { display: inline-block; }
         .chip-x:hover { background: #ffffff26; color: var(--text); }
         .castbar input.url {
             flex: 1;
