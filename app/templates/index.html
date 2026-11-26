@@ -1247,10 +1247,22 @@
                 .replace(/\/vnc(_lite|_auto)?\.html\/?$/, "");
             const isLite = settings.page === "vnc_lite.html";
             const page = settings.page;
-            const params = isLite
-                ? (settings.scale === "1" ? "scale=1" : "")
-                : ("autoconnect=1" + (settings.scale === "1" ? "&resize=scale" : "") + "&reconnect=1");
-            return base + "/" + page + (params ? "?" + params : "");
+            const list = [];
+            if (!isLite) {
+                list.push("autoconnect=1");
+                if (settings.scale === "1") list.push("resize=scale");
+                list.push("reconnect=1");
+            } else if (settings.scale === "1") {
+                list.push("scale=1");
+            }
+            // 同源代理：novnc_url 形如 https://域名/<port>。noVNC 默认把 WS 连到
+            // 当前 host 的 /websockify，但域名 443 只转给 manager；用 path 参数把
+            // 端口带进路径，令 WS 落到 /<port>/websockify（manager 透传到容器 6080）。
+            // 若后端仍是旧的直连地址（结尾为 :端口），则不加 path，保持原行为。
+            if (/\/\d+$/.test(base) && i.novnc_port) {
+                list.push("path=" + i.novnc_port + "/websockify");
+            }
+            return base + "/" + page + (list.length ? "?" + list.join("&") : "");
         }
 
         function castWsUrl(i, tid) {

@@ -567,10 +567,14 @@ def to_view(item: dict, request: Request) -> dict:
     # 域名只转发 443 到 manager，直连端口在公网不可达；Chrome 还校验 Host。
     data["cdp_addr"] = f"{host}/{debug}" if debug else ""
     data["cdp_http"] = f"{base}/{debug}" if debug else ""
-    data["vnc_url"] = f"http://{host}:{vnc}" if vnc else ""
-    # novnc 包不提供根目录 index.html。这里返回基础地址，
+    # VNC/noVNC 同样走 manager 同源代理（/<port>/...）：域名只转发 443 到 manager，
+    # 浏览器容器发布的主机端口经域名带端口访问不可达。保留直连字段供局域网直连用。
+    data["vnc_direct"] = f"http://{host}:{vnc}" if vnc else ""
+    data["novnc_direct"] = f"http://{host}:{novnc}" if novnc else ""
+    data["vnc_url"] = f"{base}/{vnc}" if vnc else ""
+    # novnc 包不提供根目录 index.html。这里返回同源基础地址，
     # 具体页面（vnc_lite.html / vnc.html）与参数由前端设置决定。
-    data["novnc_url"] = f"http://{host}:{novnc}" if novnc else ""
+    data["novnc_url"] = f"{base}/{novnc}" if novnc else ""
     # screencast 前端模板：把 {tid} 换成标签页 id 即可。
     # inspector.html 由浏览器自带的 CDP HTTP 服务提供，页面与 WS 同源，避免 CORS。
     # 抓屏走 manager 的 WS 代理（见 /ws/cast），不依赖浏览器自带 devtools 前端。
@@ -1254,6 +1258,15 @@ def instance_by_port(port: int) -> dict | None:
     return None
 
 
+def instance_by_novnc_port(port: int) -> dict | None:
+    """按对外 noVNC 端口找运行中的实例（VNC 同源代理用 /<port>/... 定位目标）。"""
+    with LOCK:
+        for item in INSTANCES.values():
+            if item.get("novnc_port") == port and item.get("status") == "running":
+                return dict(item)
+    return None
+
+
 def cdp_http(sid: str, path: str, method: str = "GET") -> object:
     """从容器内网访问 CDP HTTP 端点，返回解析后的 JSON。"""
     import urllib.request
@@ -1920,6 +1933,118 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
             await websocket.send_json({"error": str(e)[:200]})
         except Exception:
             pass
+    finally:
+        stop.set()
+        if upstream is not None:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ---------- VNC/noVNC 同源代理：让 /<novnc_port>/... 等价于直连 noVNC 端口 ----------
+# 背景同 CDP：域名只把 443 转给 manager，浏览器容器发布的 noVNC 主机端口
+# 经「域名:端口」访问不可达（混合内容 + 未转发）。这里由 manager 按路径里的
+# noVNC 端口找到实例，从容器内网访问 6080 上的 websockify/web 服务。
+# noVNC 页面把 WS 地址拼成 <scheme>://<host>[:<port>]/<path>，其中 path 来自
+# URL 查询参数 ?path=（默认 websockify）。前端把 path 设为 "<novnc_port>/websockify"，
+# WS 便落到同源的 /<port>/websockify 路由，无需改 nginx。
+
+@app.api_route(
+    "/{port}/{rest:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def novnc_http_proxy(port: int, rest: str, request: Request):
+    """noVNC 静态资源同源代理：/7901/vnc_lite.html -> 容器 :6080/vnc_lite.html。"""
+    item = instance_by_novnc_port(port)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的 VNC 实例")
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise HTTPException(status_code=502, detail="容器网络未就绪")
+
+    path = "/" + rest
+    if request.url.query:
+        path += "?" + request.url.query
+    body = await request.body()
+
+    def do():
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://{ip}:6080{path}",
+            data=body if body else None,
+            method=request.method,
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "application/octet-stream")
+
+    try:
+        data, ctype = await run_in_threadpool(do)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"noVNC 请求失败: {e}")
+    return Response(content=data, media_type=ctype)
+
+
+@app.websocket("/{port}/websockify")
+async def novnc_ws_proxy(websocket: WebSocket, port: int):
+    """noVNC websockify 二进制 WS 同源透传（RFB 协议帧，非文本）。"""
+    import websocket as ws_client
+
+    await websocket.accept()
+    item = instance_by_novnc_port(port)
+    if not item:
+        await websocket.close(code=1008)
+        return
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        await websocket.close(code=1011)
+        return
+
+    upstream = None
+    stop = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def pump():
+        while not stop.is_set():
+            try:
+                raw = upstream.recv()
+            except Exception:
+                break
+            if not raw:
+                break
+            try:
+                payload = raw if isinstance(raw, (bytes, bytearray)) else raw.encode("utf-8", "replace")
+                asyncio.run_coroutine_threadsafe(
+                    websocket.send_bytes(payload), loop
+                ).result(timeout=3)
+            except Exception:
+                break
+
+    try:
+        upstream = ws_client.create_connection(
+            f"ws://{ip}:6080/websockify", timeout=10, suppress_origin=True
+        )
+        threading.Thread(target=pump, daemon=True).start()
+        while not stop.is_set():
+            try:
+                msg = await websocket.receive()
+            except Exception:
+                break
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes")
+            if data is None:
+                text = msg.get("text")
+                data = text.encode("utf-8") if text else b""
+            try:
+                await run_in_threadpool(upstream.send, data)
+            except Exception:
+                break
     finally:
         stop.set()
         if upstream is not None:
