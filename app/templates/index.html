@@ -158,9 +158,9 @@
 
         .castbar {
             display: none;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 6px;
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: var(--radius);
@@ -169,14 +169,20 @@
         }
         .castbar.show { display: flex; }
         .castbar.locked { opacity: .55; pointer-events: none; }
-        .castbar .tabs { display: flex; gap: 5px; flex-wrap: wrap; }
-        .castbar .lock-tip { color: var(--warn); font-size: 11px; }
+        /* 第一行标签、第二行导航，和常见浏览器布局一致；标签多了第一行横向滚动 */
+        .castbar .tabrow,
+        .castbar .navrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .castbar .tabrow { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+        .castbar .tabrow::-webkit-scrollbar { height: 4px; }
+        .castbar .tabrow::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .castbar .lock-tip { color: var(--warn); font-size: 11px; margin-left: auto; }
         .chip {
-            max-width: 150px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding: 4px 9px;
+            flex: 0 0 auto;
+            width: 132px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 4px 3px 9px;
             border-radius: 999px;
             cursor: pointer;
             background: var(--surface-2);
@@ -185,6 +191,12 @@
         }
         .chip:hover { filter: brightness(1.2); }
         .chip.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; }
+        .chip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .chip-x {
+            flex: none; width: 16px; height: 16px; line-height: 14px; text-align: center;
+            border-radius: 50%; color: var(--muted); font-size: 13px;
+        }
+        .chip-x:hover { background: #ffffff26; color: var(--text); }
         .castbar input.url {
             flex: 1;
             min-width: 180px;
@@ -203,18 +215,20 @@
             position: relative;
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            background: var(--bg);
+            background: var(--surface);
             overflow: hidden;
         }
-        .frame-host { position: absolute; inset: 0; }
+        /* 双重保险：留白由容器上色，canvas 透明透出，避免替换元素背景不生效 */
+        .frame-host { position: absolute; inset: 0; background: var(--surface); }
         .frame-host iframe { display: block; width: 100%; height: 100%; border: none; }
         .cast-canvas {
             display: block;
             width: 100%;
             height: 100%;
             object-fit: contain;
-            /* 画面按原比例居中，两侧留白用面板背景色，不再是突兀的黑边 */
-            background: var(--bg);
+            /* 留白透明，透出 frame-wrap 的面板色；不要给 canvas 自己上色，
+               替换元素的背景在部分浏览器里不按预期填充留白区域 */
+            background: transparent;
             cursor: crosshair;
             outline: none;
         }
@@ -1682,11 +1696,15 @@
             const focused = oldInput && document.activeElement === oldInput;
             const typed = oldInput ? oldInput.value : null;
 
-            const chips = castState.targets.map(t =>
-                '<span class="chip ' + (t.id === castState.tid ? 'on' : '') +
-                '" title="' + esc(t.url) + '" onclick="switchTarget(' + jsArg(t.id) + ')">' +
-                esc(t.title || t.url || "无标题") + '</span>'
-            ).join("");
+            const chips = castState.targets.map(t => {
+                const idArg = jsArg(t.id);
+                return '<span class="chip ' + (t.id === castState.tid ? 'on' : '') +
+                    '" title="' + esc(t.url) + '" onclick="switchTarget(' + idArg + ')">' +
+                    '<span class="chip-label">' + esc(t.title || t.url || "无标题") + '</span>' +
+                    '<span class="chip-x" title="关闭此标签" ' +
+                    'onclick="event.stopPropagation(); closeTargetById(' + idArg + ')">×</span>' +
+                    '</span>';
+            }).join("");
             const cur = castState.targets.find(t => t.id === castState.tid) || {};
             const urlValue = focused && typed !== null ? typed : (cur.url || "");
             const hist = castHistory && castHistory.sid === sel.sid && castHistory.tid === castState.tid
@@ -1695,29 +1713,28 @@
             const canForward = !!hist && hist.index < hist.ids.length - 1;
 
             bar.className = "castbar show" + (screenLocked ? " locked" : "");
-            const modeTip = effectiveMode(sel) === "vnc"
-                ? '<span style="color:var(--muted);font-size:11px">VNC 导航</span>'
-                : '';
             const lockTip = screenLocked
                 ? '<span class="lock-tip"><svg class="ico ico-sm" style="margin-right:4px"><use href="#i-lock"/></svg>画面已锁定，导航已禁用</span>'
                 : '';
+            // 第一行只放标签（多了横向滚动），第二行放导航控制。
+            // 去掉了原全局「关闭」按钮和「标签 / VNC 导航」占位文字：
+            // 关闭已下沉到每个标签右侧的 ×，当前标签关掉后画面会自动切到相邻标签。
             bar.innerHTML =
-                modeTip +
-                '<span style="color:var(--muted)">标签</span>' +
-                '<span class="tabs">' + chips + '</span>' +
-                '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
-                '<button class="btn-mini" title="后退到上一个页面" onclick="historyStep(-1)"' +
-                    (canBack ? '' : ' disabled') + '>' +
-                    '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-back"/></svg>后退</button>' +
-                '<button class="btn-mini" title="前进到下一个页面" onclick="historyStep(1)"' +
-                    (canForward ? '' : ' disabled') + '>' +
-                    '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-forward"/></svg>前进</button>' +
-                '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
-                '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
-                '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
-                '<button class="btn-mini btn-danger" onclick="closeTarget()" ' +
-                'title="关闭最后一个标签时会自动新建空白页，画面不会中断（与 VNC 行为一致）">关闭</button>' +
-                lockTip;
+                '<div class="tabrow">' + chips +
+                    '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
+                '</div>' +
+                '<div class="navrow">' +
+                    '<button class="btn-mini" title="后退到上一个页面" onclick="historyStep(-1)"' +
+                        (canBack ? '' : ' disabled') + '>' +
+                        '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-back"/></svg>后退</button>' +
+                    '<button class="btn-mini" title="前进到下一个页面" onclick="historyStep(1)"' +
+                        (canForward ? '' : ' disabled') + '>' +
+                        '<svg class="ico ico-sm" style="margin-right:3px"><use href="#i-forward"/></svg>前进</button>' +
+                    '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后回车导航">' +
+                    '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
+                    '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
+                    lockTip +
+                '</div>';
             const input = $("castUrl");
             input.onkeydown = (e) => { if (e.key === "Enter") navigateCast(); };
             // 点击地址栏即全选当前网址，直接输入新地址覆盖，不必手动选中。
@@ -1922,29 +1939,39 @@
             if (sel && castState) updateCastHistory(sel, castState.tid);
         }
 
-        async function closeTarget() {
-            if (screenLocked) return;
+        // 关闭指定标签：标签右侧的 × 用它，关闭的是当前标签时画面会自动切到相邻标签；
+        // 后端在关闭最后一个标签前会补建空白页，画面不会中断。
+        async function closeTargetById(tid) {
+            if (screenLocked || !tid) return;
             const sel = currentSel();
             if (!sel || !castState) return;
-            const isLast = (castState.targets || []).length <= 1;
+            const list = castState.targets || [];
+            if (!list.some(t => t.id === tid)) return;
+            const isLast = list.length <= 1;
             const tip = isLast
                 ? "这是最后一个标签页。关闭后会自动新建一个空白页（和 VNC 行为一致），画面不会中断。\n\n确定关闭吗？"
-                : "关闭当前标签页？";
+                : "关闭这个标签页？";
             if (!confirm(tip)) return;
+            const wasCurrent = tid === castState.tid;
             try {
                 const res = await api(
                     "/api/instance/" + encodeURIComponent(sel.sid) +
-                        "/targets/" + encodeURIComponent(castState.tid),
+                        "/targets/" + encodeURIComponent(tid),
                     { method: "DELETE" }
                 );
                 if (res && res.recreated && res.tid) {
-                    setPreferredTid(res.tid);
+                    if (wasCurrent) setPreferredTid(res.tid);
                     toast("已关闭最后一个标签，自动新建了空白页以保持画面连接", "ok");
-                } else {
+                } else if (wasCurrent) {
                     setPreferredTid("");
                 }
                 await refreshAfterNavChange();
             } catch (e) { toast("关闭标签失败: " + e.message, "error"); }
+        }
+
+        // 兼容旧调用：导航条已改用每个标签的 ×，这里保留关闭当前标签的入口。
+        async function closeTarget() {
+            if (castState) await closeTargetById(castState.tid);
         }
 
         async function pollCastTargets() {
