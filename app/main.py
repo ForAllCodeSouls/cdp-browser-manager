@@ -100,7 +100,7 @@ AUTO_UPDATE_LOCK = threading.Lock()
 PULL_LOCK = threading.Lock()
 
 # 镜像更新检测缓存：避免面板轮询时反复打 GHCR API。
-IMAGE_STATUS_CACHE = {"ts": 0.0, "data": {}}
+IMAGE_STATUS_CACHE = {"ts": 0.0, "data": {}, "ttl": 600.0}
 IMAGE_STATUS_LOCK = threading.Lock()
 IMAGE_STATUS_TTL = 600.0
 
@@ -159,49 +159,85 @@ def remote_image_digest(image: str) -> str:
 def check_images_status(force: bool = False) -> dict:
     """对比本地与远端镜像摘要，判断是否有新版本。
 
-    带缓存，失败自动降级不影响面板。远端摘要做二次确认：仅当连续两次一致、
-    且与本地不同时才认定「有更新」。避免 GHCR/CDN 抖动或 CI 正在推送时的一次性
-    差异触发误报（表现为红点亮起、点开设置却又显示「已是最新」）。
+    带缓存，失败自动降级不影响面板。远端摘要做三次采样取多数，避免 GHCR/CDN
+    多节点抖动或 CI 正在推送时出现"有更新/已是最新"反复横跳：
+
+    - 三次里至少两次一致才算「已确认」；无法确认时不翻转上一轮的结论（黏性），
+      并标记为 checking，前端显示「检测中」而不是「已是最新」。
+    - 有未确认项时用短缓存尽快重试，避免错误结论停留 10 分钟。
     """
     now = time.time()
     with IMAGE_STATUS_LOCK:
         cached = IMAGE_STATUS_CACHE["data"]
-        if not force and cached and now - IMAGE_STATUS_CACHE["ts"] < IMAGE_STATUS_TTL:
+        cache_ttl = IMAGE_STATUS_CACHE.get("ttl", IMAGE_STATUS_TTL)
+        if not force and cached and now - IMAGE_STATUS_CACHE["ts"] < cache_ttl:
             return cached
+        prev = cached or {}
 
     result = {}
+    any_checking = False
     for label, image in (("full", BROWSER_IMAGE_FULL), ("headless", BROWSER_IMAGE_HEADLESS)):
         local = local_image_digest(image)
-        remote = ""
+        samples = []
         err = ""
-        stable = True
-        try:
-            remote = remote_image_digest(image)
-            if local and remote and local != remote:
-                # 首次发现差异，短暂间隔后再查一次确认；两次不一致视为远端抖动。
-                time.sleep(0.6)
-                confirm = remote_image_digest(image)
-                if confirm != remote:
-                    stable = False
-                    log.debug(
-                        "%s 远端摘要两次不一致(%s/%s)，本次不报更新",
-                        label, remote[:19], confirm[:19],
-                    )
-        except Exception as e:
-            err = f"{type(e).__name__}: {e}"
-            log.debug("查询 %s 远端镜像摘要失败: %s", label, err)
+        for i in range(3):
+            if i:
+                time.sleep(0.3)
+            try:
+                samples.append(remote_image_digest(image))
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"
+                log.debug("查询 %s 远端镜像摘要失败: %s", label, err)
+        # 取出现次数最多的摘要；三次全不同则视为抖动，本轮不确认。
+        remote = ""
+        confirmed = False
+        if samples:
+            counts = {}
+            for s in samples:
+                counts[s] = counts.get(s, 0) + 1
+            remote, hits = max(counts.items(), key=lambda kv: kv[1])
+            confirmed = hits >= 2
+            if not confirmed:
+                log.warning(
+                    "%s 远端摘要三次采样不一致，本轮未确认（%s）",
+                    label, "/".join(s[:12] for s in samples),
+                )
+
+        # 无法可靠确认时，沿用上一轮的结论，避免状态翻转；并标记检测中。
+        prev_item = prev.get(label, {}) if isinstance(prev, dict) else {}
+        if confirmed and local and remote:
+            available = remote != local
+            checking = False
+        else:
+            available = bool(prev_item.get("update_available", False))
+            checking = True
+            any_checking = True
+
+        if checking:
+            status = "checking"
+        elif available:
+            status = "update_available"
+        else:
+            status = "up_to_date"
+
         result[label] = {
             "image": image,
             "local": local[:19] if local else "",
             "remote": remote[:19] if remote else "",
             "local_missing": not local,
             "remote_unknown": not remote,
-            "unstable": not stable,
-            "update_available": bool(stable and remote and local and remote != local),
+            "unstable": not confirmed,
+            "confirmed": confirmed,
+            "status": status,
+            # checking 时保留历史结论，避免连续抖动把"有更新"抹掉；前端另按 status 显示"检测中"。
+            "update_available": bool(available),
             "error": err if not remote else "",
         }
+
+    ttl = 60.0 if any_checking else IMAGE_STATUS_TTL
     with IMAGE_STATUS_LOCK:
         IMAGE_STATUS_CACHE["ts"] = now
+        IMAGE_STATUS_CACHE["ttl"] = ttl
         IMAGE_STATUS_CACHE["data"] = result
     return result
 
@@ -249,6 +285,7 @@ def pull_browser_images() -> dict:
     # 拉取后本地摘要已变，清掉检测缓存，让红点下次读取立即反映最新状态。
     with IMAGE_STATUS_LOCK:
         IMAGE_STATUS_CACHE["ts"] = 0.0
+        IMAGE_STATUS_CACHE["ttl"] = IMAGE_STATUS_TTL
     return results
 
 

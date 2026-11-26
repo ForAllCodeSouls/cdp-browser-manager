@@ -646,7 +646,8 @@
                 const data = await api("/api/images/status" + (force ? "?force=true" : ""), {}, 20000);
                 const entries = Object.entries(data || {});
                 // local_missing（本地还没镜像）不算「有更新」，否则误报红点。
-                const outdated = entries.filter(([k, v]) => v.update_available);
+                const outdated = entries.filter(([k, v]) => v.update_available && v.status !== "checking");
+                const checking = entries.filter(([k, v]) => v.status === "checking" || (v.unstable && !v.confirmed));
                 const unknown = entries.filter(([k, v]) => v.remote_unknown && !v.local_missing);
                 $("updateDot").style.display = outdated.length ? "block" : "none";
                 const badge = $("imageStatusBadge");
@@ -655,12 +656,13 @@
                         const names = outdated.map(([k]) => (k === "full" ? "完整内核" : "无头内核"));
                         badge.textContent = "● 有更新: " + names.join("、");
                         badge.style.color = "var(--danger)";
-                    } else if (!unknown.length) {
+                    } else if (checking.length || unknown.length) {
+                        // 检测未确认时绝不显示「已是最新」，避免状态反复横跳造成误判。
+                        badge.textContent = "… 检测中（远端暂不稳定，稍后自动重试）";
+                        badge.style.color = "var(--warn)";
+                    } else {
                         badge.textContent = "✓ 已是最新";
                         badge.style.color = "var(--success)";
-                    } else {
-                        badge.textContent = "（无法检测远端，请点更新）";
-                        badge.style.color = "var(--muted)";
                     }
                 }
             } catch (e) {
