@@ -694,6 +694,7 @@ def start_browser_instance(
             "vnc_port": vnc_port,
             "novnc_port": novnc_port,
             "status": container.status,
+            "cdp_ready": False,  # 必须在锁内随实例一起初始化，避免与监控线程竞态
             "browser_mode": browser_mode,
             "profile_mode": profile_mode,
             "profile_name": profile_name if persistent else "",
@@ -707,7 +708,6 @@ def start_browser_instance(
     # 不再同步空等 CDP 就绪（最长 20 秒会让前端「创建中」显得卡住）。
     # 容器已创建即立即返回，cdp_ready 由后台 cdp_monitor_loop 每 8 秒刷新，
     # 前端拿到 sid 后可立刻在列表显示实例，并异步等待画面连接。
-    info["cdp_ready"] = False
     return info
 
 
@@ -1105,39 +1105,49 @@ def selftest_worker():
     # 先发布空壳结果，前端据此逐卡渲染（full 先出结果、headless 后出）。
     with SELFTEST_LOCK:
         SELFTEST_STATE["result"] = {"modes": result, "passed": 0, "failed": 0}
-    # 先跑完整内核，日志顺序与设置页结果顺序一致，避免误以为只测了无头。
-    for mode in ("full", "headless"):
-        label = "完整内核(full)" if mode == "full" else "无头内核(headless)"
-        log.info("---------- 自测开始：%s ----------", label)
-        one = _selftest_one_mode(mode)
-        result[mode] = one
-        # 每跑完一个内核就发布一次，前端能逐个看到卡片结果，不必等全部结束。
+    # 整体 try/finally：任何意外异常都必须复位 running，否则自测状态永久卡在
+    # running=True，后续所有 POST /api/selftest/run 都会返回 409，再也跑不了。
+    try:
+        # 先跑完整内核，日志顺序与设置页结果顺序一致，避免误以为只测了无头。
+        for mode in ("full", "headless"):
+            label = "完整内核(full)" if mode == "full" else "无头内核(headless)"
+            log.info("---------- 自测开始：%s ----------", label)
+            one = _selftest_one_mode(mode)
+            result[mode] = one
+            # 每跑完一个内核就发布一次，前端能逐个看到卡片结果，不必等全部结束。
+            with SELFTEST_LOCK:
+                SELFTEST_STATE["result"] = {
+                    "modes": result,
+                    "passed": sum((result[m] or {}).get("passed", 0) for m in result),
+                    "failed": sum((result[m] or {}).get("failed", 0) for m in result),
+                }
+            log.info(
+                "---------- 自测结束：%s 通过 %d / 失败 %d ----------",
+                label,
+                one.get("passed", 0),
+                one.get("failed", 0),
+            )
+        total_pass = sum((result[m] or {}).get("passed", 0) for m in result)
+        total_fail = sum((result[m] or {}).get("failed", 0) for m in result)
+        log.info(
+            "========== 自测完成：通过 %d / 失败 %d ==========",
+            total_pass, total_fail,
+        )
+    except Exception as e:
+        log.error("========== 自测 worker 意外异常: %s ==========", e)
         with SELFTEST_LOCK:
+            SELFTEST_STATE["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        total_pass = sum((result[m] or {}).get("passed", 0) for m in result)
+        total_fail = sum((result[m] or {}).get("failed", 0) for m in result)
+        with SELFTEST_LOCK:
+            SELFTEST_STATE["running"] = False
+            SELFTEST_STATE["current"] = None
             SELFTEST_STATE["result"] = {
                 "modes": result,
-                "passed": sum(result[m].get("passed", 0) for m in result),
-                "failed": sum(result[m].get("failed", 0) for m in result),
+                "passed": total_pass,
+                "failed": total_fail,
             }
-        log.info(
-            "---------- 自测结束：%s 通过 %d / 失败 %d ----------",
-            label,
-            one.get("passed", 0),
-            one.get("failed", 0),
-        )
-    total_pass = sum(result[m].get("passed", 0) for m in result)
-    total_fail = sum(result[m].get("failed", 0) for m in result)
-    log.info(
-        "========== 自测完成：通过 %d / 失败 %d ==========",
-        total_pass, total_fail,
-    )
-    with SELFTEST_LOCK:
-        SELFTEST_STATE["running"] = False
-        SELFTEST_STATE["current"] = None
-        SELFTEST_STATE["result"] = {
-            "modes": result,
-            "passed": total_pass,
-            "failed": total_fail,
-        }
 
 
 # ---------- CDP 代理：供面板的 screencast 视图管理标签与下发命令 ----------

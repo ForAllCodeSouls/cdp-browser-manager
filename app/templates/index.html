@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CDP Browser Manager</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20x%3D%225%22%20y%3D%2211%22%20width%3D%2254%22%20height%3D%2243%22%20rx%3D%229%22%20fill%3D%22%231a1d27%22%20stroke%3D%22%235b8cff%22%20stroke-width%3D%224%22%2F%3E%3Cpath%20d%3D%22M5%2024h54%22%20stroke%3D%22%235b8cff%22%20stroke-width%3D%224%22%2F%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2217.5%22%20r%3D%222.8%22%20fill%3D%22%23f7b955%22%2F%3E%3Ccircle%20cx%3D%2225%22%20cy%3D%2217.5%22%20r%3D%222.8%22%20fill%3D%22%23f7b955%22%2F%3E%3Ccircle%20cx%3D%2234%22%20cy%3D%2217.5%22%20r%3D%222.8%22%20fill%3D%22%23f7b955%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2231%22%20width%3D%2216%22%20height%3D%2214%22%20rx%3D%223%22%20fill%3D%22%23f7b955%22%2F%3E%3Cpath%20d%3D%22M28%2031v-4a4%204%200%200%201%208%200v4%22%20fill%3D%22none%22%20stroke%3D%22%23f7b955%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
     <style>
         :root {
             --bg: #0f1117;
@@ -266,6 +267,7 @@
         .st-card .st-ok { color: var(--success); }
         .st-card .st-bad { color: var(--danger); }
         .st-card .st-wait { color: var(--muted); }
+        .st-card .st-ok, .st-card .st-bad, .st-card .st-wait { display: inline-flex; align-items: center; gap: 3px; }
         .st-cases { max-height: 210px; overflow: auto; font-size: 11px; line-height: 1.6; }
         .st-case { display: flex; gap: 6px; padding: 1px 0; }
         .st-case .st-m { flex: none; }
@@ -444,14 +446,51 @@
             aside { width: 100%; flex: 0 0 auto; max-height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
             .side-head.second { top: 41px; }
         }
+
+        /* 统一线性图标：跟随 currentColor，尺寸随所在元素 */
+        .ico { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .ico-lg { width: 30px; height: 30px; vertical-align: middle; }
+        .ico-sm { width: 11px; height: 11px; vertical-align: -1px; }
+        .btn-icon { display: inline-flex; align-items: center; gap: 6px; }
+        .st-m { display: inline-flex; align-items: center; }
     </style>
 </head>
 <body>
+    <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+        <symbol id="i-settings" viewBox="0 0 24 24">
+            <path d="M4 6h16M4 12h16M4 18h16"/>
+            <circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/>
+            <circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/>
+            <circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/>
+        </symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24">
+            <rect x="5" y="10" width="14" height="11" rx="2"/>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+        </symbol>
+        <symbol id="i-unlock" viewBox="0 0 24 24">
+            <rect x="5" y="10" width="14" height="11" rx="2"/>
+            <path d="M8 10V7a4 4 0 0 1 7.5-2"/>
+        </symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24">
+            <path d="M20 11a8 8 0 1 0-2.3 6.3"/>
+            <path d="M20 5v6h-6"/>
+        </symbol>
+        <symbol id="i-warn" viewBox="0 0 24 24">
+            <path d="M12 3 2 20h20L12 3z"/>
+            <path d="M12 9v5M12 17.6h.01"/>
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 24 24">
+            <path d="M4 12.5 9.5 18 20 6"/>
+        </symbol>
+        <symbol id="i-cross" viewBox="0 0 24 24">
+            <path d="M5 5l14 14M19 5 5 19"/>
+        </symbol>
+    </svg>
     <header>
         <div>
             <h1>CDP Browser Manager</h1>
             <div class="subtitle">完整 / 无头双内核 · VNC / CDP 抓屏可切换 · 用户目录可临时/持久</div>
-            <div class="disclaimer-note">⚠ 仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</div>
+            <div class="disclaimer-note"><svg class="ico" style="margin-right:4px"><use href="#i-warn"/></svg><span>仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</span></div>
         </div>
         <div class="toolbar">
             <label class="switch-wrap" title="打开/收起右侧运行日志">
@@ -459,8 +498,8 @@
                 <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
                 <span class="switch"></span>
             </label>
-            <button onclick="openSettings()" style="position:relative">⚙ 设置<span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
-            <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击">🔓 屏幕锁</button>
+            <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
+            <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
             <button class="btn-primary" onclick="openCreate()" id="btnCreate">+ 新建实例</button>
@@ -487,10 +526,10 @@
                         <div class="frame-overlay" id="frameOverlay"></div>
                         <div class="frame-host" id="frameHost"></div>
                         <div class="screen-lock" id="screenLock" tabindex="-1" title="画面已锁定，点击「解锁画面」恢复操作">
-                            <div class="lk-icon">🔒</div>
+                            <svg class="ico ico-lg lk-icon"><use href="#i-lock"/></svg>
                             <div class="lk-title">画面已锁定</div>
-                            <div class="lk-hint">正在执行脚本/自动化操作，鼠标与键盘输入已被拦截，避免误点击。点击右上角「🔒 屏幕锁」或下方按钮解锁。</div>
-                            <button class="btn-locked" onclick="toggleScreenLock()">🔓 解锁画面</button>
+                            <div class="lk-hint">正在执行脚本/自动化操作，鼠标与键盘输入已被拦截，避免误点击。点击右上角「屏幕锁」或下方按钮解锁。</div>
+                            <button class="btn-locked btn-icon" onclick="toggleScreenLock()"><svg class="ico"><use href="#i-unlock"/></svg><span>解锁画面</span></button>
                         </div>
                     </div>
                 </div>
@@ -676,7 +715,9 @@
             }
             const btn = $("btnScreenLock");
             if (btn) {
-                btn.textContent = screenLocked ? "🔒 已锁定" : "🔓 屏幕锁";
+                btn.innerHTML = screenLocked
+                    ? '<svg class="ico"><use href="#i-lock"/></svg><span>已锁定</span>'
+                    : '<svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span>';
                 btn.classList.toggle("btn-locked", screenLocked);
                 btn.title = screenLocked
                     ? "画面输入已锁定，点击解锁"
@@ -724,7 +765,7 @@
                 const hours = s.interval_hours || 6;
                 const intervalText = hours >= 24 && hours % 24 === 0
                     ? (hours / 24) + " 天" : hours + " 小时";
-                let head = "🔄 自动更新：每 " + intervalText + " 检查一次";
+                let head = '<svg class="ico" style="margin-right:4px"><use href="#i-refresh"/></svg>自动更新：每 ' + intervalText + " 检查一次";
                 head += (s.enabled === false) ? "（当前已关闭）" : "（已开启）";
                 let body = "";
                 const status = s.last_status || "";
@@ -768,14 +809,14 @@
                 if (badge) {
                     if (outdated.length) {
                         const names = outdated.map(([k]) => (k === "full" ? "完整内核" : "无头内核"));
-                        badge.textContent = "● 有更新: " + names.join("、");
+                        badge.innerHTML = '<svg class="ico ico-sm" style="margin-right:4px"><use href="#i-warn"/></svg>有更新: ' + names.join("、");
                         badge.style.color = "var(--danger)";
                     } else if (checking.length) {
                         // 检测未确认时绝不显示「已是最新」，避免状态反复横跳造成误判。
-                        badge.textContent = "… 检测中（远端暂不稳定，稍后自动重试）";
+                        badge.innerHTML = '<svg class="ico ico-sm" style="margin-right:4px"><use href="#i-refresh"/></svg>检测中（远端暂不稳定，稍后自动重试）';
                         badge.style.color = "var(--warn)";
                     } else {
-                        badge.textContent = "✓ 已是最新";
+                        badge.innerHTML = '<svg class="ico ico-sm" style="margin-right:4px"><use href="#i-check"/></svg>已是最新';
                         badge.style.color = "var(--success)";
                     }
                 }
@@ -784,7 +825,7 @@
                 // 绝不让上一次的旧红点继续挂着——那正是「刷新一下就有更新、再刷又没了」的来源。
                 if (dot) dot.style.display = "none";
                 if (badge) {
-                    badge.textContent = "… 检测失败，稍后自动重试";
+                    badge.innerHTML = '<svg class="ico ico-sm" style="margin-right:4px"><use href="#i-refresh"/></svg>检测失败，稍后自动重试';
                     badge.style.color = "var(--warn)";
                 }
             }
@@ -902,16 +943,18 @@
                     continue;
                 }
                 const p = mr.passed || 0, f = mr.failed || 0;
+                const icoCheck = '<svg class="ico ico-sm"><use href="#i-check"/></svg>';
+                const icoCross = '<svg class="ico ico-sm"><use href="#i-cross"/></svg>';
                 let html = '<h4>' + esc(label) +
-                    '<span class="st-sum"><span class="st-ok">✓ ' + p + '</span> · ' +
-                    '<span class="' + (f ? "st-bad" : "st-wait") + '">✗ ' + f + '</span></span></h4>' +
+                    '<span class="st-sum"><span class="st-ok">' + icoCheck + p + '</span> · ' +
+                    '<span class="' + (f ? "st-bad" : "st-wait") + '">' + icoCross + f + '</span></span></h4>' +
                     '<div class="st-cases">';
                 for (const c of (mr.cases || [])) {
                     html += '<div class="st-case ' + (c.ok ? "pass" : "fail") + '">' +
-                        '<span class="st-m">' + (c.ok ? "✓" : "✗") + '</span><span>' + esc(c.name) +
+                        '<span class="st-m">' + (c.ok ? icoCheck : icoCross) + '</span><span>' + esc(c.name) +
                         (c.detail ? ' <span class="st-detail">— ' + esc(c.detail) + '</span>' : '') + '</span></div>';
                 }
-                if (mr.error) html += '<div class="st-case fail"><span class="st-m">✗</span><span>错误: ' + esc(mr.error) + '</span></div>';
+                if (mr.error) html += '<div class="st-case fail"><span class="st-m">' + icoCross + '</span><span>错误: ' + esc(mr.error) + '</span></div>';
                 card.innerHTML = html + '</div>';
             }
         }
@@ -948,6 +991,8 @@
             btn.disabled = true;
             const original = btn.textContent;
             grid.style.display = "grid";
+            tip.textContent = "画面区正在依次展示被测浏览器（有头 → 无头），结束后自动切回你原来的实例。";
+            tip.style.color = "var(--accent)";
             tip.style.display = "block";
             logsBtn.style.display = "block";
             selftestPrevSid = selectedSid;
@@ -955,8 +1000,9 @@
             renderSelftestCards({ modes: { full: {}, headless: {} } }, true);
             try {
                 await api("/api/selftest/run", { method: "POST" }, 20000);
-                toast("自测已启动，画面将依次展示被测浏览器", "ok");
-                openLogsForSelftest();
+                // 结果双栏卡片就在设置弹窗里，保持弹窗打开让用户实时看到逐卡填充；
+                // 日志抽屉由下方「查看完整运行日志」按钮主动打开，不再自动 closeSettings()。
+                toast("自测已启动，结果卡片在下方实时更新，画面将依次展示被测浏览器", "ok");
                 if (selftestPollTimer) clearInterval(selftestPollTimer);
                 selftestPollTimer = setInterval(async () => {
                     try {
@@ -977,8 +1023,12 @@
                     } catch (e) { /* 单次轮询失败不中断结果收集，下一轮再试 */ }
                 }, 1000);
             } catch (e) {
-                grid.innerHTML = '<div class="st-card">自测启动失败: ' + esc(e.message || e) + '</div>';
-                tip.style.display = "none";
+                // 只更新提示文字，绝不覆盖 grid —— 否则 stCardFull/stCardHeadless 节点被销毁，
+                // 后续再自测将永远无法渲染结果。
+                renderSelftestCards(null, false);
+                tip.textContent = "自测启动失败: " + (e.message || e);
+                tip.style.color = "var(--danger)";
+                tip.style.display = "block";
                 toast("自测启动失败: " + (e.message || e), "error");
             } finally {
                 btn.disabled = false;
@@ -1211,6 +1261,8 @@
 
         // ---- 画面加载 ----
         function clearFrame() {
+            // 切换实例必须清零重试次数，否则某实例耗尽 3 次后新实例永不自动重试。
+            frameRetryCount = 0;
             if (frameRetryTimer) { clearTimeout(frameRetryTimer); frameRetryTimer = null; }
             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
             if (castWs) {
@@ -1388,7 +1440,13 @@
         // 用 canvas 渲染 CDP screencast 帧，并转发鼠标/键盘输入。
         // 不走 devtools inspector.html：其 CSP 只允许 ws://127.0.0.1，公网访客连不上。
         function mountCastCanvas(sel, tid) {
+            // 并发保护：load() 的定时刷新与 pollCastTargets() 可能同时走到这里，
+            // 两次挂载会各建一个 canvas 和 WebSocket。入口先做幂等清理，
+            // 旧 canvas 被移除、旧 WS 被关闭（其回调也会因 castGen 变化而失效）。
+            if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+            if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
             const host = $("frameHost");
+            while (host.firstChild) host.removeChild(host.firstChild);
             const canvas = document.createElement("canvas");
             canvas.id = "castCanvas";
             canvas.className = "cast-canvas";
@@ -1581,7 +1639,7 @@
                 ? '<span style="color:var(--muted);font-size:11px">VNC 导航</span>'
                 : '';
             const lockTip = screenLocked
-                ? '<span class="lock-tip">🔒 画面已锁定，导航已禁用</span>'
+                ? '<span class="lock-tip"><svg class="ico ico-sm" style="margin-right:4px"><use href="#i-lock"/></svg>画面已锁定，导航已禁用</span>'
                 : '';
             bar.innerHTML =
                 modeTip +

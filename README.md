@@ -140,8 +140,9 @@ curl http://你的IP:8000/api/logs/global?tail=300
 # 查看某个 browser 实例容器的日志与退出码（排障用，面板不展示）
 curl http://你的IP:8000/api/instance/{sid}/logs?tail=200
 
-# 深入诊断：读取容器内 /tmp/chromium.log 等重定向日志 + 动态库缺失检查
-# start.sh 把 chrome 报错写进文件而非 stdout，容器日志接口看不到，用这个
+# 深入诊断：容器内进程 / 动态库 / 关键日志检查
+# chrome 报错已改为输出到 stdout，直接用上面的 /logs 接口即可；
+# 这个接口用于进一步查动态库缺失、进程状态等启动期问题。
 curl http://你的IP:8000/api/instance/{sid}/diag
 ```
 
@@ -150,7 +151,7 @@ curl http://你的IP:8000/api/instance/{sid}/diag
 
 ## 部署（推荐 Docker Compose）
 
-项目根目录已附带 `docker-compose.yml`，内容如下：
+项目根目录已附带 `docker-compose.yml`，核心内容如下（节选，完整版还包含 `AUTO_PULL_IMAGES`、`AUTO_UPDATE_INTERVAL_HOURS`、`PUBLIC_HOST` 与健康检查，以仓库内文件为准）：
 
 ```yaml
 services:
@@ -285,12 +286,12 @@ curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 | 持久目录删除报「实例正在使用」 | 有实例挂载了该 Volume | 先停止使用该目录的实例，再删除 |
 | 想彻底清理持久目录数据 | Volume 不会随容器自动删除 | 面板左侧「持久用户目录」点删除，或 `docker volume rm cdp-profile-*` |
 
-查看某个 browser 容器的内部日志（排查 chromium / Xvfb 是否起来）：
+查看某个 browser 容器的日志（chrome 报错现在输出到 stdout，直接用 logs 即可）：
 
 ```bash
 docker ps --filter label=cdp.browser.manager --format '{{.Names}}'
-docker exec <容器名> tail -n 30 /tmp/chromium.log
-docker exec <容器名> tail -n 20 /tmp/xvfb.log
+docker logs --tail 100 <容器名>
+# 面板里也可以直接看：右上角「运行日志」开关，或 /api/logs/global 接口
 ```
 
 ## 免责声明
