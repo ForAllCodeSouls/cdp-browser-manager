@@ -148,6 +148,34 @@ class AddressBarJsTests(unittest.TestCase):
         self.assertIn("pollCastTargets(); }, 2500)", self.src)
 
 
+class QualityToggleJsTests(unittest.TestCase):
+    """画质切换是详情栏的全局快捷按钮，不在设置弹窗里。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            cls.src = f.read()
+
+    def test_no_quality_dropdown_in_settings(self):
+        # 设置弹窗里不应再有画质下拉（id=setQuality）。
+        self.assertNotIn('id="setQuality"', self.src)
+        self.assertNotIn('$("setQuality")', self.src)
+
+    def test_detail_has_global_quality_seg(self):
+        self.assertIn("qseg", self.src)
+        self.assertIn("QUALITY_LABELS", self.src)
+        # 三档都渲染成按钮，点击调用全局 setQuality。
+        self.assertIn("['low', 'medium', 'high'].map", self.src)
+        self.assertIn("setQuality(\\'' + k + '\\')", self.src)
+
+    def test_set_quality_persists_and_reconnects(self):
+        i = self.src.index("function setQuality")
+        seg = self.src[i:i + 500]
+        self.assertIn("localStorage.setItem(SETTINGS_KEY", seg)
+        self.assertIn("resetFrameState()", seg)
+        self.assertIn("render()", seg)
+
+
 class NavigationUrlTests(unittest.TestCase):
     """CDP 导航事件提取主 frame URL，过滤 iframe 噪声。"""
 

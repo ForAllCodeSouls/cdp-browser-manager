@@ -164,6 +164,7 @@
         .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
         .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
         .seg button.on { background: var(--accent); color: #fff; }
+        .qseg { margin-left: 6px; }
 
         .castbar {
             display: none;
@@ -665,15 +666,6 @@
                 </select>
             </div>
             <div class="row">
-                <label for="setQuality">画质模式</label>
-                <select id="setQuality">
-                    <option value="low">省流（960×540，低码率，隔帧推送）</option>
-                    <option value="medium">均衡（1280×720，推荐）</option>
-                    <option value="high">高清（原始尺寸，高码率）</option>
-                </select>
-                <div class="hint">网络差选省流，网络好用高清。抓屏按分辨率/码率生效；VNC 使用 noVNC 内置质量压缩。首次打开会按浏览器报告的网络自动选一档，之后以你手动保存为准。</div>
-            </div>
-            <div class="row">
                 <label>浏览器镜像 <span id="imageStatusBadge" style="font-size:11px;color:var(--muted)"></span></label>
                 <div class="hint" id="autoUpdateInfo" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">自动更新计划加载中…</div>
                 <button id="btnUpdateAuto" onclick="updateAuto()" style="width:100%" class="btn-primary">立即更新（仅在无实例运行时）</button>
@@ -870,7 +862,6 @@
             $("setPreview").value = settings.preview;
             $("setPage").value = settings.page;
             $("setScale").value = settings.scale;
-            $("setQuality").value = settings.quality || "medium";
             $("settingsMask").classList.add("open");
             // 统一使用缓存数据源，避免与红点轮询结果不一致造成「误报有更新」。
             checkImageStatus();
@@ -883,7 +874,8 @@
                 page: $("setPage").value,
                 scale: $("setScale").value,
                 screenLocked: screenLocked,
-                quality: ["low", "medium", "high"].includes($("setQuality").value) ? $("setQuality").value : "medium",
+                // 画质由详情栏的全局快捷切换维护，saveSettings 不要覆盖它。
+                quality: settings.quality,
             };
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
@@ -1266,6 +1258,18 @@
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
             render();
+        }
+
+        // 全局画质档位切换：对所有实例生效，切换后重连画面让 VNC/抓屏都按新档位生效。
+        const QUALITY_LABELS = { low: "省流", medium: "均衡", high: "高清" };
+        function setQuality(q) {
+            if (!["low", "medium", "high"].includes(q)) return;
+            if (settings.quality === q) return;
+            settings.quality = q;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            resetFrameState();
+            render();
+            toast("画质已切换为" + (QUALITY_LABELS[q] || q) + "，画面重新连接", "ok");
         }
 
         // ---- 新建实例弹窗 ----
@@ -2317,6 +2321,14 @@
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
                     : '';
+                const qseg =
+                    '<span class="seg qseg" title="全局画质档位，对所有实例生效">' +
+                        ['low', 'medium', 'high'].map(k =>
+                            '<button class="' + (settings.quality === k ? "on" : "") + '"' +
+                            ' title="' + QUALITY_LABELS[k] + '"' +
+                            ' onclick="setQuality(\'' + k + '\')">' + QUALITY_LABELS[k] + '</button>'
+                        ).join('') +
+                    '</span>';
                 const seg =
                     '<span class="seg">' +
                         '<button class="' + (mode === "vnc" ? "on" : "") + '"' +
@@ -2324,7 +2336,7 @@
                             ' onclick="setPreview(\'vnc\')">VNC</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
-                    '</span>';
+                    '</span>' + qseg;
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
                     statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
