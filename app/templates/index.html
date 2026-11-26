@@ -259,7 +259,8 @@
         }
 
         /* 自测结果：有头 / 无头双栏卡片 */
-        .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+        .st-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+        @media (max-width: 1100px) { .st-grid { grid-template-columns: 1fr 1fr; } }
         @media (max-width: 760px) { .st-grid { grid-template-columns: 1fr; } }
         .st-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-height: 110px; }
         .st-card h4 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -560,9 +561,10 @@
                 <label for="createBrowser">浏览器内核</label>
                 <select id="createBrowser">
                     <option value="full">完整 Chrome — 有地址栏/标签栏，支持 VNC 与抓屏</option>
-                    <option value="headless">chrome-headless-shell — 更轻量，仅支持 CDP 抓屏</option>
+                    <option value="headless">老无头 chrome-headless-shell — 轻量，身份自动伪装</option>
+                    <option value="headless-new">新无头 Chrome --headless=new — 完整内核，身份天然干净</option>
                 </select>
-                <div class="hint">两种内核的 CDP 端口与协议完全一致，外部程序连接方式不变。无头内核不提供 VNC。</div>
+                <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。老无头会自动隐藏 HeadlessChrome 身份；两种无头都不提供 VNC。</div>
             </div>
             <div class="row">
                 <label for="createMode">用户目录模式</label>
@@ -598,9 +600,9 @@
                 <label for="setPreview">默认画面模式</label>
                 <select id="setPreview">
                     <option value="vnc">VNC 画面（可见地址栏/标签栏，仅完整内核）</option>
-                    <option value="cast">CDP 抓屏（screencast，两种内核通用）</option>
+                    <option value="cast">CDP 抓屏（screencast，三种方式通用）</option>
                 </select>
-                <div class="hint">无头内核自动使用抓屏，不受此设置影响。也可在实例详情栏一键切换。</div>
+                <div class="hint">无头实例自动使用抓屏，不受此设置影响。也可在实例详情栏一键切换。</div>
             </div>
             <div class="row">
                 <label for="setPage">noVNC 页面</label>
@@ -626,13 +628,14 @@
             </div>
             <div class="row">
                 <label>连接自测 <span style="font-size:11px;color:var(--muted)">官方 CDP WebSocket</span></label>
-                <button id="btnSelftest" onclick="runSelftest()" style="width:100%">运行自测（临时开有头+无头实例）</button>
-                <div class="hint">用官方 CDP 协议测试导航/刷新 / JS 同步与异步 / 页面源码 / DOM 源码与盒模型 / 控制台事件 / 视口与布局 / 性能指标 / Cookie 读写列举清理 / 存储配额 / 鼠标 / 键盘 / 文本插入 / 截图（校验 PNG）/ 抓屏 / 多标签等。临时实例用完即销毁，不影响正在运行的实例；结果写入「运行日志」。</div>
+                <button id="btnSelftest" onclick="runSelftest()" style="width:100%">运行自测（有头 + 老无头 + 新无头）</button>
+                <div class="hint">用官方 CDP 协议测试导航/刷新 / JS 同步与异步 / 页面源码 / DOM 源码与盒模型 / 控制台事件 / 视口与布局 / 性能指标 / Cookie 读写列举清理 / 存储配额 / 鼠标 / 键盘 / 文本插入 / 截图（校验 PNG）/ 抓屏 / 多标签 / 身份伪装（无 HeadlessChrome、webdriver 隐藏）等。临时实例用完即销毁，不影响正在运行的实例；结果写入「运行日志」。</div>
                 <div id="selftestResult" class="st-grid" style="display:none">
                     <div class="st-card" id="stCardFull"></div>
                     <div class="st-card" id="stCardHeadless"></div>
+                    <div class="st-card" id="stCardHeadlessNew"></div>
                 </div>
-                <div id="selftestViewTip" class="hint" style="display:none;color:var(--accent)">画面区正在依次展示被测浏览器（有头 → 无头），结束后自动切回你原来的实例。</div>
+                <div id="selftestViewTip" class="hint" style="display:none;color:var(--accent)">画面区正在依次展示被测浏览器（有头 → 老无头 → 新无头），结束后自动切回你原来的实例。</div>
                 <button id="btnSelftestLogs" onclick="openLogsForSelftest()" style="width:100%;margin-top:8px;display:none">查看完整运行日志 →</button>
             </div>
             <div class="foot">画面设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
@@ -926,10 +929,14 @@
         let selftestPrevSid = null;      // 自测前选中的实例，结束后恢复
         let selftestFollowedSid = null;  // 当前画面正在跟随的临时实例
 
-        // 把自测结果渲染成「有头 / 无头」双栏卡片；后端每跑完一个内核就发布一次，
+        // 把自测结果渲染成「有头 / 老无头 / 新无头」三栏卡片；后端每跑完一种就发布一次，
         // 因此这里会被反复调用，逐卡填充，不必等全部结束。
         function renderSelftestCards(r, running) {
-            const defs = [["full", "完整内核（有头）", "stCardFull"], ["headless", "无头内核", "stCardHeadless"]];
+            const defs = [
+                ["full", "完整内核（有头）", "stCardFull"],
+                ["headless", "老无头（shell）", "stCardHeadless"],
+                ["headless-new", "新无头（--headless=new）", "stCardHeadlessNew"],
+            ];
             for (const [mode, label, id] of defs) {
                 const card = $(id);
                 if (!card) continue;
@@ -991,16 +998,16 @@
             btn.disabled = true;
             const original = btn.textContent;
             grid.style.display = "grid";
-            tip.textContent = "画面区正在依次展示被测浏览器（有头 → 无头），结束后自动切回你原来的实例。";
+            tip.textContent = "画面区正在依次展示被测浏览器（有头 → 老无头 → 新无头），结束后自动切回你原来的实例。";
             tip.style.color = "var(--accent)";
             tip.style.display = "block";
             logsBtn.style.display = "block";
             selftestPrevSid = selectedSid;
             selftestFollowedSid = null;
-            renderSelftestCards({ modes: { full: {}, headless: {} } }, true);
+            renderSelftestCards({ modes: { full: {}, headless: {}, "headless-new": {} } }, true);
             try {
                 await api("/api/selftest/run", { method: "POST" }, 20000);
-                // 结果双栏卡片就在设置弹窗里，保持弹窗打开让用户实时看到逐卡填充；
+                // 三栏结果卡片就在设置弹窗里，保持弹窗打开让用户实时看到逐卡填充；
                 // 日志抽屉由下方「查看完整运行日志」按钮主动打开，不再自动 closeSettings()。
                 toast("自测已启动，结果卡片在下方实时更新，画面将依次展示被测浏览器", "ok");
                 if (selftestPollTimer) clearInterval(selftestPollTimer);
@@ -1023,7 +1030,7 @@
                     } catch (e) { /* 单次轮询失败不中断结果收集，下一轮再试 */ }
                 }, 1000);
             } catch (e) {
-                // 只更新提示文字，绝不覆盖 grid —— 否则 stCardFull/stCardHeadless 节点被销毁，
+                // 只更新提示文字，绝不覆盖 grid —— 否则三张卡片节点被销毁，
                 // 后续再自测将永远无法渲染结果。
                 renderSelftestCards(null, false);
                 tip.textContent = "自测启动失败: " + (e.message || e);
@@ -1053,16 +1060,20 @@
             applyScreenLock();
         }
 
+        function isHeadless(i) {
+            return !!i && (i.browser_mode === "headless" || i.browser_mode === "headless-new");
+        }
+
         function effectiveMode(i) {
             if (!i) return "vnc";
-            if (i.browser_mode === "headless") return "cast";
+            if (isHeadless(i)) return "cast";
             return settings.preview === "cast" ? "cast" : "vnc";
         }
 
         function setPreview(mode) {
             const sel = selectedSid ? instances[selectedSid] : null;
-            if (mode === "vnc" && sel && sel.browser_mode === "headless") {
-                toast("无头内核没有 VNC 服务，请使用抓屏", "error");
+            if (mode === "vnc" && isHeadless(sel)) {
+                toast("无头实例没有 VNC 服务，请使用抓屏", "error");
                 return;
             }
             settings.preview = mode;
@@ -1215,7 +1226,8 @@
         }
 
         function kernelBadge(i) {
-            if (i.browser_mode === "headless") return '<span class="badge headless">无头内核</span>';
+            if (i.browser_mode === "headless") return '<span class="badge headless">老无头</span>';
+            if (i.browser_mode === "headless-new") return '<span class="badge headless">新无头</span>';
             return '<span class="badge full">完整内核</span>';
         }
 
@@ -1909,7 +1921,7 @@
             } else {
                 const cdp = sel.cdp_addr || ("127.0.0.1:" + sel.debug_port);
                 const mode = effectiveMode(sel);
-                const headless = sel.browser_mode === "headless";
+                const headless = isHeadless(sel);
                 // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试
                 const openUrl = mode === "cast"
                     ? (sel.cdp_http ||
@@ -1922,7 +1934,7 @@
                 const seg =
                     '<span class="seg">' +
                         '<button class="' + (mode === "vnc" ? "on" : "") + '"' +
-                            (headless ? ' disabled title="无头内核无 VNC"' : '') +
+                            (headless ? ' disabled title="无头实例无 VNC"' : '') +
                             ' onclick="setPreview(\'vnc\')">VNC</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +

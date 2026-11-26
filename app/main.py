@@ -70,8 +70,14 @@ BROWSER_IMAGE_HEADLESS = os.environ.get(
 )
 
 
+# 三种启动方式：有头完整 Chrome、老无头壳（身份需补丁）、完整 Chrome 新无头（身份天然干净）。
+# headless-new 复用 full 镜像——里面已有完整 Chrome，加 --headless=new 即可，无需第三份镜像。
+VALID_BROWSER_MODES = ("full", "headless", "headless-new")
+HEADLESS_MODES = ("headless", "headless-new")
+
+
 def image_for_mode(browser_mode: str) -> str:
-    """按内核选择对应的浏览器镜像。"""
+    """按内核选择对应的浏览器镜像。headless-new 复用 full 镜像。"""
     return BROWSER_IMAGE_HEADLESS if browser_mode == "headless" else BROWSER_IMAGE_FULL
 
 
@@ -505,10 +511,10 @@ def restore_instances():
         if not sid:
             continue
         mode = c.labels.get(BROWSER_MODE_LABEL, "full")
-        if mode not in ("full", "headless"):
+        if mode not in VALID_BROWSER_MODES:
             mode = "full"
         ports = parse_ports(c)
-        # headless 内核没有 VNC/noVNC 端口，只要求 CDP 端口存在
+        # 两种无头模式都没有 VNC/noVNC 端口，只要求 CDP 端口存在
         if ports.get("debug_port") is None:
             continue
         if mode == "full" and (
@@ -613,8 +619,8 @@ def start_browser_instance(
         used = collect_used_ports()
 
         debug_port = find_free(PORT_DEBUG_START, PORT_DEBUG_END, used["debug"])
-        if browser_mode == "headless":
-            # 无头内核没有 Xvfb/VNC，不占用也不映射这两个端口
+        if browser_mode in HEADLESS_MODES:
+            # 无头模式没有 Xvfb/VNC，不占用也不映射这两个端口
             vnc_port = None
             novnc_port = None
         else:
@@ -711,11 +717,43 @@ def start_browser_instance(
     return info
 
 
+# 每个实例的身份伪装守护（仅老无头 headless 需要；有头与新无头身份天然干净）。
+STEALTH_GUARDS: dict[str, object] = {}
+STEALTH_LOCK = threading.Lock()
+
+
+def start_stealth_guard(sid: str, ip: str) -> None:
+    """给老无头实例挂身份伪装守护；重复调用幂等。"""
+    if not ip:
+        return
+    with STEALTH_LOCK:
+        if sid in STEALTH_GUARDS:
+            return
+        try:
+            from stealth import StealthGuard
+        except ImportError:
+            from app.stealth import StealthGuard
+        guard = StealthGuard(sid, f"http://{ip}:9222", log)
+        STEALTH_GUARDS[sid] = guard
+    guard.start()
+
+
+def stop_stealth_guard(sid: str) -> None:
+    with STEALTH_LOCK:
+        guard = STEALTH_GUARDS.pop(sid, None)
+    if guard is not None:
+        try:
+            guard.stop()
+        except Exception as e:
+            log.debug("停止身份伪装守护失败 %s: %s", sid[:8], e)
+
+
 def stop_instance(sid: str) -> bool:
     with LOCK:
         item = INSTANCES.get(sid)
     if not item:
         return False
+    stop_stealth_guard(sid)
     try:
         c = client.containers.get(item["container_id"])
         c.remove(force=True)
@@ -945,6 +983,10 @@ def cdp_monitor_loop():
                         log.warning("实例 %s 的 CDP 失联", sid[:8])
                     elif prev is False and ready is True:
                         log.info("实例 %s 的 CDP 恢复", sid[:8])
+            # 老无头实例在 CDP 首次就绪时挂身份伪装守护（幂等，容器重启后自动重挂）。
+            # 放在锁外，避免联网操作阻塞列表接口；start_stealth_guard 自身幂等。
+            if ready and item.get("browser_mode") == "headless":
+                start_stealth_guard(sid, ip)
         time.sleep(8)
 
 
@@ -1071,6 +1113,10 @@ def _selftest_one_mode(browser_mode: str) -> dict:
         ip = container_ip(container)
         if not ip:
             raise RuntimeError("临时实例容器网络未就绪")
+        # 老无头临时实例同样要打身份补丁，否则自测里的身份断言会看到 HeadlessChrome。
+        if browser_mode == "headless":
+            start_stealth_guard(sid, ip)
+            time.sleep(0.8)  # 给守护一点时间接管现有页面，避免首轮断言读旧值
         # 镜像里 main.py 被平铺到 /app 且以 uvicorn main:app 启动，模块是顶层 selftest；
         # 本地源码目录结构是 app/ 包。两种环境都兼容。
         try:
@@ -1082,7 +1128,7 @@ def _selftest_one_mode(browser_mode: str) -> dict:
             log.info("[自测][%s][%s] %s %s", browser_mode, level, name, detail)
 
         _selftest_set_current(sid, browser_mode, "running")
-        result = run_all(f"http://{ip}:9222", emit)
+        result = run_all(f"http://{ip}:9222", emit, browser_mode=browser_mode)
         # 测试全部跑完，留一段展示窗口，前端趁此把画面挂到该临时实例上。
         _selftest_set_current(sid, browser_mode, "display")
         time.sleep(SELFTEST_DISPLAY_SECONDS)
@@ -1100,17 +1146,22 @@ def _selftest_one_mode(browser_mode: str) -> dict:
 
 
 def selftest_worker():
-    log.info("========== 开始内置 CDP 自测（临时有头 + 无头实例）==========")
-    result = {"full": {}, "headless": {}}
-    # 先发布空壳结果，前端据此逐卡渲染（full 先出结果、headless 后出）。
+    log.info("========== 开始内置 CDP 自测（有头 + 老无头 + 新无头）==========")
+    modes = ("full", "headless", "headless-new")
+    result = {m: {} for m in modes}
+    # 先发布空壳结果，前端据此逐卡渲染（full 先出结果，随后两种无头）。
     with SELFTEST_LOCK:
         SELFTEST_STATE["result"] = {"modes": result, "passed": 0, "failed": 0}
     # 整体 try/finally：任何意外异常都必须复位 running，否则自测状态永久卡在
     # running=True，后续所有 POST /api/selftest/run 都会返回 409，再也跑不了。
     try:
-        # 先跑完整内核，日志顺序与设置页结果顺序一致，避免误以为只测了无头。
-        for mode in ("full", "headless"):
-            label = "完整内核(full)" if mode == "full" else "无头内核(headless)"
+        # 顺序与设置页三栏卡片一致：有头 → 老无头 → 新无头。
+        for mode in modes:
+            label = {
+                "full": "完整内核(full)",
+                "headless": "老无头(headless-shell)",
+                "headless-new": "新无头(chrome --headless=new)",
+            }[mode]
             log.info("---------- 自测开始：%s ----------", label)
             one = _selftest_one_mode(mode)
             result[mode] = one
@@ -1395,8 +1446,11 @@ async def new_instance(request: Request):
         pass
     if mode not in ("ephemeral", "persistent"):
         raise HTTPException(status_code=400, detail="profile_mode 只能是 ephemeral 或 persistent")
-    if browser_mode not in ("full", "headless"):
-        raise HTTPException(status_code=400, detail="browser_mode 只能是 full 或 headless")
+    if browser_mode not in VALID_BROWSER_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail="browser_mode 只能是 " + " / ".join(VALID_BROWSER_MODES),
+        )
     if mode == "persistent" and not PROFILE_NAME_RE.fullmatch(name):
         raise HTTPException(
             status_code=400,

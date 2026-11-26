@@ -93,6 +93,48 @@ def test_requests(cdp: str):
     return browser
 
 
+def test_identity_native(cdp: str):
+    """有头与新无头的内核身份应天然干净：无 HeadlessChrome、webdriver=false。
+
+    老无头（headless-shell）的身份由 manager 层 CDP 守护伪装，CI 里没有 manager，
+    因此不在 CI 验证它——那一项由 manager 内置自测覆盖。
+    """
+    import websocket
+
+    ws = websocket.create_connection(page_ws_url(cdp), timeout=10, suppress_origin=True)
+    try:
+        expr = (
+            "JSON.stringify({ua:navigator.userAgent,"
+            "brands:(navigator.userAgentData||{}).brands||[],"
+            "wd:navigator.webdriver})"
+        )
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": expr, "returnByValue": True},
+                }
+            )
+        )
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                break
+        fp = json.loads(msg["result"]["result"].get("value") or "{}")
+        text = " ".join(
+            [str(fp.get("ua", ""))]
+            + [str(b.get("brand", "")) for b in (fp.get("brands") or [])]
+        )
+        if "HeadlessChrome" in text or "headless" in text.lower():
+            raise RuntimeError(f"暴露无头身份: {text[:120]}")
+        if fp.get("wd") is not False:
+            raise RuntimeError(f"navigator.webdriver 未隐藏: {fp.get('wd')}")
+        return f"UA={str(fp.get('ua',''))[:55]} wd={fp.get('wd')}"
+    finally:
+        ws.close()
+
+
 def test_websocket_client(cdp: str):
     import websocket
 
@@ -185,11 +227,14 @@ def test_selenium(cdp: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cdp", required=True, help="浏览器 CDP HTTP 根地址，如 http://127.0.0.1:9222")
-    parser.add_argument("--mode", default="", help="仅用于日志标识：full / headless")
+    parser.add_argument("--mode", default="", help="仅用于日志标识：full / headless / headless-new")
     args = parser.parse_args()
 
     print(f"=== CI 浏览器功能测试 mode={args.mode or '-'} cdp={args.cdp} ===")
     check("基础 HTTP 客户端", lambda: test_requests(args.cdp))
+    # 老无头的身份由 manager 守护伪装，CI 无 manager，跳过；由内置自测验证。
+    if args.mode in ("full", "headless-new"):
+        check("内核身份天然干净", lambda: test_identity_native(args.cdp))
     check("基础 WebSocket 客户端", lambda: test_websocket_client(args.cdp))
     check("Python 自动化客户端 A", lambda: test_pydoll(args.cdp))
     check("Python 自动化客户端 B", lambda: test_playwright(args.cdp))

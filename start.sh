@@ -1,8 +1,10 @@
 #!/bin/bash
 # 单实例启动脚本：Xvfb + x11vnc + websockify + Chrome for Testing
-# 两份镜像各自只装一份二进制，内核由镜像内 ENV BROWSER_MODE 固定（manager 也会传入同值）：
-#   full    : /usr/bin/chrome               完整浏览器，VNC 和 screencast 都能用
-#   headless: /usr/bin/chrome-headless-shell 无头内核，只能 screencast（无浏览器界面）
+# 三种启动方式，由 BROWSER_MODE 决定（manager 传入，镜像 ENV 为默认值）：
+#   full        : /usr/bin/chrome               完整浏览器 + Xvfb/VNC，有界面
+#   headless    : /usr/bin/chrome-headless-shell 老无头壳，无界面，仅抓屏；身份由 manager CDP 补丁伪装
+#   headless-new: /usr/bin/chrome --headless=new 完整 Chrome 的新无头模式，无界面，仅抓屏，身份天然干净
+# 注意：headless-new 用的是 full 镜像里的完整 Chrome，不需要额外镜像；无 VNC/noVNC。
 # 用户目录两种模式（由 manager 通过 PROFILE_DIR 环境变量指定）：
 #   临时模式：PROFILE_DIR=/tmp/cdp-profile        —— 容器删除即清理
 #   持久模式：PROFILE_DIR=/cdp-profile（挂载卷）  —— 容器删除后数据保留
@@ -11,6 +13,9 @@
 BROWSER_MODE="${BROWSER_MODE:-full}"
 if [ "$BROWSER_MODE" = "headless" ]; then
     CHROME_BIN=/usr/bin/chrome-headless-shell
+elif [ "$BROWSER_MODE" = "headless-new" ]; then
+    # 完整 Chrome 的新无头模式：身份与有头一致，不用 CDP 补丁。
+    CHROME_BIN=/usr/bin/chrome
 else
     BROWSER_MODE=full
     CHROME_BIN=/usr/bin/chrome
@@ -74,6 +79,9 @@ CHROME_ARGS=(
     --disable-gpu
     --no-first-run
     --no-default-browser-check
+    # 隐藏自动化身份：让 navigator.webdriver = false（有头实测本来就是 false，
+    # 老无头实测为 true）。这是标准启动参数，不被页面 JS 察觉，无需注入脚本。
+    --disable-blink-features=AutomationControlled
     --disable-search-engine-choice-screen
     --disable-default-apps
     --disable-background-networking
@@ -94,6 +102,12 @@ CHROME_ARGS=(
 # 只能用管理策略关闭（--disable-infobars 已失效）。策略在镜像构建时写入。
 if [ -f /etc/opt/chrome/policies/managed/cdp_browser_manager.json ]; then
     echo "managed policy: flag security warnings disabled"
+fi
+
+if [ "$BROWSER_MODE" = "headless-new" ]; then
+    # Chrome 112+ 的新无头：与有头共用同一套渲染实现，UA/Client Hints 天然是
+    # 普通 Chrome，无需 Xvfb/VNC，也无需身份补丁。headless-shell 才需要老式无头。
+    CHROME_ARGS+=(--headless=new)
 fi
 
 if [ "$BROWSER_MODE" = "full" ]; then

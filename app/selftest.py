@@ -84,11 +84,12 @@ def _eval(client: CDPClient, expression: str, await_promise: bool = False):
     return res.get("result", {}).get("value")
 
 
-def run_all(cdp_base: str, emit) -> dict:
+def run_all(cdp_base: str, emit, browser_mode: str = "full") -> dict:
     """在给定实例上跑完整套 CDP WebSocket 用例。
 
-    cdp_base: manager 容器内可达的 CDP 根地址，如 http://172.x.x.x:9222
-    emit:     回调，签名为 emit(level, name, detail)，用于实时输出日志
+    cdp_base:    manager 容器内可达的 CDP 根地址，如 http://172.x.x.x:9222
+    emit:        回调，签名为 emit(level, name, detail)，用于实时输出日志
+    browser_mode: full / headless / headless-new，决定是否检查身份伪装结果
     返回 {"passed": int, "failed": int, "cases": [...]}
     """
     import urllib.request
@@ -435,11 +436,40 @@ def run_all(cdp_base: str, emit) -> dict:
                 record("Target.closeTarget 关闭标签", False, str(e))
 
         # 9) Runtime.evaluate：用户代理读取
+        ua = ""
         try:
-            ua = _eval(client, "navigator.userAgent")
-            record("Runtime.evaluate 读取 UA", bool(ua), str(ua)[:80])
+            ua = str(_eval(client, "navigator.userAgent") or "")
+            record("Runtime.evaluate 读取 UA", bool(ua), ua[:100])
         except Exception as e:
             record("Runtime.evaluate 读取 UA", False, str(e))
+
+        # 10) 身份伪装断言：三种模式都不应暴露 HeadlessChrome。
+        # 老无头靠 manager 的 CDP Emulation 覆盖，新无头靠 --headless=new 天然干净。
+        try:
+            fingerprint = _eval(client, (
+                "JSON.stringify({ua:navigator.userAgent,"
+                "brands:(navigator.userAgentData||{}).brands||[],"
+                "wd:navigator.webdriver})"
+            )) or "{}"
+            fp = json.loads(fingerprint)
+            parts = [str(fp.get("ua", ""))]
+            parts += [str(b.get("brand", "")) for b in (fp.get("brands") or [])]
+            joined = " ".join(parts)
+            clean = "HeadlessChrome" not in joined and "headless" not in joined.lower()
+            record(
+                "身份伪装 无 HeadlessChrome 痕迹",
+                clean,
+                ("brands=" + ",".join(parts[1:]) if len(parts) > 1 else "") + f" ua={str(fp.get('ua',''))[:60]}",
+            )
+        except Exception as e:
+            record("身份伪装 无 HeadlessChrome 痕迹", False, str(e))
+
+        # 11) navigator.webdriver：三种模式都应被启动参数隐藏为 false。
+        try:
+            wd = _eval(client, "navigator.webdriver")
+            record("身份伪装 webdriver 已隐藏", wd is False, f"webdriver={wd}")
+        except Exception as e:
+            record("身份伪装 webdriver 已隐藏", False, str(e))
 
     except Exception as e:
         record("WebSocket 会话", False, f"{type(e).__name__}: {e}")

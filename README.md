@@ -7,7 +7,7 @@
 
 ## 架构
 
-采用**三份镜像独立构建**的设计，manager 与两种内核的 browser 各自发布，改哪份只重新构建哪份：
+采用**三份镜像独立构建**的设计，manager 与两种 browser 内核各自发布，改哪份只重新构建哪份：
 
 | 镜像 | 大小 | 内容 | 更新频率 |
 |---|---|---|---|
@@ -15,14 +15,17 @@
 | `ghcr.io/forallcodesouls/cdp-browser-full:latest` | 约 480 MB | 精简后的完整 `chrome` + Xvfb + x11vnc + noVNC + 中文字体 | 完整内核升级时 |
 | `ghcr.io/forallcodesouls/cdp-browser-headless:latest` | 约 200 MB | 精简后的 `chrome-headless-shell` + 中文字体，无 VNC 栈 | 无头内核升级时 |
 
-浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。两份镜像各只装一份二进制，新建实例时选择内核，manager 按 `browser_mode` 拉取对应镜像：
+浏览器使用 **Chrome for Testing**：Google 官方为自动化测试发布的版本，无自动更新、版本可复现、不含推广内容。镜像各只装一份二进制，新建实例时选择启动方式，manager 按 `browser_mode` 决定用哪份镜像与启动参数：
 
-| 内核 | 镜像 / 二进制 | 画面方式 | 说明 |
+| 启动方式 | 镜像 / 二进制 | 画面方式 | 说明 |
 |---|---|---|---|
 | 完整内核（full，默认） | `cdp-browser-full` / `chrome` | VNC + CDP 抓屏 | 有地址栏/标签栏，可看完整浏览器界面 |
-| 无头内核（headless） | `cdp-browser-headless` / `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；不分配 VNC/noVNC 端口 |
+| 老无头（headless） | `cdp-browser-headless` / `chrome-headless-shell` | 仅 CDP 抓屏 | 更省资源，无浏览器界面；身份由 manager 自动伪装 |
+| 新无头（headless-new） | `cdp-browser-full` / `chrome --headless=new` | 仅 CDP 抓屏 | 复用完整 Chrome 的新无头模式，身份天然是普通 Chrome；不额外新增镜像 |
 
-两种内核的 CDP 端口都是容器内 9222，外部客户端的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
+> **关于浏览器身份**：`chrome-headless-shell` 会在 User-Agent 和 `Sec-CH-UA` Client Hints 里写死 `HeadlessChrome`。老无头实例启动后，manager 会挂一条浏览器级 CDP 守护，自动给所有页面（含之后新建的标签）覆盖 UA 与 Client Hints，伪装成与有头实例一致的 `Chrome/主版本.0.0.0`，并让 `navigator.webdriver` 为 `false`。新无头与有头内核身份天然干净，不打补丁。三种方式都不改页面 DOM、不注入页面脚本。注意：`--remote-debugging-port` 是本项目工作的基础，无法隐藏，但普通网页 JS 读不到启动命令行。
+
+三种方式的 CDP 端口都是容器内 9222，外部客户端的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
 > **为什么容器里多了一层 socat 转发**：Chrome 136+ 起把 DevTools 强制绑在 `127.0.0.1`，`--remote-debugging-address=0.0.0.0` 在 148+ 已被完全忽略。若让 Chrome 直接监听 9222，manager 从容器外网桥 IP 访问会超时（表现为「CDP 未响应 / 画面无法连接 / targets 502」）。因此 `start.sh` 让 Chrome 只监听容器内 9223，再由 socat 把 `0.0.0.0:9222` 透明转发到 `127.0.0.1:9223`，对 manager 和外部客户端仍是 9222，完全无感。两份 browser 镜像都内置了 socat。
 
@@ -70,10 +73,10 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 `GET /api/health` 是存活探针：同时检查面板服务与 Docker 守护进程是否可用。镜像内 `HEALTHCHECK` 和 Compose 健康检查都使用它。
 
 ## 功能
-- 一键新建浏览器实例，可选完整/无头内核，自动分配独立 CDP 端口（完整内核另分配 VNC、noVNC）
+- 一键新建浏览器实例，可选完整内核 / 老无头 / 新无头三种方式，自动分配独立 CDP 端口（仅完整内核另分配 VNC、noVNC）
 - **画面双模式，随时切换**：
   - **VNC**：完整桌面画面，可见地址栏/标签栏（仅完整内核）。画面上方的**导航条在 VNC 模式下同样可用**——底层用同一实例的 CDP 接口读写标签页，支持标签切换（自动激活目标标签使 VNC 画面跟随）、新建/关闭标签、地址栏导航与刷新，无需再退回 VNC 窗口手动点地址栏。
-  - **CDP 抓屏**：基于 CDP `Page.startScreencast`，画面与自动化共用同一 CDP 端口；支持标签切换、新建/关闭标签、地址栏导航、鼠标键盘交互（两种内核通用，无头内核只能用它）
+  - **CDP 抓屏**：基于 CDP `Page.startScreencast`，画面与自动化共用同一 CDP 端口；支持标签切换、新建/关闭标签、地址栏导航、鼠标键盘交互（三种启动方式通用，无头实例只能用它）
     - 实现上由 manager 的 `/ws/cast/{sid}/{tid}` 把容器内的 screencast 帧代理到浏览器 canvas，并转发输入事件。不直接用 Chrome 自带的 `devtools/inspector.html`——它的 CSP 只允许 `ws://127.0.0.1`，公网访客连不上。
     - 输入支持键盘字符、左/右/中键与滚轮；鼠标移动事件按帧合并，WS 意外断开会自动重连，切换实例或标签时会作废旧连接避免画面串台。
 - **屏幕锁（防误操作）**：顶栏「🔓 屏幕锁」可锁定当前画面。锁定后透明遮罩盖住画面、拦截全部鼠标/键盘输入，并禁用导航条（标签、地址栏、关闭等），避免在脚本/自动化执行期间被误点击打断。锁定状态持久化到浏览器本地存储，刷新页面后保持；再次点击「🔒 已锁定」或遮罩中的「解锁画面」即可恢复。
@@ -105,10 +108,15 @@ curl -X POST http://你的IP:8000/instance/new \
   -H 'Content-Type: application/json' \
   -d '{"profile_mode":"persistent","profile_name":"shop-account","browser_mode":"full"}'
 
-# 新建无头内核实例（不分配 VNC/noVNC 端口）
+# 新建老无头实例（不分配 VNC/noVNC 端口，身份由 manager 自动伪装）
 curl -X POST http://你的IP:8000/instance/new \
   -H 'Content-Type: application/json' \
   -d '{"browser_mode":"headless"}'
+
+# 新建新无头实例（完整 Chrome --headless=new，身份天然干净）
+curl -X POST http://你的IP:8000/instance/new \
+  -H 'Content-Type: application/json' \
+  -d '{"browser_mode":"headless-new"}'
 
 # 列出所有持久目录
 curl http://你的IP:8000/api/profiles
@@ -189,8 +197,8 @@ services:
 >
 > **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，并记为待重试状态，定时自动更新下一轮会再试；手动更新则需等 CI 结束后再拉一次。看到该提示时删除旧实例重建即可用上新版本。
 >
-> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 同步/异步求值、导航与刷新、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、盒模型、资源树、控制台事件、视口与布局尺寸、性能指标、Cookie 写入/读取/列举/清理、存储配额、鼠标点击、键盘输入、文本插入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取）。
-> 自测**串行**跑有头 → 无头两个临时实例；过程中画面区会**依次挂载被测浏览器**供你直观确认两个内核都真的启动了（每个内核跑完多停留约 6 秒展示），结束后自动切回你原来选中的实例。结果以**「完整内核 / 无头内核」双栏卡片**呈现，每跑完一个内核即填充对应卡片，不必等全部结束；详细过程同时写入「运行日志」。测试实例用完即销毁，不影响你正在运行的实例。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
+> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的有头 / 老无头 / 新无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 同步/异步求值、导航与刷新、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、盒模型、资源树、控制台事件、视口与布局尺寸、性能指标、Cookie 写入/读取/列举/清理、存储配额、鼠标点击、键盘输入、文本插入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取、身份无 HeadlessChrome、`navigator.webdriver` 已隐藏）。
+> 自测**串行**跑有头 → 老无头 → 新无头三个临时实例；过程中画面区会**依次挂载被测浏览器**供你直观确认三种都真的启动了（每种跑完多停留约 6 秒展示），结束后自动切回你原来选中的实例。结果以**「完整内核 / 老无头 / 新无头」三栏卡片**呈现，每跑完一种即填充对应卡片，不必等全部结束；详细过程同时写入「运行日志」。测试实例用完即销毁，不影响你正在运行的实例。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 
@@ -245,7 +253,7 @@ docker run -d \
   - `GET /json/list` —— 当前标签页列表，含每个页面的 `id` 与 `webSocketDebuggerUrl`
 - **WebSocket 地址**：如 `ws://你的IP:9222/devtools/browser/...`（浏览器级）或 `ws://你的IP:9222/devtools/page/<id>`（页面级），连接后按 CDP 协议发送 `Page.navigate`、`Runtime.evaluate` 等命令即可。
 
-两种内核的 CDP 端口与协议完全一致，连接代码不需要区分内核；无头内核只是不提供 VNC/noVNC 端口。
+三种方式的 CDP 端口与协议完全一致，连接代码不需要区分；无头实例只是不提供 VNC/noVNC 端口。
 
 端口分配范围：CDP `9222~9322`，VNC `5901~6000`，noVNC `7901~7999`（无头内核只分配 CDP 端口）。页面显示的是宿主机端口，可直接在宿主机上连接。
 
@@ -281,7 +289,8 @@ curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
 | 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
 | 关闭最后一个标签后画面断连（`Connection refused`） | 有头 Chrome 关掉唯一窗口会退出进程，容器随之重启，来不及补建标签 | 已改为**关闭前先补建保底空白页**，保证始终有窗口、Chrome 不退出；若仍因其他原因短暂断连，面板会自动重试最多 3 次并重连画面 |
-| 无头内核点 VNC 没反应 | 无头内核没有 Xvfb/VNC 服务 | 属正常，切到「抓屏」模式 |
+| 无头实例点 VNC 没反应 | 无头模式没有 Xvfb/VNC 服务 | 属正常，切到「抓屏」模式 |
+| 老无头仍报 HeadlessChrome | manager 身份守护未挂上 | 确认 manager 已重建（守护代码在新版 manager 内），查看运行日志 `[身份伪装]` 条目；或改用新无头 headless-new |
 | 创建实例报镜像不存在 | 本地未拉取对应内核镜像，或 compose 仍用旧的 `cdp-browser-browser` | 执行 `bash upgrade.sh`（会 pull full/headless 两份镜像）；自定义部署需设 `BROWSER_IMAGE_FULL` / `BROWSER_IMAGE_HEADLESS` |
 | 持久目录删除报「实例正在使用」 | 有实例挂载了该 Volume | 先停止使用该目录的实例，再删除 |
 | 想彻底清理持久目录数据 | Volume 不会随容器自动删除 | 面板左侧「持久用户目录」点删除，或 `docker volume rm cdp-profile-*` |

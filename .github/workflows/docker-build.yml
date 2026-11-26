@@ -181,7 +181,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [full, headless]
+        # headless-new 复用 full 镜像，只是启动参数不同（--headless=new）。
+        include:
+          - mode: full
+            image: ghcr.io/forallcodesouls/cdp-browser-full:latest
+          - mode: headless
+            image: ghcr.io/forallcodesouls/cdp-browser-headless:latest
+          - mode: headless-new
+            image: ghcr.io/forallcodesouls/cdp-browser-full:latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -199,7 +206,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull browser image
-        run: docker pull ghcr.io/forallcodesouls/cdp-browser-${{ matrix.mode }}:latest
+        run: docker pull ${{ matrix.image }}
 
       - name: Start browser container
         run: |
@@ -207,7 +214,7 @@ jobs:
             --shm-size=512m \
             -e BROWSER_MODE=${{ matrix.mode }} \
             -p 127.0.0.1:9222:9222 \
-            ghcr.io/forallcodesouls/cdp-browser-${{ matrix.mode }}:latest
+            ${{ matrix.image }}
 
       - name: Wait for CDP
         run: |
