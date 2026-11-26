@@ -627,13 +627,21 @@
             hint.textContent = "正在从仓库拉取 full / headless 两份镜像，请耐心等待，可打开「运行日志」查看进度。";
             try {
                 const data = await api("/api/images/pull", { method: "POST" }, 600000);
+                const vals = Object.values(data || {});
                 const parts = Object.entries(data || {}).map(([k, v]) =>
                     (k === "full" ? "完整内核" : "无头内核") + ": " +
-                    (v.ok ? "已更新" : "失败（" + (v.error || "未知错误") + "）")
+                    (!v.ok ? "失败（" + (v.error || "未知错误") + "）" :
+                     v.stale ? "拉到旧版本（本地 " + (v.local || "?") + " / 远端 " + (v.remote || "?") + "），CI 可能仍在构建，请稍后再点" :
+                     "已更新")
                 );
-                const allOk = Object.values(data || {}).every(v => v.ok);
+                const anyStale = vals.some(v => v.stale);
+                const allOk = vals.length > 0 && vals.every(v => v.ok);
                 hint.textContent = parts.join(" · ");
-                toast(allOk ? "浏览器镜像已更新，请重建实例生效" : "部分镜像拉取失败，详见运行日志", allOk ? "ok" : "error");
+                if (anyStale) {
+                    toast("拉到的仍是旧镜像，请等 CI 构建完成后重新拉取", "error");
+                } else {
+                    toast(allOk ? "浏览器镜像已更新，请重建实例生效" : "部分镜像拉取失败，详见运行日志", allOk ? "ok" : "error");
+                }
             } catch (e) {
                 hint.textContent = "拉取失败: " + (e.message || e);
                 toast("拉取镜像失败: " + (e.message || e), "error");

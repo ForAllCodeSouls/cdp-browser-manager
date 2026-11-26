@@ -175,8 +175,30 @@ def pull_browser_images() -> dict:
             try:
                 log.info("开始拉取 %s 浏览器镜像: %s", label, image)
                 client.images.pull(image)
-                results[label] = {"image": image, "ok": True}
-                log.info("浏览器镜像已更新: %s (%s)", label, image)
+                # 拉取成功 ≠ 拉到最新版本：CI 正在构建时，registry 上还是旧 manifest，
+                # pull 会正常返回，但拉到的是上一版镜像。用摘要复核并如实告知。
+                local = local_image_digest(image)
+                try:
+                    remote = remote_image_digest(image)
+                except Exception as e:
+                    remote = ""
+                    log.debug("复核 %s 远端摘要失败: %s", label, e)
+                stale = bool(remote and local and local != remote)
+                results[label] = {
+                    "image": image,
+                    "ok": True,
+                    "stale": stale,
+                    "local": local[:19] if local else "",
+                    "remote": remote[:19] if remote else "",
+                }
+                if stale:
+                    log.warning(
+                        "浏览器镜像 %s 拉取到的不是远端最新（本地 %s / 远端 %s），"
+                        "可能 CI 仍在构建，请稍后重试",
+                        label, local[:19], remote[:19],
+                    )
+                else:
+                    log.info("浏览器镜像已更新: %s (%s)", label, image)
             except Exception as e:
                 results[label] = {"image": image, "ok": False, "error": str(e)}
                 log.warning("浏览器镜像拉取失败: %s (%s) - %s", label, image, e)
@@ -772,10 +794,16 @@ def auto_pull_loop() -> None:
     # 启动稍等片刻，让 web 服务先可用，拉取大镜像期间面板不卡死。
     time.sleep(5)
     while True:
+        delay = 1800
         if AUTO_PULL_IMAGES:
-            pull_browser_images()
-        # 每 30 分钟复查一次，平时命中本地缓存开销很小。
-        time.sleep(1800)
+            result = pull_browser_images()
+            if any(v.get("stale") for v in result.values()):
+                # CI 正在构建时 pull 到的仍是旧 manifest，2 分钟后重试，
+                # 避免用户以为已更新却仍然 CDP 不通。
+                delay = 120
+                log.warning("浏览器镜像可能仍是旧版本，2 分钟后自动重试")
+        # 每 30 分钟复查一次；检测到拉取到旧版本时缩短到 2 分钟。
+        time.sleep(delay)
 
 
 threading.Thread(target=cdp_monitor_loop, daemon=True).start()
