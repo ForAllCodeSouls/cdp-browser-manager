@@ -536,7 +536,7 @@
             <div class="row">
                 <label>连接自测 <span style="font-size:11px;color:var(--muted)">官方 CDP WebSocket</span></label>
                 <button id="btnSelftest" onclick="runSelftest()" style="width:100%">运行自测（临时开有头+无头实例）</button>
-                <div class="hint">用官方 CDP 协议测试导航 / JS / DOM / 鼠标 / 键盘 / 截图 / 抓屏 / 多标签等。自动新建并销毁临时实例，不影响你正在运行的实例。结果写入「运行日志」。</div>
+                <div class="hint">用官方 CDP 协议测试导航 / JS / 页面源码 / DOM 节点源码 / Cookie 读写与清理 / 鼠标 / 键盘 / 截图（校验 PNG）/ 抓屏 / 多标签等。自动新建并销毁临时实例，不影响你正在运行的实例。结果写入「运行日志」。</div>
                 <pre id="selftestResult" style="max-height:150px;overflow:auto;font-size:11px;margin-top:8px;display:none"></pre>
                 <button id="btnSelftestLogs" onclick="openLogsForSelftest()" style="width:100%;margin-top:8px;display:none">查看完整运行日志 →</button>
             </div>

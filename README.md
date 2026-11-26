@@ -186,7 +186,7 @@ services:
 >
 > **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，manager 也会在 2 分钟后自动重试。看到该提示时等 CI 结束后再拉一次，并删除旧实例重建。
 >
-> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 计算、导航与 DOM、鼠标点击、键盘输入、截图、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
+> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 计算、导航与 DOM、页面源码 `outerHTML`、DOM 节点源码 `getOuterHTML`、资源树、Cookie 写入/读取/列举/清理、鼠标点击、键盘输入、截图并校验 PNG 文件头、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 

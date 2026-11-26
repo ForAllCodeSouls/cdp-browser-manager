@@ -19,6 +19,10 @@ class CDPClient:
         self.ws = websocket.create_connection(ws_url, timeout=timeout, suppress_origin=True)
         self._id = 0
         self.timeout = timeout
+        # CDP 会在命令响应之外主动推送事件（抓屏帧、网络事件等）。
+        # 以前 call() 直接丢弃事件，导致 startScreencast 的响应先到时首帧丢失；
+        # 现在统一缓存，测试用例再按需取出。
+        self.events: list[dict] = []
 
     def call(self, method: str, params: dict | None = None) -> dict:
         self._id += 1
@@ -30,11 +34,31 @@ class CDPClient:
                 msg = json.loads(self.ws.recv())
             except Exception:
                 break
+            if "method" in msg:
+                self.events.append(msg)
+                continue
             if msg.get("id") == call_id:
                 if "error" in msg:
                     raise RuntimeError(str(msg["error"]))
                 return msg.get("result", {})
         raise RuntimeError(f"CDP 命令 {method} 响应超时")
+
+    def wait_event(self, method: str, timeout: float = 5.0) -> dict:
+        """取出一个已缓存或随后到达的 CDP 事件参数，避免漏掉首帧。"""
+        deadline = time.time() + timeout
+        while True:
+            for idx, event in enumerate(self.events):
+                if event.get("method") == method:
+                    return self.events.pop(idx).get("params", {})
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise RuntimeError(f"等待 CDP 事件 {method} 超时")
+            try:
+                msg = json.loads(self.ws.recv())
+            except Exception as e:
+                raise RuntimeError(f"等待 CDP 事件 {method} 失败: {e}")
+            if "method" in msg:
+                self.events.append(msg)
 
     def close(self):
         try:
@@ -120,6 +144,42 @@ def run_all(cdp_base: str, emit) -> dict:
         except Exception as e:
             record("Page.navigate 导航并读 DOM", False, str(e))
 
+        # 2a) Runtime.evaluate：获取完整页面源码
+        try:
+            html = _eval(client, "document.documentElement.outerHTML") or ""
+            ok = "CDPTEST" in html and "<html" in html.lower()
+            record(
+                "Runtime.evaluate 获取页面源码",
+                ok,
+                f"HTML {len(html)} 字符，含测试标记={'CDPTEST' in html}",
+            )
+        except Exception as e:
+            record("Runtime.evaluate 获取页面源码", False, str(e))
+
+        # 2b) DOM.getDocument / querySelector / getOuterHTML：通过 CDP 读取节点源码
+        try:
+            client.call("DOM.enable")
+            root_id = client.call("DOM.getDocument", {"depth": 1}).get("root", {}).get("nodeId")
+            node_id = client.call(
+                "DOM.querySelector", {"nodeId": root_id, "selector": "#t"}
+            ).get("nodeId")
+            outer = client.call("DOM.getOuterHTML", {"nodeId": node_id}).get("outerHTML", "")
+            record(
+                "DOM.getOuterHTML 读取节点源码",
+                "CDPTEST" in outer,
+                f"{len(outer)} 字符: {outer[:60]}",
+            )
+        except Exception as e:
+            record("DOM.getOuterHTML 读取节点源码", False, str(e))
+
+        # 2c) Page.getResourceTree：读取页面资源树
+        try:
+            frame = client.call("Page.getResourceTree").get("frameTree", {}).get("frame", {})
+            url = frame.get("url", "")
+            record("Page.getResourceTree 读取资源树", bool(url), f"frame url={url[:80]}")
+        except Exception as e:
+            record("Page.getResourceTree 读取资源树", False, str(e))
+
         # 3) Runtime.evaluate：表单读写
         try:
             _eval(client, "document.getElementById('i').value='abc123'")
@@ -162,15 +222,65 @@ def run_all(cdp_base: str, emit) -> dict:
         except Exception as e:
             record("Input.dispatchKeyEvent 键盘输入", False, str(e))
 
-        # 6) Page.captureScreenshot：截图
+        # 5a) Network.setCookie / getCookies：Cookie 写入并读回
+        cookie_url = "https://cdp-selftest.invalid/"
+        try:
+            client.call("Network.enable")
+            client.call(
+                "Network.setCookie",
+                {
+                    "name": "cdp_selftest",
+                    "value": "cookie-ok",
+                    "url": cookie_url,
+                    "path": "/",
+                    "secure": True,
+                },
+            )
+            cookies = client.call("Network.getCookies", {"urls": [cookie_url]}).get("cookies", [])
+            hit = next((c for c in cookies if c.get("name") == "cdp_selftest"), None)
+            value = hit.get("value") if hit else None
+            record("Network.setCookie/getCookies Cookie 读写", value == "cookie-ok", f"value={value}")
+        except Exception as e:
+            record("Network.setCookie/getCookies Cookie 读写", False, str(e))
+
+        # 5b) Network.getAllCookies：列出全部 Cookie
+        try:
+            cookies = client.call("Network.getAllCookies").get("cookies", [])
+            hit = next((c for c in cookies if c.get("name") == "cdp_selftest"), None)
+            record(
+                "Network.getAllCookies 列出 Cookie",
+                hit is not None,
+                f"共 {len(cookies)} 个 Cookie",
+            )
+        except Exception as e:
+            record("Network.getAllCookies 列出 Cookie", False, str(e))
+
+        # 5c) Network.deleteCookies：清理测试 Cookie，避免污染持久化目录
+        try:
+            client.call(
+                "Network.deleteCookies",
+                {"name": "cdp_selftest", "url": cookie_url, "path": "/"},
+            )
+            left = client.call("Network.getCookies", {"urls": [cookie_url]}).get("cookies", [])
+            count = sum(1 for c in left if c.get("name") == "cdp_selftest")
+            record("Network.deleteCookies 清理 Cookie", count == 0, f"剩余测试 Cookie {count} 个")
+        except Exception as e:
+            record("Network.deleteCookies 清理 Cookie", False, str(e))
+
+        # 6) Page.captureScreenshot：截图（同时校验 PNG 文件头）
         try:
             shot = client.call("Page.captureScreenshot", {"format": "png"})
             raw = base64.b64decode(shot.get("data", ""))
-            record("Page.captureScreenshot 截图", len(raw) > 1000, f"{len(raw)} 字节 PNG")
+            png_ok = raw.startswith(b"\x89PNG\r\n\x1a\n")
+            record(
+                "Page.captureScreenshot 截图",
+                png_ok and len(raw) > 1000,
+                f"{len(raw)} 字节，PNG 签名={'OK' if png_ok else '错误'}",
+            )
         except Exception as e:
             record("Page.captureScreenshot 截图", False, str(e))
 
-        # 7) Page.startScreencast：连续抓屏帧
+        # 7) Page.startScreencast：连续抓屏帧（用事件缓存，避免漏掉首帧）
         try:
             client.call(
                 "Page.startScreencast", {"format": "jpeg", "quality": 60, "everyNthFrame": 1}
@@ -179,18 +289,20 @@ def run_all(cdp_base: str, emit) -> dict:
             deadline = time.time() + 5
             while time.time() < deadline and frames < 2:
                 try:
-                    msg = json.loads(client.ws.recv())
-                except Exception:
-                    break
-                if msg.get("method") == "Page.screencastFrame":
-                    params = msg.get("params", {})
-                    sid = params.get("sessionId", "")
-                    if sid:
-                        try:
-                            client.call("Page.screencastFrameAck", {"sessionId": sid})
-                        except Exception:
-                            pass
-                    frames += 1
+                    params = client.wait_event(
+                        "Page.screencastFrame", timeout=max(0.1, deadline - time.time())
+                    )
+                except RuntimeError:
+                    if frames:
+                        break
+                    raise
+                sid = params.get("sessionId", "")
+                if sid:
+                    try:
+                        client.call("Page.screencastFrameAck", {"sessionId": sid})
+                    except Exception:
+                        pass
+                frames += 1
             client.call("Page.stopScreencast")
             record("Page.startScreencast 抓屏帧", frames >= 1, f"收到 {frames} 帧")
         except Exception as e:
