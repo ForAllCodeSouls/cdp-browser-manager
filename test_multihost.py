@@ -175,6 +175,26 @@ class QualityToggleJsTests(unittest.TestCase):
         self.assertIn("resetFrameState()", seg)
         self.assertIn("render()", seg)
 
+    def test_quality_hint_rendered_after_seg(self):
+        # 详情栏在切换按钮后有按「模式+画质」给出的建议文字。
+        self.assertIn("qualityHint(mode, settings.quality)", self.src)
+        self.assertIn('class="qhint"', self.src)
+        i = self.src.index("function qualityHint")
+        seg = self.src[i:i + 700]
+        for q in ("low", "medium", "high"):
+            self.assertIn(q + ":", seg)
+        self.assertIn("cast:", seg)
+        self.assertIn("vnc:", seg)
+
+    def test_reset_frame_state_keeps_tid_by_default(self):
+        # 切画质/模式/保存设置重连时保留当前标签，只有新建/停止才显式清空。
+        i = self.src.index("function resetFrameState")
+        seg = self.src[i:i + 300]
+        self.assertIn("clearTid = false", seg)
+        self.assertIn("if (clearTid) castPreferredTid", seg)
+        # 三处销毁实例的场景传 true
+        self.assertEqual(self.src.count("resetFrameState(true)"), 3)
+
 
 class NavigationUrlTests(unittest.TestCase):
     """CDP 导航事件提取主 frame URL，过滤 iframe 噪声。"""
@@ -241,6 +261,17 @@ class BinaryFrameForwardingTests(unittest.TestCase):
         i = src.index("async def remote_ws_proxy")
         seg = src[i:i + 3200]
         self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
+
+    def test_keepalive_caps_pending_shots(self):
+        # 补帧在途请求设上限，页面卡死时不会无限堆积 captureScreenshot。
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("def request_shot()")
+        seg = src[i:i + 900]
+        self.assertIn("len(pending_shots) >= 2", seg)
+        self.assertIn("return False", seg)
+        # 只有真的发出才重置补帧计时
+        self.assertIn("if request_shot():", src)
 
 
 class CastQualityProfileTests(unittest.TestCase):

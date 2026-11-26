@@ -2016,8 +2016,12 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                 },
             })
 
-            def request_shot():
+            def request_shot() -> bool:
                 nonlocal shot_id
+                # 上一次补帧还没回来就不再堆请求：页面卡死时截图可能长时间无响应，
+                # 无限累积 pending_shots 和 CDP 请求会拖慢通道，最多留 2 个在途。
+                if len(pending_shots) >= 2:
+                    return False
                 shot_id += 1
                 pending_shots.add(shot_id)
                 try:
@@ -2030,8 +2034,10 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                             "captureBeyondViewport": False,
                         },
                     })
+                    return True
                 except Exception:
                     pending_shots.discard(shot_id)
+                    return False
 
             # 首帧兜底：startScreencast 对静止页面可能迟迟不推帧，主动抓当前画面。
             request_shot()
@@ -2040,8 +2046,10 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                 now = time.monotonic()
                 # 静止超时 → 主动补帧（截图请求发出后，响应在下面按 id 匹配转发）。
                 if now - last_frame >= CAST_KEEPALIVE_SEC:
-                    request_shot()
-                    last_frame = now
+                    # 只有真的发出截图请求才重置计时；在途满时不重置，
+                    # 这样一旦有响应腾出名额会立刻再补，不会卡住不补帧。
+                    if request_shot():
+                        last_frame = now
                 try:
                     raw = upstream.recv()
                 except ws_client.WebSocketTimeoutException:

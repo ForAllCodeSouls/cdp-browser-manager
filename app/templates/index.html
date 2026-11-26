@@ -165,6 +165,7 @@
         .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
         .seg button.on { background: var(--accent); color: #fff; }
         .qseg { margin-left: 6px; }
+        .qhint { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
         .castbar {
             display: none;
@@ -1230,10 +1231,12 @@
             loadLogs(true);
         }
 
-        function resetFrameState() {
+        // 清帧重连：默认保留用户当前所在标签（castPreferredTid 注释承诺「清帧时保留」）。
+        // 只有实例被销毁（新建/停止）时才传 clearTid=true 彻底清空。
+        function resetFrameState(clearTid = false) {
             frameSid = null;
             castState = null;
-            castPreferredTid = "";
+            if (clearTid) castPreferredTid = "";
             $("castBar").className = "castbar";
             applyScreenLock();
         }
@@ -1262,6 +1265,22 @@
 
         // 全局画质档位切换：对所有实例生效，切换后重连画面让 VNC/抓屏都按新档位生效。
         const QUALITY_LABELS = { low: "省流", medium: "均衡", high: "高清" };
+        // 按「画面模式 + 画质档位」给出一句建议，帮用户快速判断当前组合是否合适。
+        function qualityHint(mode, q) {
+            const byMode = {
+                cast: {
+                    low: "仅网页内容 · 省流量、帧率低，网络差时用",
+                    medium: "仅网页内容 · 流畅清晰均衡（推荐）",
+                    high: "仅网页内容 · 最清晰但流量大，网络好时用",
+                },
+                vnc: {
+                    low: "完整桌面含地址栏 · 省流量但画质偏低",
+                    medium: "完整桌面含地址栏 · 清晰流畅兼顾（推荐）",
+                    high: "完整桌面含地址栏 · 最清晰但流量大",
+                },
+            };
+            return (byMode[mode] || byMode.cast)[q] || "";
+        }
         function setQuality(q) {
             if (!["low", "medium", "high"].includes(q)) return;
             if (settings.quality === q) return;
@@ -1333,7 +1352,7 @@
                     30000
                 );
                 selectedSid = data.sid;
-                resetFrameState();
+                resetFrameState(true);  // 新建实例：切到新实例，清空旧标签偏好
                 closeCreate();
                 // 先刷新让用户立刻看到新实例（状态为「启动中…」），不阻塞等待画面。
                 await load();
@@ -2336,7 +2355,8 @@
                             ' onclick="setPreview(\'vnc\')">VNC</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
-                    '</span>' + qseg;
+                    '</span>' + qseg +
+                    '<span class="qhint">' + esc(qualityHint(mode, settings.quality)) + '</span>';
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
                     statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
@@ -2420,7 +2440,7 @@
             setBusy(true);
             try {
                 await api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" });
-                if (selectedSid === sid) { selectedSid = null; resetFrameState(); }
+                if (selectedSid === sid) { selectedSid = null; resetFrameState(true); }
                 toast("实例已停止", "ok");
                 await load();
             } catch (e) {
@@ -2437,7 +2457,7 @@
             try {
                 await api("/instance/stop-all", { method: "POST" });
                 selectedSid = null;
-                resetFrameState();
+                resetFrameState(true);
                 toast("已停止全部实例，持久目录已保留", "ok");
                 await load();
             } catch (e) {
