@@ -128,8 +128,7 @@ curl -X POST http://你的IP:8000/api/instance/{sid}/cmd \
 # 默认读取 manager 容器自身的 stdout/stderr，非容器环境自动回退到进程内存日志
 curl http://你的IP:8000/api/logs/global?tail=300
 
-# 查看某个 browser 实例容器的日志与退出码（实例反复 restarting 时用）
-# 面板「运行日志」里的「来源」下拉可切换到单个实例
+# 查看某个 browser 实例容器的日志与退出码（排障用，面板不展示）
 curl http://你的IP:8000/api/instance/{sid}/logs?tail=200
 
 # 深入诊断：读取容器内 /tmp/chromium.log 等重定向日志 + 动态库缺失检查
@@ -137,8 +136,8 @@ curl http://你的IP:8000/api/instance/{sid}/logs?tail=200
 curl http://你的IP:8000/api/instance/{sid}/diag
 ```
 
-> 面板顶栏「运行日志」默认展示全局日志，每 10 秒自动刷新。存在异常实例时会自动打开，
-> 通过右上角「来源」下拉可在「全局」与各个实例之间切换；点「返回画面」后不再自动弹出。
+> 面板顶栏的「运行日志」是滑动开关：打开后日志抽屉从右侧滑出，与画面并排显示；
+> 关上后抽屉收起、画面占满。日志为 manager 全局记录，每 10 秒自动刷新，不再有单实例来源切换。
 
 ## 部署（推荐 Docker Compose）
 

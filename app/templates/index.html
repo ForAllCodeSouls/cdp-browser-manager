@@ -242,9 +242,40 @@
         }
         .empty-view h2 { color: var(--text); font-size: 15px; font-weight: 600; margin: 0 0 6px; }
 
+        /* 舞台：左侧画面 + 右侧日志抽屉，二者同处一行 */
+        .stage {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            gap: 0;
+            overflow: hidden;
+        }
+        .stage-main {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .stage-main .frame-wrap,
+        .stage-main .empty-view { flex: 1; min-height: 0; }
+
+        /* 日志抽屉：默认宽度 0，打开时滑出，画面自动让位 */
+        .log-drawer {
+            flex: 0 0 auto;
+            width: 0;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: width .26s ease, margin-left .26s ease;
+        }
+        .log-drawer.open {
+            width: min(440px, 46vw);
+            margin-left: 12px;
+        }
         .log-view {
             flex: 1;
-            min-height: 280px;
+            min-height: 0;
             display: flex;
             flex-direction: column;
             border: 1px solid var(--border);
@@ -257,28 +288,22 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+            gap: 8px;
             padding: 10px 14px;
             border-bottom: 1px solid var(--border);
             font-size: 13px;
             font-weight: 600;
         }
-        .log-view-title { color: var(--text); }
+        .log-view-title { color: var(--text); white-space: nowrap; }
         .log-view-actions { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; }
-        .log-source-label { color: var(--muted); font-size: 12px; }
-        .log-source {
-            font-size: 12px; padding: 4px 8px;
-            color: var(--text); background: var(--surface-2);
-            border: 1px solid var(--border); border-radius: 6px;
-        }
-        .log-diag {
+        .log-info {
             flex: 0 0 auto;
-            padding: 8px 14px;
-            font-size: 12px;
-            color: var(--warn);
+            padding: 7px 14px;
+            font-size: 11px;
+            color: var(--muted);
             border-bottom: 1px solid var(--border);
-            background: #1c1a14;
+            background: #14171f;
         }
-        .log-diag.ok { color: var(--success); background: #14241d; }
         .log-body {
             flex: 1;
             margin: 0;
@@ -292,6 +317,27 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
+
+        /* 顶栏滑动开关 */
+        .switch-wrap {
+            display: inline-flex; align-items: center; gap: 8px;
+            cursor: pointer; font-size: 13px; color: var(--text);
+            user-select: none; white-space: nowrap;
+        }
+        .switch-wrap input { display: none; }
+        .switch {
+            position: relative; flex: 0 0 auto;
+            width: 38px; height: 21px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 999px; transition: background .2s, border-color .2s;
+        }
+        .switch::after {
+            content: ""; position: absolute; top: 2px; left: 2px;
+            width: 15px; height: 15px; border-radius: 50%;
+            background: var(--muted); transition: transform .2s, background .2s;
+        }
+        .switch-wrap input:checked + .switch { background: var(--accent); border-color: var(--accent); }
+        .switch-wrap input:checked + .switch::after { transform: translateX(17px); background: #fff; }
 
         .badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
         .badge.running { background: #173d30; color: var(--success); }
@@ -355,7 +401,11 @@
             <div class="disclaimer-note">⚠ 仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</div>
         </div>
         <div class="toolbar">
-            <button onclick="openLogsView('global')">运行日志</button>
+            <label class="switch-wrap" title="打开/收起右侧运行日志">
+                <span>运行日志</span>
+                <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
+                <span class="switch"></span>
+            </label>
             <button onclick="openSettings()">⚙ 设置</button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
@@ -373,28 +423,29 @@
         <section class="viewer">
             <div class="detail" id="detail"></div>
             <div class="castbar" id="castBar"></div>
-            <div class="empty-view" id="viewerEmpty">
-                <h2>暂无可显示的画面</h2>
-                <div>点击左侧实例，或点右上角「新建实例」</div>
-            </div>
-            <div class="frame-wrap" id="frameWrap" style="display:none">
-                <div class="frame-overlay" id="frameOverlay"></div>
-                <div class="frame-host" id="frameHost"></div>
-            </div>
-            <div class="log-view" id="logView" style="display:none">
-                <div class="log-view-head">
-                    <span class="log-view-title">运行日志</span>
-                    <span class="log-view-actions">
-                        <label class="log-source-label" for="logSource">来源</label>
-                        <select id="logSource" class="log-source" onchange="onLogSourceChange()">
-                            <option value="global">全局 · manager</option>
-                        </select>
-                        <button onclick="loadLogs(force=true)">刷新</button>
-                        <button onclick="closeLogsView()">返回画面</button>
-                    </span>
+            <div class="stage" id="stage">
+                <div class="stage-main">
+                    <div class="empty-view" id="viewerEmpty">
+                        <h2>暂无可显示的画面</h2>
+                        <div>点击左侧实例，或点右上角「新建实例」</div>
+                    </div>
+                    <div class="frame-wrap" id="frameWrap" style="display:none">
+                        <div class="frame-overlay" id="frameOverlay"></div>
+                        <div class="frame-host" id="frameHost"></div>
+                    </div>
                 </div>
-                <div class="log-diag ok" id="logDiag" style="display:none"></div>
-                <pre class="log-body" id="logBody"></pre>
+                <aside class="log-drawer" id="logDrawer">
+                    <div class="log-view">
+                        <div class="log-view-head">
+                            <span class="log-view-title">运行日志</span>
+                            <span class="log-view-actions">
+                                <button onclick="loadLogs(true)">刷新</button>
+                            </span>
+                        </div>
+                        <div class="log-info" id="logInfo">全局 · manager</div>
+                        <pre class="log-body" id="logBody"></pre>
+                    </div>
+                </aside>
             </div>
         </section>
     </div>
@@ -486,11 +537,8 @@
         let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
-        let logsOpen = false;       // 日志面板是否打开
-        let logSource = "global";   // 日志来源："global" 或某个实例 sid
-        let logsDismissed = false;  // 用户主动关掉后，轮询时不再自动弹出
-        let logsLoadedKey = null;
-        let logsLoadedAt = 0;
+        let logsOpen = false;       // 右侧日志抽屉是否打开（顶栏滑动开关控制）
+        let logsLoadedAt = 0;       // 日志拉取节流时间戳
         let busy = false;
 
         const SETTINGS_KEY = "cdpManagerSettings";
@@ -1192,35 +1240,21 @@
                     pinfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
-                    '<button onclick="openLogsView(' + jsArg(sel.sid) + ')">日志</button>' +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>';
             }
 
-            // 存在异常实例（非 running）时自动打开全局日志，方便直接在页面看到整体运行状况与崩溃原因。
-            // 用户主动关掉后 logsDismissed 置位，轮询不再反复弹出。
-            const anyTrouble = list.some(i => i.status !== "running");
-            if (anyTrouble && !logsOpen && !logsDismissed) {
-                logsOpen = true;
-                logSource = "global";
-            }
+            // 右侧日志抽屉与画面并存：开关决定抽屉是否滑出，画面区独立按实例状态渲染。
+            $("logToggle").checked = logsOpen;
+            $("logDrawer").classList.toggle("open", logsOpen);
+            if (logsOpen) loadLogs();
 
-            if (logsOpen) {
+            if (!sel || sel.status !== "running") {
                 clearFrame();
                 $("frameWrap").style.display = "none";
-                $("viewerEmpty").style.display = "none";
-                $("logView").style.display = "flex";
-                renderLogSourceOptions();
-                loadLogs();
+                $("viewerEmpty").style.display = "flex";
             } else {
-                $("logView").style.display = "none";
-                if (!sel || sel.status !== "running") {
-                    clearFrame();
-                    $("frameWrap").style.display = "none";
-                    $("viewerEmpty").style.display = "flex";
-                } else {
-                    $("viewerEmpty").style.display = "none";
-                    if (frameSid !== sel.sid) mountFrame(sel);
-                }
+                $("viewerEmpty").style.display = "none";
+                if (frameSid !== sel.sid) mountFrame(sel);
             }
         }
 
@@ -1295,100 +1329,32 @@
             }
         }
 
-        // 用实例列表刷新日志来源下拉：全局 + 每个实例。
-        function renderLogSourceOptions() {
-            const sel = $("logSource");
-            const opts = ['<option value="global">全局 · manager</option>'];
-            Object.keys(instances).forEach(sid => {
-                const short = sid.slice(0, 8);
-                opts.push('<option value="' + esc(sid) + '">实例 · ' + esc(short) + '</option>');
-            });
-            const html = opts.join("");
-            if (sel.innerHTML !== html) {
-                sel.innerHTML = html;
-            }
-            sel.value = logSource;
-            // 选中的实例已被删除时回退到全局
-            if (logSource !== "global" && !instances[logSource]) {
-                logSource = "global";
-                sel.value = "global";
-            }
-        }
-
-        function onLogSourceChange() {
-            logSource = $("logSource").value;
-            logsLoadedKey = null; // 强制重新拉取
-            loadLogs(true);
-        }
-
-        function openLogsView(source) {
-            logsDismissed = false;
-            logsOpen = true;
-            logSource = source || "global";
-            logsLoadedKey = null;
+        // 顶栏滑动开关：打开右侧日志抽屉 / 收起后画面占满。
+        function toggleLogs(open) {
+            logsOpen = !!open;
+            if (logsOpen) { logsLoadedAt = 0; loadLogs(true); }
             render();
         }
 
-        function closeLogsView() {
-            logsDismissed = true;
-            logsOpen = false;
-            render();
-        }
-
-        // 加载日志到页面内嵌面板。轮询会自动调用，用 3 秒节流避免频繁打 Docker API；force 用于手动刷新。
+        // 只加载 manager 全局运行日志。轮询自动调用，3 秒节流；force 用于手动刷新/刚打开。
         async function loadLogs(force = false) {
-            const key = logSource;
+            if (!logsOpen) return;
             const now = Date.now();
-            if (!force && logsLoadedKey === key && now - logsLoadedAt < 3000) return;
-            logsLoadedKey = key;
+            if (!force && now - logsLoadedAt < 3000) return;
             logsLoadedAt = now;
-            const diag = $("logDiag");
             const body = $("logBody");
             if (force) body.textContent = "刷新中...";
-            const isGlobal = key === "global";
-            const url = isGlobal
-                ? "/api/logs/global?tail=300"
-                : "/api/instance/" + encodeURIComponent(key) + "/logs?tail=300";
             try {
-                const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+                const res = await fetch("/api/logs/global?tail=300", { signal: AbortSignal.timeout(15000) });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || res.statusText);
-                if (!logsOpen || logSource !== key) return; // 期间切换了来源，丢弃旧结果
-                if (isGlobal) {
-                    diag.style.display = "block";
-                    diag.className = "log-diag ok";
-                    diag.textContent = "日志来源: " + (data.source || "-") + " · 每 10 秒自动刷新";
-                    body.textContent = data.logs || "(无日志输出)";
-                } else {
-                    const d = data.diagnostics || {};
-                    const bad = d.status && d.status !== "running";
-                    diag.style.display = "block";
-                    diag.className = "log-diag" + (bad ? "" : " ok");
-                    diag.textContent =
-                        "状态: " + (d.status || "-") +
-                        " | 退出码: " + (d.exit_code === null ? "-" : d.exit_code) +
-                        " | OOM: " + (d.oom_killed ? "是" : "否") +
-                        " | 重启次数: " + (d.restart_count ?? "-") +
-                        (d.error ? " | 错误: " + d.error : "");
-                    // 同时拉取容器内重定向日志（chrome 报错在 /tmp/chromium.log，不在 stdout）
-                    let text = data.logs || "";
-                    try {
-                        const dr = await fetch("/api/instance/" + encodeURIComponent(key) + "/diag", { signal: AbortSignal.timeout(15000) });
-                        if (dr.ok) {
-                            const dd = await dr.json();
-                            const parts = [];
-                            for (const [p, content] of Object.entries(dd.files || {})) {
-                                parts.push("===== " + p + " =====\n" + content);
-                            }
-                            if (dd.ldd && dd.ldd.trim()) parts.push("===== 动态库检查 (" + (dd.checked_bin || "") + ") =====\n" + dd.ldd);
-                            if (parts.length) text = (text ? text + "\n\n" : "") + parts.join("\n\n");
-                        }
-                    } catch (e2) {}
-                    if (!logsOpen || logSource !== key) return;
-                    body.textContent = text || "(无日志输出)";
-                }
+                if (!logsOpen) return; // 期间抽屉被收起，丢弃结果
+                $("logInfo").textContent = "来源: " + (data.source || "-") + " · 每 10 秒自动刷新";
+                const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
+                body.textContent = data.logs || "(无日志输出)";
+                if (atBottom || force) body.scrollTop = body.scrollHeight;
             } catch (e) {
-                if (!logsOpen || logSource !== key) return;
+                if (!logsOpen) return;
                 body.textContent = "读取日志失败: " + (e.message || e);
             }
         }
