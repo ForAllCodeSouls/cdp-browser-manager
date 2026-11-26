@@ -62,6 +62,8 @@
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
         .btn-mini { font-size: 11px; padding: 3px 8px; }
+        .btn-locked { color: var(--warn); border-color: #6b5426; background: #3a2f1a; }
+        .btn-locked:hover:not(:disabled) { background: #4a3b20; }
 
         .layout { flex: 1; display: flex; min-height: 0; }
         aside {
@@ -165,7 +167,9 @@
             font-size: 12px;
         }
         .castbar.show { display: flex; }
+        .castbar.locked { opacity: .55; pointer-events: none; }
         .castbar .tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+        .castbar .lock-tip { color: var(--warn); font-size: 11px; }
         .chip {
             max-width: 150px;
             overflow: hidden;
@@ -228,6 +232,22 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         .frame-overlay .hint { font-size: 11px; color: var(--muted); max-width: 420px; line-height: 1.6; }
+
+        /* 屏幕锁：透明拦截层盖住画面，阻止脚本执行期间误点击/误触键盘 */
+        .screen-lock {
+            position: absolute; inset: 0; z-index: 4;
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 10px; text-align: center; padding: 20px;
+            background: repeating-linear-gradient(
+                45deg, #0f111780, #0f111780 12px, #1a1d2780 12px, #1a1d2780 24px
+            );
+            color: var(--warn); cursor: not-allowed;
+        }
+        .screen-lock.show { display: flex; }
+        .screen-lock .lk-icon { font-size: 30px; line-height: 1; }
+        .screen-lock .lk-title { font-size: 14px; font-weight: 600; }
+        .screen-lock .lk-hint { font-size: 11px; color: var(--muted); max-width: 380px; line-height: 1.6; }
 
         .empty-view {
             flex: 1;
@@ -416,6 +436,7 @@
                 <span class="switch"></span>
             </label>
             <button onclick="openSettings()" style="position:relative">⚙ 设置<span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
+            <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击">🔓 屏幕锁</button>
             <button onclick="load()">刷新</button>
             <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
             <button class="btn-primary" onclick="openCreate()" id="btnCreate">+ 新建实例</button>
@@ -441,6 +462,12 @@
                     <div class="frame-wrap" id="frameWrap" style="display:none">
                         <div class="frame-overlay" id="frameOverlay"></div>
                         <div class="frame-host" id="frameHost"></div>
+                        <div class="screen-lock" id="screenLock" title="画面已锁定，点击「解锁画面」恢复操作">
+                            <div class="lk-icon">🔒</div>
+                            <div class="lk-title">画面已锁定</div>
+                            <div class="lk-hint">正在执行脚本/自动化操作，鼠标与键盘输入已被拦截，避免误点击。点击右上角「🔒 屏幕锁」或下方按钮解锁。</div>
+                            <button class="btn-locked" onclick="toggleScreenLock()">🔓 解锁画面</button>
+                        </div>
                     </div>
                 </div>
                 <aside class="log-drawer" id="logDrawer">
@@ -563,6 +590,7 @@
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
         let logsOpen = false;       // 右侧日志抽屉是否打开（顶栏滑动开关控制）
         let logsLoadedAt = 0;       // 日志拉取节流时间戳
+        let screenLocked = false;   // 屏幕锁：拦截画面输入，防止脚本执行时误点击
         let busy = false;
 
         const SETTINGS_KEY = "cdpManagerSettings";
@@ -573,12 +601,14 @@
                     preview: s.preview === "cast" ? "cast" : "vnc",
                     page: s.page === "vnc.html" ? "vnc.html" : "vnc_lite.html",
                     scale: s.scale === "0" ? "0" : "1",
+                    screenLocked: s.screenLocked === true,
                 };
             } catch (e) {
-                return { preview: "vnc", page: "vnc_lite.html", scale: "1" };
+                return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false };
             }
         }
         let settings = loadSettings();
+        screenLocked = settings.screenLocked === true;
 
         function openSettings() {
             $("setPreview").value = settings.preview;
@@ -595,12 +625,53 @@
                 preview: $("setPreview").value,
                 page: $("setPage").value,
                 scale: $("setScale").value,
+                screenLocked: screenLocked,
             };
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
             closeSettings();
             render();
             toast("设置已保存，画面重新连接", "ok");
+        }
+
+        // ---- 屏幕锁：拦截画面输入，避免脚本执行期间被误点击打断 ----
+        function applyScreenLock() {
+            const el = $("screenLock");
+            if (el) el.classList.toggle("show", screenLocked && frameSid !== null);
+            const btn = $("btnScreenLock");
+            if (btn) {
+                btn.textContent = screenLocked ? "🔒 已锁定" : "🔓 屏幕锁";
+                btn.classList.toggle("btn-locked", screenLocked);
+                btn.title = screenLocked
+                    ? "画面输入已锁定，点击解锁"
+                    : "锁定画面输入，防止脚本执行时误点击";
+            }
+            // 导航条在锁定时禁用，防止通过地址栏/标签操作干扰脚本
+            const bar = $("castBar");
+            if (bar) bar.classList.toggle("locked", screenLocked);
+        }
+
+        function toggleScreenLock() {
+            screenLocked = !screenLocked;
+            settings.screenLocked = screenLocked;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            if (screenLocked) {
+                // 让可能持有焦点的 iframe/canvas/input 失焦，避免锁定后键盘仍进入画面。
+                try {
+                    const ae = document.activeElement;
+                    if (ae && typeof ae.blur === "function") ae.blur();
+                    const f = $("mainFrame");
+                    if (f && f.contentWindow) f.contentWindow.blur();
+                } catch (e) {}
+            }
+            applyScreenLock();
+            const sel = currentSel();
+            if (sel && castState && castState.sid === sel.sid) renderCastBar(sel, true);
+            if (screenLocked) {
+                toast("画面已锁定：鼠标/键盘/导航输入均已拦截", "warn");
+            } else {
+                toast("画面已解锁，可正常操作", "ok");
+            }
         }
 
         // 展示定时自动更新的计划与上次结果（下次检查时间是后端按固定间隔算出的）。
@@ -819,6 +890,7 @@
             castState = null;
             castPreferredTid = "";
             $("castBar").className = "castbar";
+            applyScreenLock();
         }
 
         function effectiveMode(i) {
@@ -1043,6 +1115,7 @@
             castState = null;
             $("castBar").className = "castbar";
             $("castBar").innerHTML = "";
+            applyScreenLock();
         }
 
         function frameLoading(sid) {
@@ -1088,11 +1161,63 @@
             frameSid = sel.sid;
             frameLoading(sel.sid);
             $("frameWrap").style.display = "block";
+            applyScreenLock();
             if (effectiveMode(sel) === "cast") {
                 await mountCast(sel);
                 return;
             }
+            // VNC 模式：iframe 显示画面，同时用同一实例的 CDP 拉取标签页，
+            // 让导航条（标签切换/地址栏/新标签/刷新/关闭）和普通抓屏模式一样可用。
             attachIframe(sel, vncUrl(sel), 12000);
+            await mountVncNav(sel, true);
+        }
+
+        async function fetchTargets(sel) {
+            const data = await api(
+                "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
+            );
+            return data.targets || [];
+        }
+
+        // 选择导航条当前标签：优先用户偏好，其次当前项，否则第一个。
+        function pickTid(targets, sel) {
+            let tid = castPreferredTid ||
+                (castState && castState.sid === sel.sid ? castState.tid : "");
+            if (!targets.some(t => t.id === tid)) tid = targets[0].id;
+            castPreferredTid = tid;
+            return tid;
+        }
+
+        // VNC 模式下准备导航条：读取 CDP 标签，并激活选中的标签使 VNC 画面与导航条一致。
+        // 只在选中项变化时调用 activate，避免轮询反复抢焦点。
+        async function mountVncNav(sel, force = false) {
+            try {
+                let targets = await fetchTargets(sel);
+                if (frameSid !== sel.sid) return;
+                if (!targets.length) {
+                    const tid = await ensureBlankTarget(sel);
+                    if (frameSid !== sel.sid || !tid) return;
+                    targets = await fetchTargets(sel);
+                    if (!targets.length) return;
+                    castPreferredTid = tid;
+                }
+                const tid = pickTid(targets, sel);
+                const changed = !castState || castState.sid !== sel.sid ||
+                    castState.tid !== tid;
+                castState = { sid: sel.sid, targets: targets, tid: tid, sig: "" };
+                if (changed) {
+                    try {
+                        await api(
+                            "/api/instance/" + encodeURIComponent(sel.sid) +
+                                "/targets/" + encodeURIComponent(tid) + "/activate",
+                            { method: "POST" }
+                        );
+                    } catch (e) { /* 激活失败不影响导航条展示 */ }
+                }
+                renderCastBar(sel, force);
+            } catch (e) {
+                // VNC 画面本身已可用，导航条加载失败静默降级
+            }
         }
 
         async function mountCast(sel) {
@@ -1212,9 +1337,14 @@
             const buttonName = (n) => n === 2 ? "right" : n === 1 ? "middle" : "left";
             const buttonBits = (n) => n === 2 ? 2 : n === 1 ? 4 : 1;
 
+            // 屏幕锁开启时，所有输入都不转发到浏览器。
+            // 遮罩层已拦截鼠标，这里额外守护键盘（焦点仍在 canvas 上）与拦截层失效的情况。
+            const locked = () => screenLocked;
+
             // mousemove 用 requestAnimationFrame 合并，避免每像素一帧 WS 消息。
             let pendingMove = null;
             canvas.addEventListener("mousemove", (e) => {
+                if (locked()) return;
                 pendingMove = e;
                 if (pendingMove.__raf) return;
                 pendingMove.__raf = requestAnimationFrame(() => {
@@ -1230,6 +1360,7 @@
                 });
             });
             canvas.addEventListener("mousedown", (e) => {
+                if (locked()) return;
                 canvas.focus();
                 const p = point(e);
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
@@ -1241,6 +1372,7 @@
                 });
             });
             canvas.addEventListener("mouseup", (e) => {
+                if (locked()) return;
                 const p = point(e);
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mouseReleased", x: p.x, y: p.y,
@@ -1248,6 +1380,7 @@
                 });
             });
             canvas.addEventListener("wheel", (e) => {
+                if (locked()) return;
                 e.preventDefault();
                 const p = point(e);
                 castSend(wsRef.ws, "Input.dispatchWheelEvent", {
@@ -1255,6 +1388,7 @@
                 });
             }, { passive: false });
             canvas.addEventListener("keydown", (e) => {
+                if (locked()) return;
                 // 新版浏览器里 KeyboardEvent.char 几乎恒为 undefined，
                 // 直接用 e.key 作为 text，否则远程页面输入框打不出字符。
                 const printable = !!e.key && e.key.length === 1;
@@ -1273,6 +1407,7 @@
                 }
             });
             canvas.addEventListener("keyup", (e) => {
+                if (locked()) return;
                 castSend(wsRef.ws, "Input.dispatchKeyEvent", {
                     type: "keyUp", key: e.key, code: e.code,
                     windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
@@ -1304,8 +1439,15 @@
             const cur = castState.targets.find(t => t.id === castState.tid) || {};
             const urlValue = focused && typed !== null ? typed : (cur.url || "");
 
-            bar.className = "castbar show";
+            bar.className = "castbar show" + (screenLocked ? " locked" : "");
+            const modeTip = effectiveMode(sel) === "vnc"
+                ? '<span style="color:var(--muted);font-size:11px">VNC 导航</span>'
+                : '';
+            const lockTip = screenLocked
+                ? '<span class="lock-tip">🔒 画面已锁定，导航已禁用</span>'
+                : '';
             bar.innerHTML =
+                modeTip +
                 '<span style="color:var(--muted)">标签</span>' +
                 '<span class="tabs">' + chips + '</span>' +
                 '<button class="btn-mini" onclick="newTarget()">+ 新标签</button>' +
@@ -1313,7 +1455,8 @@
                 '<button class="btn-mini" onclick="navigateCast()">前往</button>' +
                 '<button class="btn-mini" onclick="reloadCast()">刷新</button>' +
                 '<button class="btn-mini btn-danger" onclick="closeTarget()" ' +
-                'title="关闭最后一个标签时会自动新建空白页，画面不会中断（与 VNC 行为一致）">关闭</button>';
+                'title="关闭最后一个标签时会自动新建空白页，画面不会中断（与 VNC 行为一致）">关闭</button>' +
+                lockTip;
             const input = $("castUrl");
             input.onkeydown = (e) => { if (e.key === "Enter") navigateCast(); };
             if (focused) input.focus();
@@ -1328,15 +1471,44 @@
             if (sel) { frameSid = null; await mountFrame(sel); }
         }
 
-        function switchTarget(tid) {
+        // 标签增减后刷新：抓屏模式重挂画面，VNC 模式只刷新导航条（避免 iframe 闪屏）。
+        async function refreshAfterNavChange() {
+            const sel = currentSel();
+            if (!sel) return;
+            if (effectiveMode(sel) === "vnc") {
+                await mountVncNav(sel, true);
+            } else {
+                await remountCurrent();
+            }
+        }
+
+        async function switchTarget(tid) {
+            if (screenLocked) return;
             const sel = currentSel();
             if (!sel) return;
             castPreferredTid = tid;
+            if (effectiveMode(sel) === "vnc") {
+                // VNC 画面显示的是当前激活标签：切换后激活目标标签，
+                // 无需重载 iframe（重载会闪一下），只更新导航条选中态。
+                if (castState && castState.sid === sel.sid) {
+                    castState.tid = tid;
+                    renderCastBar(sel, true);
+                }
+                try {
+                    await api(
+                        "/api/instance/" + encodeURIComponent(sel.sid) +
+                            "/targets/" + encodeURIComponent(tid) + "/activate",
+                        { method: "POST" }
+                    );
+                } catch (e) { toast("切换标签失败: " + e.message, "error"); }
+                return;
+            }
             frameSid = null;
             mountFrame(sel);
         }
 
         async function newTarget() {
+            if (screenLocked) return;
             const raw = prompt("新标签页打开的地址：", "about:blank");
             if (raw === null) return;
             const url = normalizeCastUrl(raw) || "about:blank";
@@ -1352,7 +1524,7 @@
                     }
                 );
                 if (created && created.id) castPreferredTid = created.id;
-                await remountCurrent();
+                await refreshAfterNavChange();
             } catch (e) { toast("新建标签失败: " + e.message, "error"); }
         }
 
@@ -1407,6 +1579,7 @@
         }
 
         async function navigateCast() {
+            if (screenLocked) return;
             const input = $("castUrl");
             const url = normalizeCastUrl(input ? input.value : "");
             if (!url) return;
@@ -1418,12 +1591,14 @@
         }
 
         async function reloadCast() {
+            if (screenLocked) return;
             try { await sendCastCommand("Page.reload", { ignoreCache: false }); }
             catch (e) { return; }
             toast("已刷新", "ok");
         }
 
         async function closeTarget() {
+            if (screenLocked) return;
             const sel = currentSel();
             if (!sel || !castState) return;
             const isLast = (castState.targets || []).length <= 1;
@@ -1443,36 +1618,49 @@
                 } else {
                     castPreferredTid = "";
                 }
-                await remountCurrent();
+                await refreshAfterNavChange();
             } catch (e) { toast("关闭标签失败: " + e.message, "error"); }
         }
 
         async function pollCastTargets() {
             const sel = currentSel();
             if (!sel || !castState || castState.sid !== sel.sid) return;
-            if (effectiveMode(sel) !== "cast") return;
+            const vncMode = effectiveMode(sel) === "vnc";
             try {
-                const data = await api(
-                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
-                );
-                let targets = data.targets || [];
+                let targets = await fetchTargets(sel);
                 if (!targets.length) {
                     // 标签被外部关光时自动补一个空白页，避免画面断连（与 VNC 行为一致）。
                     const tid = await ensureBlankTarget(sel);
                     if (!tid) return;
-                    const fresh = await api(
-                        "/api/instance/" + encodeURIComponent(sel.sid) + "/targets"
-                    );
-                    targets = fresh.targets || [];
+                    targets = await fetchTargets(sel);
                     if (!targets.length) return;
                     castPreferredTid = tid;
-                    await remountCurrent();
+                    castState.targets = targets;
+                    castState.tid = tid;
+                    if (vncMode) {
+                        renderCastBar(sel, true);
+                    } else {
+                        await remountCurrent();
+                    }
                     return;
                 }
                 castState.targets = targets;
                 if (!targets.some(t => t.id === castState.tid)) {
                     castPreferredTid = targets[0].id;
-                    await remountCurrent();
+                    castState.tid = targets[0].id;
+                    if (vncMode) {
+                        // VNC 模式：重载 iframe 会闪屏，只更新导航条并激活新标签。
+                        renderCastBar(sel, true);
+                        try {
+                            await api(
+                                "/api/instance/" + encodeURIComponent(sel.sid) +
+                                    "/targets/" + encodeURIComponent(castState.tid) + "/activate",
+                                { method: "POST" }
+                            );
+                        } catch (e) {}
+                    } else {
+                        await remountCurrent();
+                    }
                     return;
                 }
                 renderCastBar(sel);
@@ -1711,6 +1899,7 @@
             }
         }
 
+        applyScreenLock();
         load();
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
