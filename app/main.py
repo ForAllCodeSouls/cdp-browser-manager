@@ -140,7 +140,12 @@ def remote_image_digest(image: str) -> str:
 
 
 def check_images_status(force: bool = False) -> dict:
-    """对比本地与远端镜像摘要，判断是否有新版本。带缓存，失败自动降级不影响面板。"""
+    """对比本地与远端镜像摘要，判断是否有新版本。
+
+    带缓存，失败自动降级不影响面板。远端摘要做二次确认：仅当连续两次一致、
+    且与本地不同时才认定「有更新」。避免 GHCR/CDN 抖动或 CI 正在推送时的一次性
+    差异触发误报（表现为红点亮起、点开设置却又显示「已是最新」）。
+    """
     now = time.time()
     with IMAGE_STATUS_LOCK:
         cached = IMAGE_STATUS_CACHE["data"]
@@ -152,8 +157,19 @@ def check_images_status(force: bool = False) -> dict:
         local = local_image_digest(image)
         remote = ""
         err = ""
+        stable = True
         try:
             remote = remote_image_digest(image)
+            if local and remote and local != remote:
+                # 首次发现差异，短暂间隔后再查一次确认；两次不一致视为远端抖动。
+                time.sleep(0.6)
+                confirm = remote_image_digest(image)
+                if confirm != remote:
+                    stable = False
+                    log.debug(
+                        "%s 远端摘要两次不一致(%s/%s)，本次不报更新",
+                        label, remote[:19], confirm[:19],
+                    )
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
             log.debug("查询 %s 远端镜像摘要失败: %s", label, err)
@@ -163,7 +179,8 @@ def check_images_status(force: bool = False) -> dict:
             "remote": remote[:19] if remote else "",
             "local_missing": not local,
             "remote_unknown": not remote,
-            "update_available": bool(remote and local and remote != local),
+            "unstable": not stable,
+            "update_available": bool(stable and remote and local and remote != local),
             "error": err if not remote else "",
         }
     with IMAGE_STATUS_LOCK:
@@ -618,6 +635,7 @@ def start_browser_instance(
             "sid": sid,
             "container_id": container.id,
             "container_name": container.name,
+            "created_at": time.time(),
             "debug_port": debug_port,
             "vnc_port": vnc_port,
             "novnc_port": novnc_port,
@@ -632,8 +650,10 @@ def start_browser_instance(
         "创建实例 %s：内核=%s 镜像=%s CDP=%s VNC=%s",
         sid[:8], browser_mode, image, debug_port, vnc_port,
     )
-    # 锁外等待 CDP 就绪，避免阻塞其他请求查询；超时也标记状态而非无限阻塞
-    info["cdp_ready"] = wait_cdp_ready(container)
+    # 不再同步空等 CDP 就绪（最长 20 秒会让前端「创建中」显得卡住）。
+    # 容器已创建即立即返回，cdp_ready 由后台 cdp_monitor_loop 每 8 秒刷新，
+    # 前端拿到 sid 后可立刻在列表显示实例，并异步等待画面连接。
+    info["cdp_ready"] = False
     return info
 
 
@@ -899,6 +919,64 @@ threading.Thread(target=cdp_monitor_loop, daemon=True).start()
 threading.Thread(target=auto_pull_loop, daemon=True, name="browser-image-puller").start()
 
 
+# ---------- 内置 CDP 自测：临时有头/无头实例上跑官方 CDP WebSocket 用例 ----------
+SELFTEST_STATE = {"running": False, "started": 0.0, "result": {}, "error": ""}
+SELFTEST_LOCK = threading.Lock()
+
+
+def _selftest_one_mode(browser_mode: str) -> dict:
+    """在一份临时实例上跑完整自测，无论成败都在结束时销毁实例。"""
+    sid = str(uuid.uuid4())
+    created = False
+    try:
+        log.info("[自测] 创建临时实例：内核=%s sid=%s", browser_mode, sid[:8])
+        info = start_browser_instance(sid, "ephemeral", "", browser_mode)
+        created = True
+        container = client.containers.get(info["container_id"])
+        # 等待 CDP 就绪（自测可以同步等；用户实例创建接口已经改为异步）。
+        if not wait_cdp_ready(container, timeout=25.0):
+            raise RuntimeError("临时实例 CDP 未就绪")
+        ip = container_ip(container)
+        if not ip:
+            raise RuntimeError("临时实例容器网络未就绪")
+        from app.selftest import run_all
+
+        def emit(level, name, detail):
+            log.info("[自测][%s][%s] %s %s", browser_mode, level, name, detail)
+
+        return run_all(f"http://{ip}:9222", emit)
+    except Exception as e:
+        log.error("[自测][%s] 执行异常: %s", browser_mode, e)
+        return {"passed": 0, "failed": 1, "cases": [], "error": f"{type(e).__name__}: {e}"}
+    finally:
+        if created:
+            try:
+                stop_instance(sid)
+                log.info("[自测] 已销毁临时实例 %s", sid[:8])
+            except Exception as e:
+                log.warning("[自测] 销毁临时实例失败 %s: %s", sid[:8], e)
+
+
+def selftest_worker():
+    log.info("========== 开始内置 CDP 自测（临时有头 + 无头实例）==========")
+    result = {"full": {}, "headless": {}}
+    for mode in ("headless", "full"):
+        result[mode] = _selftest_one_mode(mode)
+    total_pass = sum(result[m].get("passed", 0) for m in result)
+    total_fail = sum(result[m].get("failed", 0) for m in result)
+    log.info(
+        "========== 自测完成：通过 %d / 失败 %d ==========",
+        total_pass, total_fail,
+    )
+    with SELFTEST_LOCK:
+        SELFTEST_STATE["running"] = False
+        SELFTEST_STATE["result"] = {
+            "modes": result,
+            "passed": total_pass,
+            "failed": total_fail,
+        }
+
+
 # ---------- CDP 代理：供面板的 screencast 视图管理标签与下发命令 ----------
 # 面板页面与 CDP 端口是不同源，浏览器 JS 直接 fetch /json/* 会被 CORS 拦截；
 # 因此统一经 manager 用容器内网 IP 代理，前端只跟 8000 端口打交道。
@@ -1001,10 +1079,68 @@ async def api_health():
         raise HTTPException(status_code=503, detail=f"Docker 不可用: {e}")
 
 
+def running_instance_count() -> int:
+    """当前运行中的浏览器实例数（自愈/自动更新前的安全检查）。"""
+    with LOCK:
+        return sum(1 for v in INSTANCES.values() if v.get("status") == "running")
+
+
 @app.post("/api/images/pull")
 async def api_pull_images():
     """手动拉取最新的 full/headless 浏览器镜像（Dockge 只更新 manager 时用）。"""
     return await run_in_threadpool(pull_browser_images)
+
+
+class UpdateBlocked(Exception):
+    """因仍有实例运行而拒绝自动更新。"""
+
+
+def auto_update_when_idle() -> dict:
+    """仅在没有任何运行实例时更新浏览器镜像，避免更新后旧实例仍用旧镜像。"""
+    n = running_instance_count()
+    if n:
+        raise UpdateBlocked(f"仍有 {n} 个运行中的实例，请先停止全部实例再更新")
+    return pull_browser_images()
+
+
+@app.post("/api/images/update-auto")
+async def api_images_update_auto():
+    """自动更新浏览器镜像：仅当无实例运行时执行，否则返回 409 并说明原因。"""
+    try:
+        return await run_in_threadpool(auto_update_when_idle)
+    except UpdateBlocked as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/api/instances/count")
+async def api_instances_count():
+    """返回运行实例数，前端据此在更新前提醒用户关闭浏览器。"""
+    return {"running": running_instance_count()}
+
+
+@app.post("/api/selftest/run")
+async def api_selftest_run():
+    """启动内置 CDP 自测（后台运行，日志写入全局运行日志，可实时查看）。"""
+    with SELFTEST_LOCK:
+        if SELFTEST_STATE["running"]:
+            raise HTTPException(status_code=409, detail="自测正在进行中，请稍候")
+        SELFTEST_STATE["running"] = True
+        SELFTEST_STATE["started"] = time.time()
+        SELFTEST_STATE["result"] = {}
+        SELFTEST_STATE["error"] = ""
+    threading.Thread(target=selftest_worker, daemon=True, name="cdp-selftest").start()
+    return {"started": True}
+
+
+@app.get("/api/selftest/status")
+async def api_selftest_status():
+    """查询自测运行状态与结果摘要。"""
+    with SELFTEST_LOCK:
+        return {
+            "running": SELFTEST_STATE["running"],
+            "result": SELFTEST_STATE["result"],
+            "error": SELFTEST_STATE["error"],
+        }
 
 
 @app.get("/api/images/status")

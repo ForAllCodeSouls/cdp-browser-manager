@@ -176,11 +176,17 @@ services:
 
 > 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。`upgrade.sh` 已带上该参数。
 >
-> **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置兜底——manager 启动后会自动在后台拉取两份浏览器镜像；也可打开面板「设置 → 立即更新浏览器镜像」手动触发。镜像更新后需停止并重建实例才会用上新镜像。若不想自动拉取，设 `AUTO_PULL_IMAGES=0`。
+> **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置兜底——manager 启动后会自动在后台拉取两份浏览器镜像；也可在面板「设置」里更新。镜像更新后需停止并重建实例才会用上新镜像。若不想自动拉取，设 `AUTO_PULL_IMAGES=0`。
 >
-> **更新红点**：顶栏「⚙ 设置」按钮上的红点表示本地浏览器镜像落后于 GHCR 最新版本（对比镜像摘要，`GET /api/images/status`）；点开设置可看到是完整内核还是无头内核有更新，并一键拉取。红点检测每 5 分钟自动刷新一次，后端有 10 分钟缓存，无法连接 GHCR 时不亮红点、不影响其它功能。
+> **两种更新按钮**：设置里提供「自动更新（仅在无实例运行时）」和「立即更新浏览器镜像（手动）」两个按钮。前者会先检查运行中的实例数，有实例时直接拒绝并提示先停止；后者在点击时弹出确认，提醒你先关闭实例（更新不会应用到已运行实例）。后端对自动更新同样做 409 拦截，双保险。
 >
-> **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前点「立即更新浏览器镜像」，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，manager 也会在 2 分钟后自动重试。看到该提示时等 CI 结束后再拉一次，并删除旧实例重建。
+> **更新红点**：顶栏「⚙ 设置」按钮上的红点表示本地浏览器镜像落后于 GHCR 最新版本（对比镜像摘要，`GET /api/images/status`）；点开设置可看到是完整内核还是无头内核有更新。为避免误报，后端对远端摘要做**二次确认**（连续两次一致且与本地不同才报更新），本地缺镜像不再算「有更新」，红点与设置面板共用同一缓存数据源。红点每 5 分钟自动刷新，后端 10 分钟缓存，无法连接 GHCR 时不亮红点。
+>
+> **浏览器跟随官网自动更新**：`.github/workflows/chrome-auto-update.yml` 每天检查 [Chrome for Testing 官方稳定版](https://googlechromelabs.github.io/chrome-for-testing/)，发现新版本且 linux64 的 `chrome` 与 `chrome-headless-shell` 都可下载时，自动更新两个 Dockerfile 的 `CHROME_VERSION` 并提交，从而触发 `docker-build.yml` 重建 full/headless 镜像。你只需在服务器上更新 manager 并重建实例即可用上新内核。
+>
+> **CI 构建竞态**：推送代码后 GHCR 上的 `latest` 要等 GitHub Actions 跑完才会切换。若在这之前更新镜像，`pull` 会成功但拉到的是**上一版**镜像。现在拉取后会复核本地/远端摘要，发现不一致会在设置里明确提示“拉到旧版本”，manager 也会在 2 分钟后自动重试。看到该提示时等 CI 结束后再拉一次，并删除旧实例重建。
+>
+> **内置连接自测**：设置里的「运行自测」用官方 CDP WebSocket 协议在**临时创建**的完整/无头实例上跑一组用例（HTTP 探测、WebSocket 握手、JS 计算、导航与 DOM、鼠标点击、键盘输入、截图、抓屏帧、多标签页、UA 读取）。测试实例用完即销毁，不影响你正在运行的实例；结果写入「运行日志」，也可在设置里直接查看摘要。接口为 `POST /api/selftest/run` 与 `GET /api/selftest/status`。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 

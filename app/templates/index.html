@@ -529,8 +529,16 @@
             </div>
             <div class="row">
                 <label>浏览器镜像 <span id="imageStatusBadge" style="font-size:11px;color:var(--muted)"></span></label>
-                <button id="btnPullImages" onclick="pullImages()" style="width:100%">立即更新浏览器镜像</button>
-                <div class="hint" id="pullImagesHint">manager 启动时会自动拉取；若用 Dockge 只更新了 manager，可点此手动拉取两份浏览器镜像。已运行的实例需停止后重建才会用新镜像。</div>
+                <button id="btnUpdateAuto" onclick="updateAuto()" style="width:100%" class="btn-primary">自动更新（仅在无实例运行时）</button>
+                <button id="btnPullImages" onclick="pullImages()" style="width:100%;margin-top:8px">立即更新浏览器镜像（手动）</button>
+                <div class="hint" id="pullImagesHint">浏览器内核会跟随官方 Chrome for Testing 稳定版由 GitHub Action 自动更新。自动更新按钮仅在没有任何运行中的实例时可用；手动更新前会提醒你先关闭实例。已运行实例需停止后重建才会用新镜像。</div>
+            </div>
+            <div class="row">
+                <label>连接自测 <span style="font-size:11px;color:var(--muted)">官方 CDP WebSocket</span></label>
+                <button id="btnSelftest" onclick="runSelftest()" style="width:100%">运行自测（临时开有头+无头实例）</button>
+                <div class="hint">用官方 CDP 协议测试导航 / JS / DOM / 鼠标 / 键盘 / 截图 / 抓屏 / 多标签等。自动新建并销毁临时实例，不影响你正在运行的实例。结果写入「运行日志」。</div>
+                <pre id="selftestResult" style="max-height:150px;overflow:auto;font-size:11px;margin-top:8px;display:none"></pre>
+                <button id="btnSelftestLogs" onclick="openLogsForSelftest()" style="width:100%;margin-top:8px;display:none">查看完整运行日志 →</button>
             </div>
             <div class="foot">画面设置保存在本机浏览器，仅影响当前设备；下次打开自动生效。</div>
             <div class="actions">
@@ -576,7 +584,8 @@
             $("setPage").value = settings.page;
             $("setScale").value = settings.scale;
             $("settingsMask").classList.add("open");
-            checkImageStatus(true);
+            // 统一使用缓存数据源，避免与红点轮询结果不一致造成「误报有更新」。
+            checkImageStatus();
         }
         function closeSettings() { $("settingsMask").classList.remove("open"); }
         function saveSettings() {
@@ -593,12 +602,14 @@
         }
 
         // 检测本地浏览器镜像是否落后于 GHCR 远端，落后则在「设置」按钮显示红点。
+        // 只有一个数据源：后端带二次确认 + 10 分钟缓存。force 仅在手动更新后使用。
         async function checkImageStatus(force = false) {
             try {
                 const data = await api("/api/images/status" + (force ? "?force=true" : ""), {}, 20000);
                 const entries = Object.entries(data || {});
-                const outdated = entries.filter(([k, v]) => v.update_available || v.local_missing);
-                const unknown = entries.filter(([k, v]) => v.remote_unknown);
+                // local_missing（本地还没镜像）不算「有更新」，否则误报红点。
+                const outdated = entries.filter(([k, v]) => v.update_available);
+                const unknown = entries.filter(([k, v]) => v.remote_unknown && !v.local_missing);
                 $("updateDot").style.display = outdated.length ? "block" : "none";
                 const badge = $("imageStatusBadge");
                 if (badge) {
@@ -619,38 +630,146 @@
             }
         }
 
+        // 更新前先查运行实例数：有实例则提醒用户关闭，拒绝直接更新。
+        async function confirmNoRunningInstance() {
+            try {
+                const d = await api("/api/instances/count", {}, 10000);
+                if (d && d.running > 0) {
+                    toast("请先停止全部浏览器实例（当前 " + d.running + " 个）再更新镜像", "error");
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // 自动更新：仅当无实例运行时由后端执行，双保险（前端提醒 + 后端 409 拦截）。
+        async function updateAuto() {
+            const btn = $("btnUpdateAuto");
+            const hint = $("pullImagesHint");
+            if (btn.disabled) return;
+            if (!(await confirmNoRunningInstance())) return;
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.textContent = "正在更新…";
+            hint.textContent = "正在自动拉取最新浏览器镜像，请稍候，可打开「运行日志」查看进度。";
+            try {
+                const data = await api("/api/images/update-auto", { method: "POST" }, 600000);
+                showPullResult(data, hint);
+            } catch (e) {
+                hint.textContent = "自动更新失败: " + (e.message || e);
+                toast("自动更新失败: " + (e.message || e), "error");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+                checkImageStatus(true);
+            }
+        }
+
+        function showPullResult(data, hint) {
+            const vals = Object.values(data || {});
+            const parts = Object.entries(data || {}).map(([k, v]) =>
+                (k === "full" ? "完整内核" : "无头内核") + ": " +
+                (!v.ok ? "失败（" + (v.error || "未知错误") + "）" :
+                 v.stale ? "拉到旧版本，CI 可能仍在构建，请稍后再点" : "已更新")
+            );
+            const anyStale = vals.some(v => v.stale);
+            const allOk = vals.length > 0 && vals.every(v => v.ok);
+            hint.textContent = parts.join(" · ");
+            if (anyStale) {
+                toast("拉到的仍是旧镜像，请等 CI 构建完成后重新拉取", "error");
+            } else {
+                toast(allOk ? "浏览器镜像已更新，请重建实例生效" : "部分镜像拉取失败，详见运行日志", allOk ? "ok" : "error");
+            }
+        }
+
         async function pullImages() {
             const btn = $("btnPullImages");
             const hint = $("pullImagesHint");
             if (btn.disabled) return;
+            // 手动更新：提醒用户先关闭正在运行的实例（更新后需重建才生效）。
+            let proceed = true;
+            try {
+                const d = await api("/api/instances/count", {}, 10000);
+                if (d && d.running > 0) {
+                    proceed = window.confirm(
+                        "检测到 " + d.running + " 个浏览器实例正在运行。\n\n" +
+                        "更新镜像不会自动应用到已运行的实例，且可能影响当前画面。\n" +
+                        "建议先在首页点「停止全部」关闭实例后再更新。\n\n" +
+                        "仍要继续更新镜像吗？"
+                    );
+                }
+            } catch (e) {}
+            if (!proceed) return;
             btn.disabled = true;
             btn.textContent = "正在拉取…（大镜像可能需几分钟）";
             hint.textContent = "正在从仓库拉取 full / headless 两份镜像，请耐心等待，可打开「运行日志」查看进度。";
             try {
                 const data = await api("/api/images/pull", { method: "POST" }, 600000);
-                const vals = Object.values(data || {});
-                const parts = Object.entries(data || {}).map(([k, v]) =>
-                    (k === "full" ? "完整内核" : "无头内核") + ": " +
-                    (!v.ok ? "失败（" + (v.error || "未知错误") + "）" :
-                     v.stale ? "拉到旧版本（本地 " + (v.local || "?") + " / 远端 " + (v.remote || "?") + "），CI 可能仍在构建，请稍后再点" :
-                     "已更新")
-                );
-                const anyStale = vals.some(v => v.stale);
-                const allOk = vals.length > 0 && vals.every(v => v.ok);
-                hint.textContent = parts.join(" · ");
-                if (anyStale) {
-                    toast("拉到的仍是旧镜像，请等 CI 构建完成后重新拉取", "error");
-                } else {
-                    toast(allOk ? "浏览器镜像已更新，请重建实例生效" : "部分镜像拉取失败，详见运行日志", allOk ? "ok" : "error");
-                }
+                showPullResult(data, hint);
             } catch (e) {
                 hint.textContent = "拉取失败: " + (e.message || e);
                 toast("拉取镜像失败: " + (e.message || e), "error");
             } finally {
                 btn.disabled = false;
-                btn.textContent = "立即更新浏览器镜像";
+                btn.textContent = "立即更新浏览器镜像（手动）";
                 checkImageStatus(true);
             }
+        }
+
+        // 内置 CDP 自测：后台临时开有头+无头实例跑测试，日志写入运行日志。
+        async function runSelftest() {
+            const btn = $("btnSelftest");
+            const pre = $("selftestResult");
+            const logsBtn = $("btnSelftestLogs");
+            if (btn.disabled) return;
+            btn.disabled = true;
+            const original = btn.textContent;
+            pre.style.display = "block";
+            logsBtn.style.display = "block";
+            pre.textContent = "正在启动自测（临时创建有头 + 无头实例）…\n详细进度见「运行日志」。";
+            try {
+                await api("/api/selftest/run", { method: "POST" }, 20000);
+                toast("自测已启动，可在「运行日志」实时查看", "ok");
+                openLogsForSelftest();
+                // 轮询结果摘要
+                const timer = setInterval(async () => {
+                    try {
+                        const s = await api("/api/selftest/status", {}, 10000);
+                        if (!s.running && s.result && s.result.modes) {
+                            clearInterval(timer);
+                            const r = s.result;
+                            let text = "自测完成：通过 " + r.passed + " / 失败 " + r.failed + "\n";
+                            for (const [mode, mr] of Object.entries(r.modes)) {
+                                text += "\n[" + (mode === "full" ? "完整内核" : "无头内核") + "] " +
+                                    "通过 " + (mr.passed || 0) + " / 失败 " + (mr.failed || 0) + "\n";
+                                for (const c of (mr.cases || [])) {
+                                    text += "  " + (c.ok ? "✓" : "✗") + " " + c.name +
+                                        (c.detail ? "  — " + c.detail : "") + "\n";
+                                }
+                                if (mr.error) text += "  错误: " + mr.error + "\n";
+                            }
+                            pre.textContent = text;
+                        }
+                    } catch (e) { clearInterval(timer); }
+                }, 2000);
+            } catch (e) {
+                pre.textContent = "自测启动失败: " + (e.message || e);
+                toast("自测启动失败: " + (e.message || e), "error");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        }
+
+        function openLogsForSelftest() {
+            closeSettings();
+            logsOpen = true;
+            $("logToggle").checked = true;
+            $("logDrawer").classList.add("open");
+            logsLoadedAt = 0;
+            loadLogs(true);
         }
 
         function resetFrameState() {
@@ -720,9 +839,10 @@
             setBusy(true);
             const btn = $("btnConfirmCreate");
             const original = btn.textContent;
-            btn.textContent = "创建中…";
-            toast("正在创建实例，首次启动可能需要十几秒…");
+            btn.textContent = "启动中…";
+            toast("正在创建实例，界面将立即返回，画面在后台自动连接…");
             try {
+                // 后端不再空等 CDP 就绪：容器创建成功即返回，通常 1-2 秒。
                 const data = await api(
                     "/instance/new",
                     {
@@ -734,13 +854,24 @@
                             browser_mode: browserMode,
                         }),
                     },
-                    45000
+                    30000
                 );
                 selectedSid = data.sid;
                 resetFrameState();
                 closeCreate();
-                toast("实例已创建，画面将自动连接", "ok");
+                // 先刷新让用户立刻看到新实例（状态为「启动中…」），不阻塞等待画面。
                 await load();
+                toast("实例已创建，画面正在后台连接，稍候自动显示", "ok");
+                // CDP 就绪后再重绘一次状态徽标（后台监控每 8 秒更新 cdp_ready）。
+                let tries = 0;
+                const waitReady = setInterval(async () => {
+                    tries++;
+                    try {
+                        await load(true);
+                        const cur = (instances || {})[selectedSid];
+                        if ((cur && cur.cdp_ready === true) || tries >= 8) clearInterval(waitReady);
+                    } catch (e) { clearInterval(waitReady); }
+                }, 2500);
             } catch (e) {
                 toast("创建失败: " + e.message, "error");
             } finally {
@@ -790,7 +921,12 @@
         function statusBadge(i) {
             if (i.status === "running") {
                 if (i.cdp_ready === true) return '<span class="badge running">CDP 已就绪</span>';
-                if (i.cdp_ready === false) return '<span class="badge stopped">CDP 未响应</span>';
+                if (i.cdp_ready === false) {
+                    // 刚创建的实例给 20 秒启动窗口，显示「启动中」而非「未响应」。
+                    const age = i.created_at ? (Date.now() / 1000 - i.created_at) : 999;
+                    if (age < 20) return '<span class="badge pending">启动中…</span>';
+                    return '<span class="badge stopped">CDP 未响应</span>';
+                }
                 return '<span class="badge pending">检测中</span>';
             }
             if (i.status === "exited" || i.status === "dead") return '<span class="badge stopped">已停止</span>';
