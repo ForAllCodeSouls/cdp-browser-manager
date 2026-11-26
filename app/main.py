@@ -965,8 +965,18 @@ def _selftest_one_mode(browser_mode: str) -> dict:
 def selftest_worker():
     log.info("========== 开始内置 CDP 自测（临时有头 + 无头实例）==========")
     result = {"full": {}, "headless": {}}
-    for mode in ("headless", "full"):
+    # 先跑完整内核，日志顺序与设置页结果顺序一致，避免误以为只测了无头。
+    for mode in ("full", "headless"):
+        label = "完整内核(full)" if mode == "full" else "无头内核(headless)"
+        log.info("---------- 自测开始：%s ----------", label)
         result[mode] = _selftest_one_mode(mode)
+        one = result[mode]
+        log.info(
+            "---------- 自测结束：%s 通过 %d / 失败 %d ----------",
+            label,
+            one.get("passed", 0),
+            one.get("failed", 0),
+        )
     total_pass = sum(result[m].get("passed", 0) for m in result)
     total_fail = sum(result[m].get("failed", 0) for m in result)
     log.info(
