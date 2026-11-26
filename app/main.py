@@ -939,7 +939,12 @@ def _selftest_one_mode(browser_mode: str) -> dict:
         ip = container_ip(container)
         if not ip:
             raise RuntimeError("临时实例容器网络未就绪")
-        from app.selftest import run_all
+        # 镜像里 main.py 被平铺到 /app 且以 uvicorn main:app 启动，模块是顶层 selftest；
+        # 本地源码目录结构是 app/ 包。两种环境都兼容。
+        try:
+            from app.selftest import run_all
+        except ImportError:
+            from selftest import run_all
 
         def emit(level, name, detail):
             log.info("[自测][%s][%s] %s %s", browser_mode, level, name, detail)
