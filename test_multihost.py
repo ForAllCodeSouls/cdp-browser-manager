@@ -123,6 +123,78 @@ class PortProxyRouteTests(unittest.TestCase):
         self.assertNotIn('"/{port}/websockify"', src)
 
 
+class AddressBarJsTests(unittest.TestCase):
+    """前端地址栏实时更新的关键 JS 片段必须存在，防回归。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            cls.src = f.read()
+
+    def test_onmessage_handles_url(self):
+        self.assertIn('msg.type === "url"', self.src)
+        self.assertIn('box.value = msg.url', self.src)
+
+    def test_focused_input_not_overwritten(self):
+        self.assertIn('document.activeElement === box', self.src)
+
+    def test_sig_includes_url(self):
+        # castSig 里必须把 t.url 纳入签名，否则标题没变时地址栏不刷新。
+        i = self.src.index("function castSig")
+        seg = self.src[i:i + 500]
+        self.assertIn("t.url", seg)
+
+    def test_poll_interval_shortened(self):
+        self.assertIn("pollCastTargets(); }, 2500)", self.src)
+
+
+class NavigationUrlTests(unittest.TestCase):
+    """CDP 导航事件提取主 frame URL，过滤 iframe 噪声。"""
+
+    def test_frame_navigated_main(self):
+        state = {}
+        url = main.navigation_url_from_cdp({
+            "method": "Page.frameNavigated",
+            "params": {"frame": {"id": "F1", "url": "https://example.com/a"}},
+        }, state)
+        self.assertEqual(url, "https://example.com/a")
+        self.assertEqual(state["id"], "F1")
+
+    def test_frame_navigated_iframe_ignored(self):
+        state = {"id": "F1"}
+        url = main.navigation_url_from_cdp({
+            "method": "Page.frameNavigated",
+            "params": {"frame": {"id": "F2", "parentId": "F1", "url": "https://ads.com/x"}},
+        }, state)
+        self.assertEqual(url, "")
+        self.assertEqual(state["id"], "F1")
+
+    def test_within_document_main(self):
+        state = {"id": "F1"}
+        url = main.navigation_url_from_cdp({
+            "method": "Page.navigatedWithinDocument",
+            "params": {"frameId": "F1", "url": "https://example.com/a#hash"},
+        }, state)
+        self.assertEqual(url, "https://example.com/a#hash")
+
+    def test_within_document_iframe_ignored(self):
+        state = {"id": "F1"}
+        url = main.navigation_url_from_cdp({
+            "method": "Page.navigatedWithinDocument",
+            "params": {"frameId": "F2", "url": "https://ads.com/x"},
+        }, state)
+        self.assertEqual(url, "")
+
+    def test_unknown_event(self):
+        self.assertEqual(main.navigation_url_from_cdp({"method": "Page.loadEventFired"}, {}), "")
+
+    def test_empty_url(self):
+        url = main.navigation_url_from_cdp({
+            "method": "Page.frameNavigated", "params": {"frame": {"id": "F9", "url": ""}},
+        }, {})
+        self.assertEqual(url, "")
+
+
 class BinaryFrameForwardingTests(unittest.TestCase):
     """RFB/二进制帧转发必须用 BINARY opcode，否则 websockify 拒绝并关闭连接。"""
 

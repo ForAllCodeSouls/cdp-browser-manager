@@ -460,6 +460,35 @@ def cast_quality_profile(name: str) -> dict:
     return dict(p or CAST_PROFILES["medium"])
 
 
+def navigation_url_from_cdp(msg: dict, main_frame: dict) -> str:
+    """从 CDP 导航事件里提取主 frame 的新 URL，供地址栏实时更新。
+
+    网页自动化跳转很快时，靠 HTTP 轮询标签列表拿 URL 会滞后数秒。CDP 在页面
+    导航时会主动推 Page.frameNavigated（整页跳转）与 Page.navigatedWithinDocument
+    （SPA 内部/hash 跳转），抓屏 WS 已 attach 该 target，能实时收到这些事件。
+    只认主 frame（无 parentId / frameId 等于已知主 frame），忽略 iframe 噪声。
+    main_frame 是可变 dict，用 'id' 键在事件流里记住主 frame 的 id。
+    """
+    method = msg.get("method", "")
+    params = msg.get("params") or {}
+    if method == "Page.frameNavigated":
+        frame = params.get("frame") or {}
+        if frame.get("parentId"):  # 子 iframe，忽略
+            return ""
+        fid = frame.get("id", "")
+        if fid:
+            main_frame["id"] = fid
+        return frame.get("url", "") or ""
+    if method == "Page.navigatedWithinDocument":
+        fid = params.get("frameId", "")
+        known = main_frame.get("id", "")
+        # 主 frame 尚未确立时忽略，避免把首个 iframe 的站内跳转当成主页面。
+        if not fid or (known and fid != known):
+            return ""
+        return params.get("url", "") or ""
+    return ""
+
+
 INSTANCES: Dict[str, dict] = {}
 LOCK = threading.Lock()
 
@@ -1972,6 +2001,7 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             ack_id = call_id + 1
             shot_id = call_id + 2  # captureScreenshot 用递增 id，避免与 ack 混淆
             pending_shots = set()  # 已发出、尚未收到响应的截图 id（首帧 + 多次补帧可能重叠）
+            main_frame = {}  # 记住主 frame id，用于过滤 iframe 的导航事件
             q = profile["quality"]
             upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
             upstream_send({
@@ -2043,6 +2073,20 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     # captureScreenshot 响应：{id, result:{data}}；可能是首帧或任一次补帧。
                     pending_shots.discard(msg["id"])
                     data = msg["result"].get("data", "")
+
+                # 导航事件实时推给前端更新地址栏：网页自动化跳转很快，靠 HTTP
+                # 轮询标签列表会滞后数秒，CDP 的 frameNavigated/站内跳转事件是
+                # 实时的，抓屏 WS 已经 attach 到该 target，顺手转发即可。
+                nav_url = navigation_url_from_cdp(msg, main_frame)
+                if nav_url:
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send_json({"type": "url", "url": nav_url}),
+                            loop,
+                        ).result(timeout=2)
+                    except Exception:
+                        break
+
                 if data:
                     try:
                         asyncio.run_coroutine_threadsafe(

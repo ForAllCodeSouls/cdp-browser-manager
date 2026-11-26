@@ -1729,6 +1729,19 @@
                         frameFailed(mySid, msg.message || "抓屏代理出错");
                         return;
                     }
+                    // 导航 URL 实时推送：网页自动化快速跳转时，CDP 的
+                    // frameNavigated 事件经抓屏 WS 秒级送达，直接改地址栏，
+                    // 不等 HTTP 轮询。用户正在输入时不覆盖，避免打断。
+                    if (msg.type === "url" && typeof msg.url === "string") {
+                        if (castState && castState.sid === mySid && castState.tid === myTid) {
+                            const t = castState.targets.find(x => x.id === myTid);
+                            if (t) t.url = msg.url;
+                            const box = $("castUrl");
+                            const focused = box && document.activeElement === box;
+                            if (box && !focused) box.value = msg.url;
+                        }
+                        return;
+                    }
                     if (msg.type === "frame" && msg.data) {
                         const img = new Image();
                         img.onload = () => {
@@ -1869,7 +1882,9 @@
             // 历史位置也参与签名：前进/后退走到头时按钮要立刻变成禁用态。
             const h = castHistory && castHistory.sid === castState.sid && castHistory.tid === tid
                 ? castHistory.index + "/" + castHistory.ids.length : "-";
-            return tid + "|" + h + "|" + targets.map(t => t.id + ":" + t.title).join(",");
+            // URL 必须参与签名：网页自动化跳转后若标题未变（SPA 内跳、标题还没加载），
+            // 旧签名只看 id+title 会判定"无变化"而跳过重绘，地址栏就卡住不动。
+            return tid + "|" + h + "|" + targets.map(t => t.id + ":" + t.title + "@" + (t.url || "")).join(",");
         }
 
         function renderCastBar(sel, force = false) {
@@ -2494,7 +2509,9 @@
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
         setInterval(() => { if (!document.hidden) load(true); }, 10000);
-        setInterval(() => { if (!document.hidden) pollCastTargets(); }, 6000);
+        // 标签/地址栏轮询加速：抓屏模式已有 CDP 导航事件实时推地址栏（WS），
+        // 这里是兜底 + VNC 模式（无抓屏 WS）的地址栏更新，2.5 秒能跟上自动化。
+        setInterval(() => { if (!document.hidden) pollCastTargets(); }, 2500);
         // 镜像更新检测：后端有 10 分钟缓存，这里每 5 分钟问一次即可。
         setInterval(() => { if (!document.hidden) checkImageStatus(); }, 300000);
     </script>
