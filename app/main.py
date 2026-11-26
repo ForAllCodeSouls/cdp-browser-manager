@@ -1939,10 +1939,16 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             timeout=10,
             suppress_origin=True,
         )
+        # recv 空闲超时设短一点：页面静止时靠超时唤醒循环检查 stop 信号，
+        # 空闲超时会被单独捕获并继续等待，不再误当成断连。
+        upstream.settimeout(2)
 
-        # 帧接收线程：把所有 CDP 消息转发给前端，screencastFrame 自动 Ack
+        # 帧接收线程：把所有 CDP 消息转发给前端，screencastFrame 自动 Ack。
+        # 关键：页面静止（验证码/挑战页、无动画的静态页）时 CDP 可能几十秒不推帧，
+        # 旧实现把 recv 超时当断连直接 break，画面就永久卡在"未推送画面帧"。
         def pump():
             call_id = 100
+            shot_id = call_id + 3  # 首帧兜底 captureScreenshot 的请求 id
             upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
             upstream_send({
                 "id": call_id + 1,
@@ -1955,9 +1961,21 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     "maxHeight": CAST_MAX_HEIGHT,
                 },
             })
+            # 首帧兜底：startScreencast 对静止页面可能迟迟不推帧，主动抓当前画面。
+            try:
+                upstream_send({
+                    "id": shot_id,
+                    "method": "Page.captureScreenshot",
+                    "params": {"format": "jpeg", "quality": 80, "fromSurface": True},
+                })
+            except Exception:
+                pass
             while not stop.is_set():
                 try:
                     raw = upstream.recv()
+                except ws_client.WebSocketTimeoutException:
+                    # 空闲超时 ≠ 断连：没有新帧，继续等，绝不退出帧泵。
+                    continue
                 except Exception:
                     break
                 if not raw:
@@ -1966,6 +1984,7 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     msg = json.loads(raw)
                 except Exception:
                     continue
+                data = ""
                 method = msg.get("method", "")
                 if method == "Page.screencastFrame":
                     params = msg.get("params", {})
@@ -1977,12 +1996,14 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                         })
                     except Exception:
                         pass
+                    data = params.get("data", "")
+                elif msg.get("id") == shot_id and isinstance(msg.get("result"), dict):
+                    # 首帧兜底响应：{id, result:{data}}
+                    data = msg["result"].get("data", "")
+                if data:
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            websocket.send_json({
-                                "type": "frame",
-                                "data": params.get("data", ""),
-                            }),
+                            websocket.send_json({"type": "frame", "data": data}),
                             loop,
                         ).result(timeout=2)
                     except Exception:
@@ -2217,7 +2238,7 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
             pass
 
 
-@app.api_route("/{port}/json/{rest:path}", methods=["GET", "PUT", "POST", "DELETE"])
+@app.api_route("/{port:int}/json/{rest:path}", methods=["GET", "PUT", "POST", "DELETE"])
 async def cdp_json_proxy(port: int, rest: str, request: Request):
     """CDP HTTP 端点同源代理：/9222/json/version -> 容器 CDP /json/version。"""
     item = instance_by_port(port)
@@ -2255,7 +2276,7 @@ async def cdp_json_proxy(port: int, rest: str, request: Request):
     return Response(content=raw, media_type="application/json; charset=utf-8")
 
 
-@app.websocket("/{port}/devtools/{rest:path}")
+@app.websocket("/{port:int}/devtools/{rest:path}")
 async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
     """CDP WebSocket 通用透传：browser 级与 page 级都支持，供自动化客户端连接。"""
     import websocket as ws_client
@@ -2336,7 +2357,7 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
 # WS 便落到同源的 /<port>/websockify 路由，无需改 nginx。
 
 @app.api_route(
-    "/{port}/{rest:path}",
+    "/{port:int}/{rest:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
 )
 async def novnc_http_proxy(port: int, rest: str, request: Request):
@@ -2371,7 +2392,7 @@ async def novnc_http_proxy(port: int, rest: str, request: Request):
     return Response(content=data, media_type=ctype)
 
 
-@app.websocket("/{port}/websockify")
+@app.websocket("/{port:int}/websockify")
 async def novnc_ws_proxy(websocket: WebSocket, port: int):
     """noVNC websockify 二进制 WS 同源透传（RFB 协议帧，非文本）。"""
     import websocket as ws_client
@@ -2455,12 +2476,14 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
 
 
 @app.post("/instance/{sid}/stop")
+@app.post("/api/instance/{sid}/stop")
 async def stop_one(sid: str):
     await run_in_threadpool(stop_instance, sid)
     return {"ok": True}
 
 
 @app.post("/instance/stop-all")
+@app.post("/api/instance/stop-all")
 async def stop_all():
     with LOCK:
         sids = list(INSTANCES.keys())

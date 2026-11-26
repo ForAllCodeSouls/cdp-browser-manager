@@ -105,6 +105,23 @@ class WebSocketSubprotocolTests(unittest.TestCase):
         self.assertIsNone(subprotocol)
 
 
+class PortProxyRouteTests(unittest.TestCase):
+    """端口代理必须用 {port:int}，否则 /instance/{sid}/stop 会被抢先匹配成 422。"""
+
+    def test_all_port_proxy_routes_use_int_converter(self):
+        src = open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8").read()
+        # 逐一检查四类端口代理路由声明，路径参数都应是 {port:int}。
+        self.assertIn('"/{port:int}/json/{rest:path}"', src)
+        self.assertIn('"/{port:int}/devtools/{rest:path}"', src)
+        self.assertIn('"/{port:int}/{rest:path}"', src)
+        self.assertIn('"/{port:int}/websockify"', src)
+        # 不应再有旧的裸 {port} 路由声明（函数签名里的 port: int 不算）。
+        self.assertNotIn('"/{port}/json/', src)
+        self.assertNotIn('"/{port}/devtools/', src)
+        self.assertNotIn('"/{port}/{rest:path}"', src)
+        self.assertNotIn('"/{port}/websockify"', src)
+
+
 class AuthExemptTests(unittest.TestCase):
     def test_exempt_paths(self):
         for path in ("/", "/api/health", "/api/hosts", "/7901/vnc_lite.html",
@@ -254,6 +271,16 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["sid"], "new-sid")
         self.assertIn("/remote/B/", r.json()["cdp_http_proxy"])
+
+    def test_stop_route_not_shadowed_by_port_proxy(self):
+        """回归：/instance/{sid}/stop 不能再被 /{port}/{rest} 抢走返回 422。"""
+        client = TestClient(main.app)
+        calls = []
+        with patch.object(main, "stop_instance", side_effect=lambda sid: calls.append(sid)):
+            for path in ("/instance/abc/stop", "/api/instance/abc/stop", "/instance/stop-all"):
+                r = client.post(path)
+                self.assertEqual(r.status_code, 200, "%s -> %s" % (path, r.text))
+        self.assertIn("abc", calls)
 
     def test_api_key_guard(self):
         with patch.object(main, "API_KEY", "local-secret"):
