@@ -44,18 +44,30 @@ mkdir -p "$PROFILE_DIR"
 cleanup() {
     pkill -f "/opt/chrome-linux64/chrome" 2>/dev/null || true
     pkill -f "/opt/chrome-headless-shell-linux64/chrome-headless-shell" 2>/dev/null || true
+    pkill -f "socat" 2>/dev/null || true
     pkill -f "x11vnc" 2>/dev/null || true
     pkill -f "websockify" 2>/dev/null || true
     pkill -f "Xvfb" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
+# CDP 暴露：Chrome 136+ 强制把 DevTools 绑在 127.0.0.1，--remote-debugging-address
+# 在 148+ 已被完全忽略，容器外（manager 内网 IP / 宿主机端口映射）连不上。
+# 解法：Chrome 只监听容器内的 9223，由 socat 在 0.0.0.0:9222 做透明转发。
+# 对 manager / 外部客户端仍是 9222，完全无感。
+CDP_LISTEN_PORT=9223
+CDP_PUBLIC_PORT=9222
+if ! command -v socat >/dev/null 2>&1; then
+    echo "FATAL: 缺少 socat，无法把 CDP 从 127.0.0.1 转发到容器网卡" >&2
+    exit 127
+fi
+
 # 去 Google 化：官方 for Testing 包本无广告，这里再关掉后台联网/组件更新/同步等
 # 谷歌服务请求；CDP 参数在两种内核下完全一致，外部客户端可直连同一 WS 端口。
 CHROME_ARGS=(
     --user-data-dir="$PROFILE_DIR"
-    --remote-debugging-port=9222
-    --remote-debugging-address=0.0.0.0
+    --remote-debugging-port="$CDP_LISTEN_PORT"
+    --remote-debugging-address=127.0.0.1
     --remote-allow-origins='*'
     --no-sandbox
     --disable-dev-shm-usage
@@ -97,12 +109,17 @@ fi
 # 4) 浏览器（两种内核共用同一套 CDP 参数）
 # 关键参数说明：
 #   --user-data-dir          Chrome 136+ 起远程调试必须用非默认目录，否则 CDP 静默失效
-#   --remote-debugging-*     监听 0.0.0.0，供宿主机端口映射后外部连接
+#   --remote-debugging-port  内部端口 9223，只绑 loopback（新版 Chrome 强制如此）
 #   about:blank              启动时打开空白页，不进新标签页推广内容
 # 关键：不要把 chrome 输出重定向到文件。之前写进 /tmp/chromium.log 导致
 # docker logs / 全局日志看不到任何报错，崩溃时只显示 exit 127 却查不到原因。
 # 直接输出到 stdout/stderr，让 manager 的实例日志接口能拿到真实错误。
 "$CHROME_BIN" "${CHROME_ARGS[@]}" about:blank &
+
+# 5) CDP 端口转发：0.0.0.0:9222 -> 127.0.0.1:9223。
+# 等 Chrome 起一会儿再连，socat 会在上游未就绪时自动重试，不会因短暂失败退出。
+socat TCP-LISTEN:"$CDP_PUBLIC_PORT",fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:"$CDP_LISTEN_PORT" &
+echo "CDP forward: 0.0.0.0:${CDP_PUBLIC_PORT} -> 127.0.0.1:${CDP_LISTEN_PORT}"
 
 # 任一关键进程退出即结束脚本，借助 restart_policy 让容器自愈重建。
 # Debian bookworm 的 bash 5.x 支持 wait -n。

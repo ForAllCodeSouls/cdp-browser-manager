@@ -24,6 +24,8 @@
 
 两种内核的 CDP 端口都是容器内 9222，外部客户端的连接方式完全一致。版本号分别在 `Dockerfile.browser` 和 `Dockerfile.browser-headless` 顶部的 `CHROME_VERSION` 中锁定：需要单独升级某个内核就只改对应文件；想保持一致就两处一起改。CI 会分别构建推送，互不影响。
 
+> **为什么容器里多了一层 socat 转发**：Chrome 136+ 起把 DevTools 强制绑在 `127.0.0.1`，`--remote-debugging-address=0.0.0.0` 在 148+ 已被完全忽略。若让 Chrome 直接监听 9222，manager 从容器外网桥 IP 访问会超时（表现为「CDP 未响应 / 画面无法连接 / targets 502」）。因此 `start.sh` 让 Chrome 只监听容器内 9223，再由 socat 把 `0.0.0.0:9222` 透明转发到 `127.0.0.1:9223`，对 manager 和外部客户端仍是 9222，完全无感。两份 browser 镜像都内置了 socat。
+
 启动参数已加入去 Google 化开关（`--disable-background-networking`、`--disable-component-update`、`--disable-sync`、`--metrics-recording-only` 等），关闭后台联网与组件更新；官方 for Testing 包本身不含第三方渠道的广告内容。
 
 ### 镜像精简说明
@@ -171,6 +173,8 @@ services:
 > 两个占位服务带 profile，不会被 `docker compose up -d` 启动，只用于让 `docker compose --profile no-auto-start pull` 把两份 browser 镜像一并更新。`upgrade.sh` 已带上该参数。
 >
 > **用 Dockge / 面板更新时**：这类面板的「更新」通常只拉 manager、跳过带 profile 的占位服务，导致浏览器镜像一直是旧的（典型症状：容器 `restarting` / `exit 127`、端口全 null）。本版本已内置兜底——manager 启动后会自动在后台拉取两份浏览器镜像；也可打开面板「设置 → 立即更新浏览器镜像」手动触发。镜像更新后需停止并重建实例才会用上新镜像。若不想自动拉取，设 `AUTO_PULL_IMAGES=0`。
+>
+> **更新红点**：顶栏「⚙ 设置」按钮上的红点表示本地浏览器镜像落后于 GHCR 最新版本（对比镜像摘要，`GET /api/images/status`）；点开设置可看到是完整内核还是无头内核有更新，并一键拉取。红点检测每 5 分钟自动刷新一次，后端有 10 分钟缓存，无法连接 GHCR 时不亮红点、不影响其它功能。
 >
 > 兼容旧部署：如果仍只设置了 `BROWSER_IMAGE`，它会被当作 full 镜像使用；headless 镜像始终读 `BROWSER_IMAGE_HEADLESS`。建议尽快换成上面两个新变量。
 

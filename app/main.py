@@ -72,6 +72,95 @@ AUTO_PULL_IMAGES = os.environ.get("AUTO_PULL_IMAGES", "1").strip().lower() not i
 )
 PULL_LOCK = threading.Lock()
 
+# 镜像更新检测缓存：避免面板轮询时反复打 GHCR API。
+IMAGE_STATUS_CACHE = {"ts": 0.0, "data": {}}
+IMAGE_STATUS_LOCK = threading.Lock()
+IMAGE_STATUS_TTL = 600.0
+
+
+def _split_repo_tag(image: str) -> tuple:
+    """从 ghcr.io/owner/repo:tag 解析出 (owner/repo, tag)。"""
+    name = image
+    tag = "latest"
+    tail = image.rsplit("/", 1)[-1]
+    if ":" in tail:
+        name, tag = image.rsplit(":", 1)
+    if "/" in name:
+        name = name.split("/", 1)[1]  # 去掉 registry host
+    return name, tag
+
+
+def local_image_digest(image: str) -> str:
+    """读取本地镜像的 manifest 摘要（RepoDigests）。"""
+    try:
+        img = client.images.get(image)
+    except Exception:
+        return ""
+    repo, _ = _split_repo_tag(image)
+    for rd in img.attrs.get("RepoDigests") or []:
+        if rd.split("@")[0].endswith(repo):
+            return rd.split("@", 1)[1]
+    rds = img.attrs.get("RepoDigests") or []
+    return rds[0].split("@", 1)[1] if rds else ""
+
+
+def remote_image_digest(image: str) -> str:
+    """通过 GHCR 匿名 API 读取远端 latest 的 manifest 摘要。失败时抛异常由调用方降级。"""
+    import urllib.request
+
+    repo, tag = _split_repo_tag(image)
+    scope = quote(f"repository:{repo}:pull", safe="")
+    token_url = f"https://ghcr.io/token?scope={scope}&service=ghcr.io"
+    with urllib.request.urlopen(token_url, timeout=10) as resp:
+        token = json.load(resp)["token"]
+    req = urllib.request.Request(
+        f"https://ghcr.io/v2/{repo}/manifests/{tag}",
+        method="HEAD",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": (
+                "application/vnd.oci.image.index.v1+json, "
+                "application/vnd.docker.distribution.manifest.list.v2+json, "
+                "application/vnd.oci.image.manifest.v1+json"
+            ),
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.headers.get("Docker-Content-Digest", "")
+
+
+def check_images_status(force: bool = False) -> dict:
+    """对比本地与远端镜像摘要，判断是否有新版本。带缓存，失败自动降级不影响面板。"""
+    now = time.time()
+    with IMAGE_STATUS_LOCK:
+        cached = IMAGE_STATUS_CACHE["data"]
+        if not force and cached and now - IMAGE_STATUS_CACHE["ts"] < IMAGE_STATUS_TTL:
+            return cached
+
+    result = {}
+    for label, image in (("full", BROWSER_IMAGE_FULL), ("headless", BROWSER_IMAGE_HEADLESS)):
+        local = local_image_digest(image)
+        remote = ""
+        err = ""
+        try:
+            remote = remote_image_digest(image)
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            log.debug("查询 %s 远端镜像摘要失败: %s", label, err)
+        result[label] = {
+            "image": image,
+            "local": local[:19] if local else "",
+            "remote": remote[:19] if remote else "",
+            "local_missing": not local,
+            "remote_unknown": not remote,
+            "update_available": bool(remote and local and remote != local),
+            "error": err if not remote else "",
+        }
+    with IMAGE_STATUS_LOCK:
+        IMAGE_STATUS_CACHE["ts"] = now
+        IMAGE_STATUS_CACHE["data"] = result
+    return result
+
 
 def pull_browser_images() -> dict:
     """拉取 full + headless 两份浏览器镜像，返回每份结果。线程安全、失败不影响 manager。"""
@@ -91,6 +180,9 @@ def pull_browser_images() -> dict:
             except Exception as e:
                 results[label] = {"image": image, "ok": False, "error": str(e)}
                 log.warning("浏览器镜像拉取失败: %s (%s) - %s", label, image, e)
+    # 拉取后本地摘要已变，清掉检测缓存，让红点下次读取立即反映最新状态。
+    with IMAGE_STATUS_LOCK:
+        IMAGE_STATUS_CACHE["ts"] = 0.0
     return results
 
 
@@ -363,7 +455,7 @@ def container_ip(container) -> str:
     return ""
 
 
-def wait_cdp_ready(container, timeout: float = 12.0) -> bool:
+def wait_cdp_ready(container, timeout: float = 20.0) -> bool:
     import urllib.request
 
     deadline = time.time() + timeout
@@ -796,6 +888,12 @@ async def api_health():
 async def api_pull_images():
     """手动拉取最新的 full/headless 浏览器镜像（Dockge 只更新 manager 时用）。"""
     return await run_in_threadpool(pull_browser_images)
+
+
+@app.get("/api/images/status")
+async def api_images_status(force: bool = False):
+    """对比本地与 GHCR 远端镜像摘要，用于设置入口的更新红点。"""
+    return await run_in_threadpool(check_images_status, force)
 
 
 @app.get("/api/logs/global")

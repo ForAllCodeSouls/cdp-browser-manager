@@ -32,7 +32,7 @@ RUN apt update \
       libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 \
       libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 \
       libxrandr2 libxrender1 libxss1 libxtst6 \
-      xvfb x11vnc novnc websockify fonts-wqy-microhei \
+      xvfb x11vnc novnc websockify socat fonts-wqy-microhei \
  && curl -fsSL \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
       -o /tmp/chrome.zip \
