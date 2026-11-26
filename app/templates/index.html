@@ -591,6 +591,8 @@
         let logsOpen = false;       // 右侧日志抽屉是否打开（顶栏滑动开关控制）
         let logsLoadedAt = 0;       // 日志拉取节流时间戳
         let screenLocked = false;   // 屏幕锁：拦截画面输入，防止脚本执行时误点击
+        let frameRetryCount = 0;    // 画面断连自动重试次数（容器重启等瞬时故障自愈）
+        let frameRetryTimer = null;
         let busy = false;
 
         const SETTINGS_KEY = "cdpManagerSettings";
@@ -1101,6 +1103,7 @@
 
         // ---- 画面加载 ----
         function clearFrame() {
+            if (frameRetryTimer) { clearTimeout(frameRetryTimer); frameRetryTimer = null; }
             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
             if (castWs) {
                 try { castWs.close(); } catch (e) {}
@@ -1131,7 +1134,31 @@
             o.className = "frame-overlay show error";
             o.innerHTML = '<div>画面无法连接：' + esc(sid.slice(0, 8)) + '</div>' +
                 '<div class="hint">' + esc(msg || "该实例画面服务无响应，可能尚未就绪或已卡死") + '</div>' +
+                '<div class="hint" id="frameRetryHint">容器可能正在重启，正在自动重试…</div>' +
                 '<button onclick="retryFrame()">重试</button>';
+            scheduleFrameRetry(sid);
+        }
+
+        // 容器因 Chrome 退出/重启导致 CDP 短暂不可用时，自动重挂载画面。
+        // 有限次数（最多 3 次，逐次拉长间隔），避免实例真的卡死时无限打 Docker/CDP API。
+        function scheduleFrameRetry(sid) {
+            if (frameRetryTimer) { clearTimeout(frameRetryTimer); frameRetryTimer = null; }
+            const sel = instances[sid];
+            if (!sel || sel.status !== "running" || frameRetryCount >= 3) return;
+            frameRetryCount += 1;
+            const delay = 3000 * frameRetryCount;
+            frameRetryTimer = setTimeout(() => {
+                frameRetryTimer = null;
+                // 仅当仍停在同一个失败画面且仍是同一实例时才重试，避免打断用户手动切换。
+                if (frameSid !== sid) return;
+                const overlay = $("frameOverlay");
+                if (!overlay.classList.contains("error")) return;
+                const cur = instances[sid];
+                if (!cur || cur.status !== "running") return;
+                const hint = $("frameRetryHint");
+                if (hint) hint.textContent = "容器可能正在重启，第 " + frameRetryCount + " 次自动重试…";
+                mountFrame(cur);
+            }, delay);
         }
 
         function attachIframe(sel, url, timeoutMs) {
@@ -1142,6 +1169,7 @@
             f.onload = () => {
                 if (frameSid !== sel.sid) return;
                 if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+                frameRetryCount = 0;
                 $("frameOverlay").className = "frame-overlay";
                 $("frameOverlay").innerHTML = "";
             };
@@ -1291,6 +1319,7 @@
                             }
                             canvas.getContext("2d").drawImage(img, 0, 0);
                             receivedAny = true;
+                            frameRetryCount = 0;
                             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
                             $("frameOverlay").className = "frame-overlay";
                             $("frameOverlay").innerHTML = "";

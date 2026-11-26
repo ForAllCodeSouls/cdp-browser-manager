@@ -1447,6 +1447,35 @@ async def api_activate_target(sid: str, tid: str):
 async def api_close_target(sid: str, tid: str):
     if not valid_target_id(tid):
         raise HTTPException(status_code=400, detail="非法的标签 ID")
+
+    # 关键：有头 Chrome（full 内核）关掉最后一个窗口会直接退出浏览器进程，
+    # start.sh 的 `wait -n` 随即结束容器并触发重启——此时"关完再补"根本来不及，
+    # 表现为补建 500、CDP 失联、抓屏 [Errno 111] Connection refused。
+    # 因此改为"先建保底、再关目标"：仅当目标是最后一个页面时预先建一个
+    # about:blank，保证任何时刻都至少有一个窗口，Chrome 不会退出（headless 同样安全）。
+    recreated = False
+    new_tid = ""
+    try:
+        remaining = await run_in_threadpool(cdp_http, sid, "/json/list")
+        pages = [t for t in (remaining or []) if t.get("type") == "page" and t.get("id")]
+        if len(pages) <= 1 and any(t.get("id") == tid for t in pages):
+            created = await run_in_threadpool(
+                cdp_http, sid, "/json/new?" + quote("about:blank", safe=""), "PUT"
+            )
+            if isinstance(created, dict):
+                new_tid = str(created.get("id", "") or "")
+            recreated = bool(new_tid)
+            if recreated:
+                log.info(
+                    "实例 %s 关闭最后一个标签前已补建保底空白页 %s",
+                    sid[:8], new_tid[:12],
+                )
+            else:
+                log.warning("实例 %s 预建保底空白页未返回有效 id", sid[:8])
+    except Exception as e:
+        # 预建失败不阻断关闭主流程，继续尝试关闭；由前端兜底逻辑处理空标签。
+        log.warning("实例 %s 预建保底空白页失败: %s", sid[:8], e)
+
     try:
         await run_in_threadpool(cdp_http, sid, "/json/close/" + quote(tid, safe=""))
     except HTTPException:
@@ -1454,25 +1483,6 @@ async def api_close_target(sid: str, tid: str):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    # 关掉最后一个页面后 Chrome 会没有可抓屏目标，抓屏画面会断（VNC 下 Chrome
-    # 会自动补一个 about:blank，行为不一致）。这里对齐 VNC：自动补一个空白页，
-    # 并把新 id 返回给前端直接切过去，避免"关闭唯一窗口后连不上"。
-    recreated = False
-    new_tid = ""
-    try:
-        remaining = await run_in_threadpool(cdp_http, sid, "/json/list")
-        pages = [t for t in (remaining or []) if t.get("type") == "page"]
-        if not pages:
-            created = await run_in_threadpool(
-                cdp_http, sid, "/json/new?" + quote("about:blank", safe=""), "PUT"
-            )
-            if isinstance(created, dict):
-                new_tid = str(created.get("id", "") or "")
-            recreated = True
-            log.info("实例 %s 关闭了最后一个标签，已自动补建空白页 %s", sid[:8], new_tid[:12])
-    except Exception as e:
-        # 补建失败不影响"关闭成功"这一主结果，仅记录日志。
-        log.warning("实例 %s 补建空白页失败: %s", sid[:8], e)
     return {"ok": True, "recreated": recreated, "tid": new_tid}
 
 
