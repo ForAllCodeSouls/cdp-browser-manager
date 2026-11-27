@@ -1287,6 +1287,15 @@ class PanelEcoAndShareTests(unittest.TestCase):
                       'i.debug_port', "i.host_name || i.host", "share-sid", "share-meta"):
             self.assertIn(token, seg)
 
+    def test_share_left_list_excludes_shared_instances(self):
+        # 拖进分享区后左侧实例应立即消失，只有未分享的才留在左侧。
+        i = self.src.index("function renderSharePanel(")
+        seg = self.src[i:i + 1100]
+        self.assertIn("const pending = all.filter(i => !chosen.includes(i.sid));", seg)
+        self.assertIn('$("shareAllCount").textContent = pending.length', seg)
+        self.assertIn("pending.map(i => shareItemHtml(i, false, false))", seg)
+        self.assertIn("可分享实例", self.src)
+
     def test_scrollbars_are_dark_and_unified(self):
         # 深色主题里不应出现浏览器默认的亮色滚动条；管理页与观看页都要有统一样式。
         for src in (self.src, self.share_src):

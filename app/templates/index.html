@@ -891,10 +891,10 @@
     <div class="mask" id="shareMask" onclick="if(event.target===this) closeShare()">
         <div class="panel share-panel">
             <h3>只读分享</h3>
-            <div class="hint">把左侧实例拖进右侧「分享区」即可加入观看列表；拖回左侧或点 × 移出，卡片可拖动排序。观看端**只能看画面，不能操控**浏览器。</div>
+            <div class="hint">把左侧实例拖进右侧「分享区」即可加入观看列表，加入后该实例即从左侧消失；拖回左侧或点 × 移出，卡片可拖动排序。观看端**只能看画面，不能操控**浏览器。</div>
             <div class="share-cols">
                 <div class="share-col">
-                    <div class="col-head">全部实例 <span id="shareAllCount"></span></div>
+                    <div class="col-head">可分享实例 <span id="shareAllCount"></span></div>
                     <div class="share-list" id="shareAllList" ondragover="allowDrop(event)" ondrop="dropToShareAll(event)"></div>
                 </div>
                 <div class="share-col">
@@ -3742,10 +3742,13 @@
                 return (b.created_at || 0) - (a.created_at || 0);
             });
             const chosen = Array.isArray(shareConfig.sids) ? shareConfig.sids : [];
-            $("shareAllCount").textContent = all.length;
-            $("shareAllList").innerHTML = all.length
-                ? all.map(i => shareItemHtml(i, chosen.includes(i.sid), false)).join("")
-                : '<div class="drop-hint">暂无实例</div>';
+            // 左侧只列「可分享」实例：已加入分享的立即从左侧消失（拖回左侧会重新出现）。
+            const pending = all.filter(i => !chosen.includes(i.sid));
+            $("shareAllCount").textContent = pending.length;
+            $("shareAllList").innerHTML = pending.length
+                ? pending.map(i => shareItemHtml(i, false, false)).join("")
+                : '<div class="drop-hint">' +
+                    (all.length ? '全部实例已加入分享<br>拖回左侧可移出' : '暂无实例') + '</div>';
             const selected = chosen.map(sid => instances[sid]).filter(Boolean);
             $("shareCount").textContent = selected.length;
             $("shareList").innerHTML = selected.map(i => shareItemHtml(i, true, true)).join("");
