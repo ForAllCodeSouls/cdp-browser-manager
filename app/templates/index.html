@@ -3931,7 +3931,9 @@
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
                     '</span>' + qseg + capseg +
                     '<span class="qhint">' + esc(qualityHint(mode, settings.quality, cm, settings.snapRate)) + '</span>';
-                // 常用 CDP 端点快捷链接：版本 / 标签 / 协议；完整内核再加 VNC / noVNC 直达。
+                // 常用 CDP 端点快捷链接：版本 / 标签 / 协议 / 文档。
+                // VNC 直达与 noVNC 画面两个链接已移除——VNC 画面入口由详情栏那个
+                // 随模式变化的「VNC画面 ↗」按钮承担，不在快捷链接区重复。
                 const cdpLinks = [
                     { label: "版本信息", url: versionUrl,
                       tip: "浏览器版本与浏览器级 webSocketDebuggerUrl，脚本连接入口" },
@@ -3940,13 +3942,6 @@
                     { label: "协议定义", url: cdpRoot + "/json/protocol",
                       tip: "完整 CDP 协议 JSON，文件较大，打开会慢" },
                 ];
-                if (!headless) {
-                    cdpLinks.push({ label: "VNC 直达",
-                        url: sel.vnc_url_proxy || sel.vnc_url || "",
-                        tip: "容器原生 VNC 服务地址" });
-                    cdpLinks.push({ label: "noVNC 画面", url: vncUrl(sel),
-                        tip: "浏览器里直接打开 noVNC 画面（跟随当前画质/缩放设置）" });
-                }
                 cdpLinks.push({ label: "协议文档",
                     url: "https://chromedevtools.github.io/devtools-protocol/",
                     tip: "Chrome DevTools Protocol 官方文档（新窗口）" });

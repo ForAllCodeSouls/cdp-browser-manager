@@ -1585,20 +1585,22 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("openCdpInfo(", self.src)
         self.assertNotIn('title="浏览器版本与 webSocketDebuggerUrl">CDP 信息 ↗</a>', self.src)
 
-        # 详情栏第二行快捷链接：版本 / 标签 / 协议 / VNC / noVNC / 文档 / WS 复制。
+        # 详情栏第二行快捷链接：版本 / 标签 / 协议 / 文档 / WS 复制。
+        # VNC 直达与 noVNC 画面两个链接已删，入口由随模式变化的画面按钮承担。
         for token in (
             'class="detail-links"',
             '{ label: "版本信息", url: versionUrl',
             'cdpRoot + "/json/list"',
             'cdpRoot + "/json/protocol"',
-            'sel.vnc_url_proxy || sel.vnc_url',
-            "vncUrl(sel)",
             "chromedevtools.github.io/devtools-protocol",
             'onclick="copyBrowserWs()"',
             "async function copyBrowserWs()",
             "data.webSocketDebuggerUrl",
         ):
             self.assertIn(token, self.src)
+        self.assertNotIn('{ label: "VNC 直达"', self.src)
+        self.assertNotIn('{ label: "noVNC 画面"', self.src)
+        self.assertNotIn("sel.vnc_url_proxy || sel.vnc_url || \"\"", self.src)
 
     def test_cdp_info_panel_and_script_copy(self):
         # CDP 信息弹窗：结构化展示 /json/version，每项可复制，不再跳原始 JSON。
