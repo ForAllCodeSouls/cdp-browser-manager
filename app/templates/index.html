@@ -90,6 +90,20 @@
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
         .btn-mini { font-size: 11px; padding: 3px 8px; }
+        /* 详情栏画面按钮组：主按钮 + 小箭头下拉，选桌面画面 / 抓屏画面 */
+        .view-group { position: relative; display: inline-flex; }
+        .view-group .view-menu {
+            display: none; position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
+            min-width: 148px; flex-direction: column; gap: 2px;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #0006;
+        }
+        .view-group.open .view-menu { display: flex; }
+        .view-group .view-menu button {
+            text-align: left; white-space: nowrap; border: none; background: transparent;
+            font-size: 11px; padding: 6px 9px; border-radius: 5px;
+        }
+        .view-group .view-menu button:hover { background: var(--surface-2); }
         /* 地址栏左侧的后退/前进/刷新：纯图标，与浏览器地址栏一致 */
         .btn-nav {
             width: 30px; height: 28px; padding: 0;
@@ -1649,21 +1663,6 @@
             const lv = JSON.parse(localStorage.getItem(LAST_VIEW_KEY) || "null");
             if (lv && typeof lv === "object") {
                 restoreView = { sid: String(lv.sid || ""), tid: String(lv.tid || "") };
-            }
-        } catch (e) {}
-        // 网页画面直达：新窗口带 ?sid=..&preview=cast&tid=.. 打开时，用查询参数覆盖首屏
-        // 定位实例与画面模式。只影响本次加载，不写回 localStorage（不污染用户默认设置），
-        // 读完即从地址栏移除参数，刷新后回到用户自己的常规视图。
-        try {
-            const q = new URLSearchParams(location.search);
-            const sidParam = q.get("sid");
-            const tidParam = q.get("tid");
-            if (sidParam) restoreView = { sid: sidParam, tid: tidParam || "" };
-            if (q.get("preview") === "cast") settings.preview = "cast";
-            if (sidParam || tidParam || q.has("preview")) {
-                q.delete("sid"); q.delete("tid"); q.delete("preview");
-                const rest = q.toString();
-                history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
             }
         } catch (e) {}
         function saveLastView() {
@@ -3961,14 +3960,18 @@
                         : '') +
                     pinfo + vncInfo +
                     '<span class="spacer"></span>' +
-                    '<button class="btn-mini" onclick="openCastPage()"' +
-                        ' title="在新窗口打开该实例的网页画面（自动定位并切到抓屏模式，无头实例可用）">' +
-                        '网页画面 ↗</button>' +
-                    (!headless && vncUrl(sel)
-                        ? '<button class="btn-mini" onclick="openVncPage()"' +
-                            ' title="在新窗口打开该实例的桌面画面（跟随当前画质/缩放设置）">' +
-                            '桌面画面 ↗</button>'
-                        : '') +
+                    '<span class="view-group" id="viewGroup">' +
+                        '<button class="btn-mini" onclick="openDefaultView()"' +
+                            ' title="在新窗口打开画面，点右侧箭头可选桌面 / 抓屏">' +
+                            '画面 ↗</button>' +
+                        '<button class="btn-mini" title="选择画面类型"' +
+                            ' onclick="toggleViewMenu(event)">▾</button>' +
+                        '<span class="view-menu">' +
+                            (!headless && vncUrl(sel)
+                                ? '<button onclick="openVncPage()">桌面画面 ↗</button>' : '') +
+                            '<button onclick="openCastPage()">抓屏画面 ↗</button>' +
+                        '</span>' +
+                    '</span>' +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
                     seg + linksHtml;
             }
@@ -4046,22 +4049,41 @@
             const url = vncUrl(sel);
             if (!url) { toast("该实例没有可用的 VNC 地址"); return; }
             window.open(url, "_blank", "noopener");
+            const g = $("viewGroup");
+            if (g) g.classList.remove("open");
         }
-        // 详情栏「网页画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个管理页，
-        // 用查询参数定位实例/标签并强制切到抓屏模式。本机实例用当前面板（密钥/设置同源继承），
+        // 详情栏画面按钮组：主按钮按实例能力打开默认画面（完整内核优先桌面画面，
+        // 无头实例走抓屏画面），右侧箭头展开菜单可显式选择桌面 / 抓屏。
+        function toggleViewMenu(ev) {
+            if (ev) ev.stopPropagation();
+            const g = $("viewGroup");
+            if (g) g.classList.toggle("open");
+        }
+        // 点菜单外任意处收起下拉（详情栏会随选中实例重绘，用委托绑定到 document）。
+        document.addEventListener("click", (ev) => {
+            const g = $("viewGroup");
+            if (g && g.classList.contains("open") && !g.contains(ev.target)) {
+                g.classList.remove("open");
+            }
+        });
+        function openDefaultView() {
+            const sel = currentSel();
+            if (!sel) return;
+            if (!isHeadless(sel) && vncUrl(sel)) openVncPage();
+            else openCastPage();
+        }
+        // 「抓屏画面」打开独立抓屏页 /cast?sid=..&tid=..（纯画面 + 简易导航条，像 vnc_lite 一样直接访问）。
         // 远端实例跳到那台主机自己的面板（跟「远程」列表的地址跳转一致，不经本机代理）。
-        function castPageQuery(sel) {
-            return "?sid=" + encodeURIComponent(sel.sid) + "&preview=cast" +
-                (castState && castState.sid === sel.sid && castState.tid
-                    ? "&tid=" + encodeURIComponent(castState.tid) : "");
-        }
         function openCastPage() {
             const sel = currentSel();
             if (!sel) return;
-            const q = castPageQuery(sel);
-            const remoteBase = instancePanelBase(sel);
-            window.open((remoteBase || location.origin + location.pathname) + q,
-                "_blank", "noopener");
+            const q = "?sid=" + encodeURIComponent(sel.sid) +
+                (castState && castState.sid === sel.sid && castState.tid
+                    ? "&tid=" + encodeURIComponent(castState.tid) : "");
+            const base = instancePanelBase(sel) || location.origin;
+            window.open(base + "/cast" + q, "_blank", "noopener");
+            const g = $("viewGroup");
+            if (g) g.classList.remove("open");
         }
 
         // 从版本信息读取浏览器级 webSocketDebuggerUrl 并复制（脚本连接常用入口）。

@@ -2181,6 +2181,16 @@ async def share_page(request: Request):
     return templates.TemplateResponse(request, "share.html", {})
 
 
+@app.get("/cast", response_class=HTMLResponse)
+async def cast_page(request: Request):
+    """独立抓屏页：?sid=&tid= 直达，纯画面 + 简易导航条。
+
+    页面本身免鉴权打开（同 / 与 /share），实例数据走 /api/list、CDP 命令走
+    /api/instance/*/cmd、画面走 /ws/cast/*，这些通道各自按 API_KEY 鉴权。
+    """
+    return templates.TemplateResponse(request, "cast.html", {})
+
+
 @app.get("/api/health")
 async def api_health():
     """存活探针：面板在线且 Docker 守护进程可达。"""

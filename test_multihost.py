@@ -1193,6 +1193,8 @@ class PanelEcoAndShareTests(unittest.TestCase):
             cls.src = f.read()
         with open(os.path.join(ROOT, "app", "templates", "share.html"), encoding="utf-8") as f:
             cls.share_src = f.read()
+        with open(os.path.join(ROOT, "app", "templates", "cast.html"), encoding="utf-8") as f:
+            cls.cast_src = f.read()
         with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
             cls.main_src = f.read()
 
@@ -1428,6 +1430,41 @@ class PanelEcoAndShareTests(unittest.TestCase):
         seg3 = self.src[k:k + 1400]
         self.assertIn("if (changed && !screenLocked)", seg3)
 
+    def test_standalone_cast_page(self):
+        # 后端 /cast 页面路由：免鉴权打开，数据层各自鉴权。
+        self.assertIn('@app.get("/cast", response_class=HTMLResponse)', self.main_src)
+        self.assertIn('templates.TemplateResponse(request, "cast.html", {})', self.main_src)
+        # 独立抓屏页：纯画面 + 简易导航条，?sid=&tid= 直达，同源继承密钥与设置。
+        c = self.cast_src
+        self.assertIn("const SID = QS.get(\"sid\") || \"\";", c)
+        self.assertIn("const TID_HINT = QS.get(\"tid\") || \"\";", c)
+        self.assertIn('localStorage.getItem(KEY_STORAGE)', c)
+        self.assertIn('localStorage.getItem(SETTINGS_KEY)', c)
+        self.assertIn('QS.get("key")', c)
+        # 复用 manager 的抓屏 WS 通道（含画质/方式/节奏参数）。
+        self.assertIn('inst.cast_ws || ("/ws/cast/" + inst.sid + "/{tid}")', c)
+        self.assertIn('"&mode=" + captureMode + "&snap=" + encodeURIComponent(snapRate)', c)
+        # 远端实例：实例级 API 加 /remote/<host> 前缀。
+        self.assertIn('function scopeUrl(url)', c)
+        self.assertIn('"/remote/" + encodeURIComponent(host) + url', c)
+        # 完整鼠标键盘 + 滚轮（走 dispatchMouseEvent + mouseWheel，与 Puppeteer 同路径）。
+        self.assertIn('type: "mouseWheel"', c)
+        self.assertIn('pointerType: "mouse"', c)
+        self.assertIn('Input.dispatchKeyEvent', c)
+        self.assertIn('Input.dispatchMouseEvent', c)
+        self.assertIn('const MIN_STEP = 20;', c)
+        # 简易导航条：标签切换/关闭、地址栏、前进后退、刷新。
+        for token in (
+            'id="tabRow"', 'id="navRow"', 'id="castUrl"',
+            'function switchTarget(id)', 'function closeTarget(id)',
+            'function navigate(raw)', 'function reloadPage()', 'function historyStep(delta)',
+            'Page.getNavigationHistory', 'Page.navigateToHistoryEntry',
+            'function newTarget()', 'function refreshTargets()',
+        ):
+            self.assertIn(token, c)
+        # 无屏幕锁等管理页专有控件：独立页是纯观看 + 操控画面，不介入脚本前台。
+        self.assertNotIn("screenLocked", c)
+
     def test_detail_cdp_quick_links_and_current_page(self):
         # 原「新窗口打开」→「当前网页」已按用户要求移除：详情栏只留画面直达按钮。
         # 「CDP 信息」仍在左侧实例列表项右上角，不再把 JSON 当画面入口。
@@ -1435,28 +1472,31 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertNotIn("function openCurrentPage()", self.src)
         self.assertNotIn('">当前网页 ↗</button>', self.src)
         self.assertNotIn('>新窗口打开</a>', self.src)
-        # 详情栏独立的桌面画面直达按钮：非无头实例渲染、无头隐藏，打开 noVNC 地址。
+        # 详情栏画面按钮组：主按钮 + 箭头下拉，菜单里选「桌面画面 / 抓屏画面」。
+        self.assertIn('class="view-group" id="viewGroup"', self.src)
+        self.assertIn("function toggleViewMenu(ev)", self.src)
+        self.assertIn("function openDefaultView()", self.src)
+        self.assertIn('onclick="toggleViewMenu(event)"', self.src)
+        self.assertIn("'画面 ↗</button>'", self.src)
+        self.assertIn(">桌面画面 ↗</button>", self.src)
+        self.assertIn(">抓屏画面 ↗</button>", self.src)
+        self.assertNotIn(">VNC 画面 ↗</button>", self.src)
+        self.assertNotIn(">网页画面 ↗</button>", self.src)
+        self.assertIn('(!headless && vncUrl(sel)', self.src)
+        # 桌面画面：非无头才在菜单项渲染，打开 noVNC 地址。
         self.assertIn("function openVncPage()", self.src)
         self.assertIn('onclick="openVncPage()"', self.src)
-        self.assertIn("'桌面画面 ↗</button>'", self.src)
-        self.assertNotIn("'VNC 画面 ↗</button>'", self.src)
-        self.assertIn('(!headless && vncUrl(sel)', self.src)
-        # 详情栏「网页画面」直达：所有实例可用（含无头），新窗口带 sid/preview=cast/tid
-        # 定位实例并强制切到抓屏模式；启动解析参数、用完从地址栏清理且不污染本地设置。
+        # 抓屏画面：打开独立 /cast?sid=..&tid=.. 页面，不再走管理页 ?preview=cast 直达。
         self.assertIn("function openCastPage()", self.src)
         self.assertIn('onclick="openCastPage()"', self.src)
-        self.assertIn("'网页画面 ↗</button>'", self.src)
-        self.assertNotIn("'抓屏画面 ↗</button>'", self.src)
-        self.assertIn('"&preview=cast"', self.src)
-        self.assertIn('new URLSearchParams(location.search)', self.src)
-        self.assertIn('q.delete("sid"); q.delete("tid"); q.delete("preview")', self.src)
-        self.assertIn('if (q.get("preview") === "cast") settings.preview = "cast"', self.src)
+        self.assertIn('window.open(base + "/cast" + q, "_blank", "noopener");', self.src)
+        self.assertNotIn("function castPageQuery(sel)", self.src)
+        self.assertNotIn('"&preview=cast"', self.src)
+        self.assertNotIn('q.delete("sid"); q.delete("tid"); q.delete("preview")', self.src)
         # 远端实例跳到那台主机自己的面板（不是当前面板经代理）：从 hosts 按 host id 取 base。
         self.assertIn("function instancePanelBase(i)", self.src)
         self.assertIn('const h = (hosts || []).find(x => x.id === i.host);', self.src)
-        self.assertIn("function castPageQuery(sel)", self.src)
-        self.assertIn("const remoteBase = instancePanelBase(sel);", self.src)
-        self.assertIn('window.open((remoteBase || location.origin + location.pathname) + q,', self.src)
+        self.assertIn("const base = instancePanelBase(sel) || location.origin;", self.src)
         # 实例列表项主机 badge 可点跳对端面板，点链接不触发选中实例。
         self.assertIn('class="badge host badge-host-link"', self.src)
         self.assertIn("esc(instancePanelBase(i) + \"/\")", self.src)
