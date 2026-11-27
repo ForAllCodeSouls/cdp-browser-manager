@@ -508,6 +508,10 @@ class MonitorPanelJsTests(unittest.TestCase):
         self.assertIn("function toggleMonitorView(forceOpen, skipLoad)", self.src)
         self.assertIn("function toggleMonitorSid(sid, forceOn)", self.src)
         self.assertIn('id="btnMonitor"', self.src)
+        # 按钮从顶栏移到实例列表标题行右侧（head-actions 里，紧凑图标）。
+        i = self.src.index('id="btnMonitor"')
+        self.assertIn('class="head-icon"', self.src[i:i + 200])
+        self.assertIn('class="head-actions"', self.src[:i])
 
     def test_preview_switch_in_instance_list(self):
         # 「预览」由文字按钮改为滑动开关（label + checkbox + switch）。
@@ -518,10 +522,22 @@ class MonitorPanelJsTests(unittest.TestCase):
 
     def test_monitor_view_not_hidden_with_layout(self):
         # 回归：曾把整个 .layout display:none 导致监控面板（其子元素）一起被藏。
-        self.assertIn('.layout.monitor-mode > aside', self.src)
+        # 现在监控模式只隐藏 .viewer，侧栏保留。
         self.assertIn('.layout.monitor-mode > .viewer', self.src)
         self.assertIn('classList.toggle("monitor-mode", monitorViewOpen)', self.src)
         self.assertNotIn('.layout").style.display = monitorViewOpen', self.src)
+        self.assertNotIn('.layout.monitor-mode > aside', self.src)
+
+    def test_sidebar_global_toggle_and_persistence(self):
+        # 全局侧栏显隐：普通视图与监控面板都生效，状态持久化。
+        for token in ('id="btnSidebar"', 'const SIDEBAR_KEY = "cdpManagerSidebarHidden"',
+                      'let sidebarHidden = false;', 'function toggleSidebar(force)',
+                      'function loadSidebarHidden()', 'function applySidebar()',
+                      '.layout.sidebar-hidden > aside { display: none; }',
+                      'classList.toggle("sidebar-hidden", sidebarHidden)',
+                      'sidebarHidden = loadSidebarHidden()', 'applySidebar();',
+                      'id="i-sidebar"'):
+            self.assertIn(token, self.src)
 
     def test_instances_local_first_then_created_at(self):
         self.assertIn("Object.values(instances).sort((a, b)", self.src)
