@@ -159,7 +159,11 @@
             backdrop-filter: blur(8px);
             z-index: 2;
         }
-        .side-head.second { top: 49px; z-index: 1; font-size: 11px; text-transform: none; }
+        .side-head.second { top: 49px; z-index: 1; font-size: 11px; text-transform: none; cursor: pointer; user-select: none; }
+        .side-head.second:hover { background: var(--surface-3); }
+        .head-chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .15s; }
+        .side-head.second.collapsed .head-chev { transform: rotate(-90deg); }
+        #profileList.collapsed { display: none; }
         .side-stat {
             color: var(--text); font-weight: 600; font-size: 11px;
             background: var(--surface-2); border: 1px solid var(--border);
@@ -974,7 +978,7 @@
             </div>
             <div class="host-filter" id="hostFilter"></div>
             <div id="instanceList"></div>
-            <div class="side-head second"><span>持久用户目录（保留登录态）</span><span class="side-stat" id="profileStat">0</span></div>
+            <div class="side-head second" id="profileHead" onclick="toggleProfiles()" title="点击折叠/展开持久用户目录"><span><span class="head-chev">▾</span>持久用户目录（保留登录态）</span><span class="side-stat" id="profileStat">0</span></div>
             <div id="profileList"></div>
         </aside>
         <section class="viewer">
@@ -1345,7 +1349,7 @@
         let pendingMonitorRestore = false;
         // 实例列表分组折叠状态：持久化，刷新后保持用户的展开/收起选择。
         const GROUP_STATE_KEY = "cdpManagerGroups";
-        let groupsCollapsed = { temp: false, persist: false };
+        let groupsCollapsed = { temp: false, persist: false, profiles: false };
         // 全局侧栏显隐：普通视图与监控面板都生效，持久化到浏览器本地。
         const SIDEBAR_KEY = "cdpManagerSidebarHidden";
         let sidebarHidden = false;
@@ -3871,8 +3875,11 @@
         function loadGroups() {
             try {
                 const v = JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || "{}");
-                groupsCollapsed = { temp: v.temp === true, persist: v.persist === true };
-            } catch (e) { groupsCollapsed = { temp: false, persist: false }; }
+                groupsCollapsed = {
+                    temp: v.temp === true, persist: v.persist === true,
+                    profiles: v.profiles === true,
+                };
+            } catch (e) { groupsCollapsed = { temp: false, persist: false, profiles: false }; }
         }
         function saveGroups() {
             try { localStorage.setItem(GROUP_STATE_KEY, JSON.stringify(groupsCollapsed)); } catch (e) {}
@@ -3882,6 +3889,18 @@
             saveGroups();
             const sec = $("group-" + key);
             if (sec) sec.classList.toggle("collapsed", !!groupsCollapsed[key]);
+        }
+        // 「持久用户目录」区独立于实例分组的折叠，状态同样持久化。
+        function toggleProfiles() {
+            groupsCollapsed.profiles = !groupsCollapsed.profiles;
+            saveGroups();
+            applyProfilesCollapse();
+        }
+        function applyProfilesCollapse() {
+            const head = $("profileHead");
+            const list = $("profileList");
+            if (head) head.classList.toggle("collapsed", !!groupsCollapsed.profiles);
+            if (list) list.classList.toggle("collapsed", !!groupsCollapsed.profiles);
         }
         function renderInstGroup(key, name, items, actionBtn, emptyText) {
             const row = i => {
@@ -4963,6 +4982,7 @@
         applySidebar();
         loadHostFilter();
         loadGroups();
+        applyProfilesCollapse();
         initHosts().then(() => {
             if (!authRequired || apiKey) {
                 load();

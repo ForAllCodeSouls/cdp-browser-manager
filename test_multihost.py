@@ -1819,6 +1819,18 @@ class ProfileSafetyAndMigrationTests(unittest.TestCase):
         self.assertIn('"/profile/import"', s)
         self.assertIn("source_name: importCtx.source", s)
 
+    def test_profile_section_collapsible_and_persisted(self):
+        s = self.src
+        self.assertIn('id="profileHead" onclick="toggleProfiles()"', s)
+        self.assertIn('id="profileList"', s)
+        self.assertIn("function toggleProfiles()", s)
+        self.assertIn("function applyProfilesCollapse()", s)
+        self.assertIn("groupsCollapsed.profiles = !groupsCollapsed.profiles", s)
+        self.assertIn("profiles: v.profiles === true", s)  # 刷新后保持
+        self.assertIn("applyProfilesCollapse();", s)  # 首屏套用
+        self.assertIn(".side-head.second.collapsed .head-chev", s)
+        self.assertIn("#profileList.collapsed { display: none; }", s)
+
     def test_reuse_dropdown_follows_target_host(self):
         s = self.src
         # 复现：选远程主机后「复用已有持久目录」下拉为空。修复点是下拉跟随目标主机。
