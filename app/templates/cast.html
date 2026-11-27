@@ -182,13 +182,22 @@
         return proto + "//" + location.host + tpl;
     }
 
+    // 两路帧（screencast 缩放帧 / 定时截图原始帧）尺寸不同且解码异步，
+    // 旧帧可能后到覆盖新帧。按序号只画最新帧；canvas 尺寸只在宽高比真正
+    // 变化时重设，平时把任意尺寸帧缩放画进固定画布，避免重设清空导致的黑闪。
+    let frameSeq = 0, drawnSeq = 0;
     function drawFrame(data) {
+        const seq = ++frameSeq;
         const img = new Image();
         img.onload = () => {
-            if (canvas.width !== img.width || canvas.height !== img.height) {
+            if (seq <= drawnSeq) return;
+            drawnSeq = seq;
+            const cw = canvas.width, ch = canvas.height;
+            const ratio = img.width / (img.height || 1);
+            if (!cw || !ch || Math.abs(ratio - cw / ch) > 0.02) {
                 canvas.width = img.width; canvas.height = img.height;
             }
-            canvas.getContext("2d").drawImage(img, 0, 0);
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
         };
         img.src = "data:image/jpeg;base64," + data;
     }

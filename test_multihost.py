@@ -1465,6 +1465,25 @@ class PanelEcoAndShareTests(unittest.TestCase):
         # 无屏幕锁等管理页专有控件：独立页是纯观看 + 操控画面，不介入脚本前台。
         self.assertNotIn("screenLocked", c)
 
+    def test_cast_frame_drawing_no_flicker(self):
+        # Cast 模式两路帧尺寸不同：screencast 按画质档缩放（960x540/1280x720），
+        # captureScreenshot 保底帧是原始视口（1920x1080）。旧前端每帧按图片尺寸
+        # 重设 canvas，重设会先清空画布露出深色背景 → 周期性黑闪；异步 Image
+        # onload 还会让旧帧后画覆盖新帧。三处绘制统一改为：帧序号丢弃过期帧，
+        # canvas 只在宽高比真正变化时重设，其余帧缩放绘制。
+        for src, label in ((self.src, "index.html"), (self.cast_src, "cast.html")):
+            self.assertIn("frameSeq", src, label)
+            self.assertIn("drawnSeq", src, label)
+            self.assertIn("seq <= drawnSeq", src, label)
+            self.assertIn("Math.abs(ratio - cw / ch) > 0.02", src, label)
+            self.assertIn("drawImage(img, 0, 0, canvas.width, canvas.height)", src, label)
+            self.assertNotIn("canvas.width !== img.width || canvas.height !== img.height", src, label)
+        # 管理页两处各自维护序号：主抓屏是挂载级变量，监控是每张卡片 state 上的字段。
+        self.assertIn("let frameSeq = 0, drawnSeq = 0;", self.src)
+        self.assertIn("frameSeq: 0, drawnSeq: 0", self.src)
+        self.assertIn("++state.frameSeq", self.src)
+        self.assertIn("seq <= state.drawnSeq", self.src)
+
     def test_detail_cdp_quick_links_and_current_page(self):
         # 原「新窗口打开」→「当前网页」已按用户要求移除：详情栏只留画面直达按钮。
         # 「CDP 信息」仍在左侧实例列表项右上角，不再把 JSON 当画面入口。

@@ -2724,6 +2724,9 @@
             // 浏览器真实视口尺寸（CDP 输入坐标系），由后端随帧推送。画质档会
             // 缩小图片，点击坐标必须按比例回算，不能直接用图片像素。
             const viewport = { w: 0, h: 0 };
+            // 帧序号 + 画布稳定性：两路帧尺寸不同且异步解码，旧帧可能后到覆盖
+            // 新帧；canvas 只在宽高比真正变化时重设，避免每帧清空导致的黑闪。
+            let frameSeq = 0, drawnSeq = 0;
 
             // 事件只绑定一次；重连时只替换 wsRef.ws，避免重复监听导致输入被放大。
             bindCastInput(canvas, wsRef, sel, viewport);
@@ -2761,14 +2764,18 @@
                             viewport.w = msg.vw;
                             viewport.h = msg.vh;
                         }
+                        const seq = ++frameSeq;
                         const img = new Image();
                         img.onload = () => {
-                            if (gen !== castGen || frameSid !== mySid) return;
-                            if (canvas.width !== img.width || canvas.height !== img.height) {
+                            if (gen !== castGen || frameSid !== mySid || seq <= drawnSeq) return;
+                            drawnSeq = seq;
+                            const cw = canvas.width, ch = canvas.height;
+                            const ratio = img.width / (img.height || 1);
+                            if (!cw || !ch || Math.abs(ratio - cw / ch) > 0.02) {
                                 canvas.width = img.width;
                                 canvas.height = img.height;
                             }
-                            canvas.getContext("2d").drawImage(img, 0, 0);
+                            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
                             receivedAny = true;
                             frameRetryCount = 0;
                             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
@@ -3485,7 +3492,7 @@
                 '</div>' +
                 '<div class="mon-stage"><div class="mempty">正在读取标签页…</div></div>';
             $("monitorGrid").appendChild(card);
-            const state = { el: card, ws: null, gen: ++monitorGen, tid: "", stage: card.querySelector(".mon-stage") };
+            const state = { el: card, ws: null, gen: ++monitorGen, tid: "", stage: card.querySelector(".mon-stage"), frameSeq: 0, drawnSeq: 0 };
             monitorCards[sid] = state;
             const status = card.querySelector(".mstatus");
             const connect = (attempt) => {
@@ -3501,19 +3508,25 @@
                         return;
                     }
                     if (msg.type === "frame" && msg.data) {
+                        // 与抓屏画面同一套防闪逻辑：序号丢弃过期帧，画布只在
+                        // 宽高比真正变化时重设，其余帧缩放绘制。
+                        const seq = ++state.frameSeq;
                         const img = new Image();
                         img.onload = () => {
-                            if (monitorCards[sid] !== state) return;
+                            if (monitorCards[sid] !== state || seq <= state.drawnSeq) return;
+                            state.drawnSeq = seq;
                             let canvas = state.stage.querySelector("canvas");
                             if (!canvas) {
                                 state.stage.innerHTML = "";
                                 canvas = document.createElement("canvas");
                                 state.stage.appendChild(canvas);
                             }
-                            if (canvas.width !== img.width || canvas.height !== img.height) {
+                            const cw = canvas.width, ch = canvas.height;
+                            const ratio = img.width / (img.height || 1);
+                            if (!cw || !ch || Math.abs(ratio - cw / ch) > 0.02) {
                                 canvas.width = img.width; canvas.height = img.height;
                             }
-                            canvas.getContext("2d").drawImage(img, 0, 0);
+                            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
                             status.textContent = "实时";
                             status.className = "mstatus live";
                         };
