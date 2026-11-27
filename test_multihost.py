@@ -1387,6 +1387,21 @@ class PanelEcoAndShareTests(unittest.TestCase):
             'id="setAutoSwitchTab"',
             'id="btnAutoSwitch"',
             '"自动切:暂停"',
+            # 文字按钮不能套 btn-nav（固定 30px 宽会挤成一团）；状态用圆点区分。
+            'class="btn-mini btn-nav btn-auto-switch',  # 断言该冲突写法已不存在
+        ):
+            if token.startswith('class="btn-mini btn-nav btn-auto-switch'):
+                self.assertNotIn(token, self.src)
+            else:
+                self.assertIn(token, self.src)
+        for token in (
+            '.castbar .btn-auto-switch {',
+            'width: auto; height: 28px; padding: 0 10px;',
+            '.castbar .btn-auto-switch::before {',
+            '.castbar .btn-auto-switch.on::before { background: var(--accent); }',
+            '.castbar .btn-auto-switch.paused {',
+            'const autoSwitchState = screenLocked ? " paused"',
+            'class="btn-mini btn-auto-switch\' + autoSwitchState',
         ):
             self.assertIn(token, self.src)
 
@@ -1434,6 +1449,16 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn('new URLSearchParams(location.search)', self.src)
         self.assertIn('q.delete("sid"); q.delete("tid"); q.delete("preview")', self.src)
         self.assertIn('if (q.get("preview") === "cast") settings.preview = "cast"', self.src)
+        # 远端实例跳到那台主机自己的面板（不是当前面板经代理）：从 hosts 按 host id 取 base。
+        self.assertIn("function instancePanelBase(i)", self.src)
+        self.assertIn('const h = (hosts || []).find(x => x.id === i.host);', self.src)
+        self.assertIn("function castPageQuery(sel)", self.src)
+        self.assertIn("const remoteBase = instancePanelBase(sel);", self.src)
+        self.assertIn('window.open((remoteBase || location.origin + location.pathname) + q,', self.src)
+        # 实例列表项主机 badge 可点跳对端面板，点链接不触发选中实例。
+        self.assertIn('class="badge host badge-host-link"', self.src)
+        self.assertIn("esc(instancePanelBase(i) + \"/\")", self.src)
+        self.assertIn('a.badge-host-link:hover', self.src)
         # CDP 信息移到左侧实例列表项右上角（红框位置），点它不切换当前实例。
         self.assertIn("function cdpVersionUrl(i)", self.src)
         self.assertIn('class="inst-cdp-link"', self.src)

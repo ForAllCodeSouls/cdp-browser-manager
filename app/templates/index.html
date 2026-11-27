@@ -453,8 +453,22 @@
         .castbar .navrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
         .castbar .tabrow { flex-wrap: nowrap; overflow: hidden; padding-bottom: 2px; }
         .castbar .lock-tip { color: var(--warn); font-size: 11px; margin-left: auto; }
-        .castbar .btn-auto-switch { flex: none; white-space: nowrap; }
+        /* 自动切开关是文字按钮，不能套 btn-nav 的固定 30px 宽（会把中文挤成一团）。
+           宽度自适应、与图标按钮等高；状态用圆点 + 边框色区分，一眼可辨。 */
+        .castbar .btn-auto-switch {
+            flex: none; white-space: nowrap; width: auto; height: 28px; padding: 0 10px;
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            background: var(--surface-2); color: var(--text);
+        }
+        .castbar .btn-auto-switch::before {
+            content: ""; width: 7px; height: 7px; border-radius: 50%;
+            background: var(--muted); flex: none;
+        }
         .castbar .btn-auto-switch.on { color: var(--accent); border-color: var(--accent); }
+        .castbar .btn-auto-switch.on::before { background: var(--accent); }
+        .castbar .btn-auto-switch.paused { color: var(--warn); border-color: #6b5426; background: #3a2f1a; }
+        .castbar .btn-auto-switch.paused::before { background: var(--warn); }
+        .castbar .btn-auto-switch:hover { border-color: var(--accent); }
         .chip {
             flex: 0 1 132px;
             min-width: 26px;
@@ -766,6 +780,9 @@
         .badge.full { background: #23314f; color: #9fc0ff; }
         .badge.headless { background: #2f2440; color: #c9a6ff; }
         .badge.host { background: #1d3b40; color: #7fdbd9; }
+        /* 远端主机 badge 可点跳对端面板：保持徽章外观，hover 高亮提示可点击 */
+        a.badge-host-link { text-decoration: none; cursor: pointer; }
+        a.badge-host-link:hover { color: #b6f5f2; box-shadow: inset 0 0 0 1px #4b8f8c; }
         .copy { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
 
         .toast {
@@ -1379,6 +1396,14 @@
         function safeHostUrl(base) {
             const s = String(base || "").trim().replace(/\/+$/, "");
             return /^https?:\/\//i.test(s) ? s : "";
+        }
+
+        // 实例所在主机的面板地址：远端实例跳到那台主机自己的面板（跟「远程」列表一致），
+        // 本机实例用当前面板。hosts 由 initHosts() 在 load() 前加载好。
+        function instancePanelBase(i) {
+            if (!i || !i.host || i.host === "local") return "";
+            const h = (hosts || []).find(x => x.id === i.host);
+            return h ? safeHostUrl(h.base) : "";
         }
 
         function renderRemoteHosts(list) {
@@ -2983,9 +3008,10 @@
                 : (settings.autoSwitchTab
                     ? "已开启：新标签自动切到前台，可能干扰脚本。点击关闭"
                     : "已关闭：新标签不抢焦点。点击开启");
+            const autoSwitchState = screenLocked ? " paused"
+                : (settings.autoSwitchTab ? " on" : "");
             const autoSwitchBtn = effectiveMode(sel) === "vnc"
-                ? '<button class="btn-mini btn-nav btn-auto-switch' +
-                    (settings.autoSwitchTab && !screenLocked ? " on" : "") +
+                ? '<button class="btn-mini btn-auto-switch' + autoSwitchState +
                     '" id="btnAutoSwitch" title="' + esc(autoTip) +
                     '" onclick="toggleAutoSwitchTab()">' + autoLabel + '</button>'
                 : '';
@@ -3738,7 +3764,15 @@
                     '</div>' +
                     '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                         (i.host && i.host !== "local"
-                            ? '<span class="badge host">' + esc(i.host_name || i.host) + '</span>' : '') +
+                            ? (instancePanelBase(i)
+                                ? '<a class="badge host badge-host-link"' +
+                                    ' href="' + esc(instancePanelBase(i) + "/") + '"' +
+                                    ' target="_blank" rel="noopener"' +
+                                    ' title="在新标签页打开 ' + esc(i.host_name || i.host) +
+                                    ' 的面板" onclick="event.stopPropagation()">' +
+                                    esc(i.host_name || i.host) + ' ↗</a>'
+                                : '<span class="badge host">' + esc(i.host_name || i.host) + '</span>')
+                            : '') +
                         '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
                     '</div>' +
                 '</div>';
@@ -4013,15 +4047,21 @@
             if (!url) { toast("该实例没有可用的 VNC 地址"); return; }
             window.open(url, "_blank", "noopener");
         }
-        // 详情栏「抓屏画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个新的管理页，
-        // 用查询参数定位实例/标签并强制切到抓屏模式。新窗口同源，密钥与设置自动继承。
+        // 详情栏「抓屏画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个管理页，
+        // 用查询参数定位实例/标签并强制切到抓屏模式。本机实例用当前面板（密钥/设置同源继承），
+        // 远端实例跳到那台主机自己的面板（跟「远程」列表的地址跳转一致，不经本机代理）。
+        function castPageQuery(sel) {
+            return "?sid=" + encodeURIComponent(sel.sid) + "&preview=cast" +
+                (castState && castState.sid === sel.sid && castState.tid
+                    ? "&tid=" + encodeURIComponent(castState.tid) : "");
+        }
         function openCastPage() {
             const sel = currentSel();
             if (!sel) return;
-            const q = "?sid=" + encodeURIComponent(sel.sid) + "&preview=cast" +
-                (castState && castState.sid === sel.sid && castState.tid
-                    ? "&tid=" + encodeURIComponent(castState.tid) : "");
-            window.open(location.pathname + q, "_blank", "noopener");
+            const q = castPageQuery(sel);
+            const remoteBase = instancePanelBase(sel);
+            window.open((remoteBase || location.origin + location.pathname) + q,
+                "_blank", "noopener");
         }
 
         // 从版本信息读取浏览器级 webSocketDebuggerUrl 并复制（脚本连接常用入口）。
