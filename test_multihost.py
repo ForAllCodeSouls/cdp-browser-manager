@@ -1279,6 +1279,23 @@ class PanelEcoAndShareTests(unittest.TestCase):
                       'card.draggable = true', 'draggable="true"'):
             self.assertIn(token, self.src)
 
+    def test_share_card_shows_full_instance_info(self):
+        # 分享卡片只显示 sid+主机时多个实例难以区分，须与左侧列表一致显示完整信息。
+        i = self.src.index("function shareItemHtml(")
+        seg = self.src[i:i + 1400]
+        for token in ("statusBadge(i)", "kernelBadge(i)", "profileBadge(i)",
+                      'i.debug_port', "i.host_name || i.host", "share-sid", "share-meta"):
+            self.assertIn(token, seg)
+
+    def test_scrollbars_are_dark_and_unified(self):
+        # 深色主题里不应出现浏览器默认的亮色滚动条；管理页与观看页都要有统一样式。
+        for src in (self.src, self.share_src):
+            self.assertIn("::-webkit-scrollbar-thumb", src)
+            self.assertIn("scrollbar-color:", src)
+            self.assertIn("--scroll-thumb", src)
+        self.assertIn("::-webkit-scrollbar-corner", self.src)
+        self.assertIn("::-webkit-scrollbar-corner", self.share_src)
+
     def test_viewer_page_is_readonly_with_grid_and_zoom(self):
         for token in ('id="grid"', 'id="large"', "function openLarge(sid)",
                       "function closeLarge()", 'wsUrl(inst, "monitor")',

@@ -22,8 +22,22 @@
             --danger: #ff6b6b;
             --warn: #f7b955;
             --radius: 10px;
+            --scroll-thumb: #3a4055;
+            --scroll-thumb-hover: #4c5470;
+            --scroll-track: transparent;
         }
         * { box-sizing: border-box; }
+        /* 全局统一深色滚动条：避免弹窗/侧栏/列表里冒出浏览器默认的亮色滚动条。
+           Firefox 用 scrollbar-color，Chromium/WebKit 用 ::-webkit-scrollbar。 */
+        * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-track { background: var(--scroll-track); }
+        ::-webkit-scrollbar-thumb {
+            background: var(--scroll-thumb); border-radius: 999px;
+            border: 2px solid transparent; background-clip: padding-box;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: padding-box; }
+        ::-webkit-scrollbar-corner { background: transparent; }
         html, body { height: 100%; }
         body {
             margin: 0;
@@ -221,18 +235,29 @@
         .share-col { flex: 1; min-width: 0; }
         .share-col .col-head { font-size: 12px; color: var(--muted); padding: 0 0 6px; }
         .share-list, .share-drop {
-            height: 250px; overflow-y: auto; padding: 8px;
+            height: 300px; overflow-y: auto; padding: 8px;
             border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-2);
         }
         .share-drop.over { border-color: var(--accent); background: #1c2740; }
         .share-item {
-            display: flex; align-items: center; gap: 8px; padding: 7px 9px; margin-bottom: 5px;
+            display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; margin-bottom: 5px;
             border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
             cursor: grab; font-size: 11px;
         }
         .share-item.dragging { opacity: .4; }
-        .share-item .grow { flex: 1; min-width: 0; word-break: break-all; font-family: ui-monospace, monospace; }
-        .share-item button { padding: 1px 6px; font-size: 11px; }
+        .share-item > .ico { flex: none; width: 14px; height: 14px; margin-top: 2px; color: var(--muted); }
+        .share-item .grow { flex: 1; min-width: 0; }
+        .share-item .share-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .share-item .share-sid {
+            font-family: ui-monospace, monospace; font-weight: 600; color: var(--text);
+        }
+        .share-item .share-host { color: var(--muted); }
+        .share-item .share-meta {
+            display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 5px;
+            color: var(--muted); font-size: 10px;
+        }
+        .share-item .share-meta .badge { font-size: 9px; padding: 1px 6px; }
+        .share-item button { padding: 1px 6px; font-size: 11px; flex: none; }
         .share-drop .drop-hint { text-align: center; color: var(--muted); font-size: 11px; padding: 28px 8px; }
         .share-link-box { margin-top: 14px; }
         .share-url {
@@ -3730,15 +3755,27 @@
             if (shareConfig.token) $("shareUrl").textContent = shareConfig.url || "";
         }
         function shareItemHtml(i, inShare, removable) {
+            // 与左侧实例列表一致：完整信息才便于区分多个实例（状态/内核/目录/端口/主机）。
+            const host = (i.host && i.host !== "local") ? (i.host_name || i.host) : "本机";
             return '<div class="share-item" draggable="true" data-sid="' + esc(i.sid) + '"' +
+                ' title="' + esc(i.sid) + '"' +
                 ' ondragstart="dragStart(event,' + jsArg(i.sid) + ')" ondragend="dragEnd(event)"' +
                 (removable
                     ? ' ondragover="allowDrop(event)" ondrop="dropOnShareItem(event,' + jsArg(i.sid) + ')"'
                     : '') +
                 '>' +
                 '<svg class="ico"><use href="#i-grid"/></svg>' +
-                '<span class="grow">' + esc(i.sid.slice(0, 8)) + ' · ' + esc(i.host_name || "本机") + '</span>' +
-                (inShare ? '<span class="badge host">已分享</span>' : '') +
+                '<div class="grow">' +
+                    '<div class="share-top">' +
+                        '<span class="share-sid">' + esc(i.sid.slice(0, 8)) + '</span>' +
+                        '<span class="share-host">' + esc(host) + '</span>' +
+                        (inShare ? '<span class="badge host">已分享</span>' : '') +
+                    '</div>' +
+                    '<div class="share-meta">' +
+                        statusBadge(i) + kernelBadge(i) + profileBadge(i) +
+                        '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
+                    '</div>' +
+                '</div>' +
                 (removable ? '<button title="移出分享" onclick="removeFromShare(' + jsArg(i.sid) + ')">×</button>' : '') +
                 '</div>';
         }
