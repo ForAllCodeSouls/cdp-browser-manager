@@ -1089,7 +1089,7 @@
             <h3 id="createTitle">新建浏览器实例</h3>
             <div class="row" id="hostRow" style="display:none">
                 <label for="createHost">目标主机</label>
-                <select id="createHost"></select>
+                <select id="createHost" onchange="refreshReuseOptions()"></select>
                 <div class="hint">远端主机由本机面板代理创建，远端密钥不用填写。</div>
             </div>
             <div class="row">
@@ -1120,7 +1120,7 @@
             <div class="row" id="reuseRow" style="display:none">
                 <label for="reuseName">选择已有目录</label>
                 <select id="reuseName"></select>
-                <div class="hint">被运行中实例占用的目录不会出现在列表里。</div>
+                <div class="hint" id="reuseHint">被运行中实例占用的目录不会出现在列表里。</div>
             </div>
             <div class="foot" id="createFoot">持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。</div>
             <div class="actions">
@@ -2300,13 +2300,32 @@
             const mode = $("createMode").value;
             $("nameRow").style.display = mode === "new" ? "block" : "none";
             $("reuseRow").style.display = mode === "reuse" ? "block" : "none";
-            if (mode === "reuse") {
-                const free = profiles.filter(p => !p.used_by);
-                const opts = free.map(p =>
-                    '<option value="' + esc(p.name) + '">' + esc(p.name) + '</option>'
-                ).join("");
-                $("reuseName").innerHTML = opts || '<option value="">（无可用目录）</option>';
+            if (mode === "reuse") refreshReuseOptions();
+        }
+        // 「复用已有持久目录」的下拉必须跟随目标主机：选了远端主机就该列那台主机
+        // 自己的目录（后端转发创建时会由远端 manager 挂它宿主机上的卷），否则用户
+        // 选远程后这里永远是本机列表，本机又没有目录就显示「无可用目录」。
+        async function refreshReuseOptions() {
+            const host = $("createHost") ? $("createHost").value : "local";
+            const hint = $("reuseHint");
+            let pool;
+            if (host === "local") {
+                pool = profiles.filter(p => !p.used_by);
+                hint.textContent = "被运行中实例占用的目录不会出现在列表里。";
+            } else {
+                // 远端目录每 60 秒刷新，首次打开或刚切主机时可能还没拉到，主动拉一次。
+                if (!remoteProfiles.some(p => p.host === host)) {
+                    hint.textContent = "正在读取该主机的目录…";
+                    await loadRemoteProfiles();
+                }
+                const hName = ((hosts || []).find(h => h.id === host) || {}).name || host;
+                pool = remoteProfiles.filter(p => p.host === host && !p.used_by);
+                hint.textContent = "列出远端主机「" + hName + "」上的空闲目录；被占用或不连通的不会列出。";
             }
+            const opts = pool.map(p =>
+                '<option value="' + esc(p.name) + '">' + esc(p.name) + '</option>'
+            ).join("");
+            $("reuseName").innerHTML = opts || '<option value="">（无可用目录）</option>';
         }
 
         async function confirmCreate() {

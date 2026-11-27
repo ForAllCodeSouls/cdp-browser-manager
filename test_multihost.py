@@ -1712,10 +1712,13 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("正在使用该目录，请先停止实例再删除", s)
         # 远端目录拉取与 10 秒实例轮询解耦，另有 60 秒独立定时器。
         self.assertIn("setInterval(() => { if (!document.hidden && !bgEcoMode) loadRemoteProfiles(); }, 60000);", s)
-        # 远端目录只进展示列表，不进本机「复用已有持久目录」下拉（卷在远端宿主机上）。
-        seg = s[s.index("const free = profiles.filter"):s.index("const free = profiles.filter") + 120]
-        self.assertIn("const free = profiles.filter(p => !p.used_by)", seg)
-        self.assertNotIn("remoteProfiles.filter", seg)
+        # 「复用已有持久目录」下拉跟随目标主机：本机列 profiles，远端列那台主机的
+        # remoteProfiles；不能像以前那样只列本机（选远程时永远「无可用目录」）。
+        seg = s[s.index("async function refreshReuseOptions()"):s.index("async function confirmCreate()")]
+        self.assertIn('host === "local"', seg)
+        self.assertIn("pool = profiles.filter(p => !p.used_by)", seg)
+        self.assertIn("remoteProfiles.filter(p => p.host === host && !p.used_by)", seg)
+        self.assertIn('onchange="refreshReuseOptions()"', s)
         # 后端通用远端代理必须放行 DELETE，否则远端删除会 405。
         self.assertIn('methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]', self.main_src)
 
@@ -1815,6 +1818,19 @@ class ProfileSafetyAndMigrationTests(unittest.TestCase):
         self.assertIn('method: "POST"', s)
         self.assertIn('"/profile/import"', s)
         self.assertIn("source_name: importCtx.source", s)
+
+    def test_reuse_dropdown_follows_target_host(self):
+        s = self.src
+        # 复现：选远程主机后「复用已有持久目录」下拉为空。修复点是下拉跟随目标主机。
+        self.assertIn("async function refreshReuseOptions()", s)
+        seg = s[s.index("async function refreshReuseOptions()"):s.index("async function confirmCreate()")]
+        self.assertIn('$("createHost") ? $("createHost").value : "local"', seg)
+        self.assertIn("remoteProfiles.filter(p => p.host === host && !p.used_by)", seg)
+        self.assertIn("await loadRemoteProfiles()", seg)  # 首次切主机主动拉取
+        self.assertIn('id="reuseHint"', s)
+        self.assertIn("onchange=\"refreshReuseOptions()\"", s)
+        # 后端创建时 host 来自 createHost，确认远端目录由远端 manager 自己挂载。
+        self.assertIn("host: createHost,", s)
 
     def test_used_by_badge_jumps_to_instance(self):
         s = self.src
