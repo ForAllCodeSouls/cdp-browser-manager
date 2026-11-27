@@ -74,6 +74,10 @@
         .btn-locked:hover:not(:disabled) { background: #4a3b20; }
 
         .layout { flex: 1; display: flex; min-height: 0; }
+        /* 监控主面板打开时只隐藏普通视图区（侧栏+画面），不能隐藏 .layout 本身——
+           监控面板是 .layout 的子元素，整体 display:none 会把它一起藏掉（曾导致「点了没反应」）。 */
+        .layout.monitor-mode > aside,
+        .layout.monitor-mode > .viewer { display: none; }
         aside {
             width: 288px;
             flex: 0 0 288px;
@@ -172,13 +176,12 @@
             background: var(--surface-2); color: var(--text);
             border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
         }
-        /* 实例列表里的「预览」小按钮：点一下把该实例加入/移出监控主面板 */
-        .mon-toggle {
-            font-size: 10px; padding: 1px 6px; line-height: 1.4;
-            border-radius: 999px; border: 1px solid var(--border);
-            background: var(--surface-2); color: var(--muted);
-        }
-        .mon-toggle.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; }
+        /* 实例列表里的「预览」滑动开关：打开即把该实例加入监控主面板 */
+        .mon-toggle.switch-wrap { gap: 5px; font-size: 10px; color: var(--muted); }
+        .mon-toggle .switch { width: 26px; height: 15px; }
+        .mon-toggle .switch::after { width: 11px; height: 11px; }
+        .mon-toggle input:checked + .switch { background: var(--accent); border-color: var(--accent); }
+        .mon-toggle input:checked + .switch::after { transform: translateX(11px); background: #fff; }
         .item .sid-row { display: flex; align-items: center; gap: 8px; }
 
         .castbar {
@@ -2628,21 +2631,28 @@
             monitorViewOpen = !monitorViewOpen;
             $("monitorView").classList.toggle("show", monitorViewOpen);
             $("btnMonitor").classList.toggle("btn-primary", monitorViewOpen);
-            document.querySelector(".layout").style.display = monitorViewOpen ? "none" : "";
+            // 只给 .layout 加标记隐藏普通视图（aside/viewer），监控面板本身是它的子元素，
+            // 绝不能对 .layout 整体 display:none，否则监控面板被一起隐藏、看起来「没反应」。
+            document.querySelector(".layout").classList.toggle("monitor-mode", monitorViewOpen);
             if (monitorViewOpen) {
+                // 打开时先确保实例数据已加载，再渲染卡片（首次可能在 load 完成前点了按钮）。
                 renderMonitor();
+                if (!Object.keys(monitorCards).length && !$("monitorGrid").children.length) load();
                 // 面板打开时无需普通视图的画面 WS，断开省资源；关闭后由 render 重挂。
                 if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
             } else {
                 resetFrameState();
                 render();
-                syncMonitorCards();
+                // 关闭时断开所有监控 WS，避免后台仍占带宽。
+                for (const sid of Object.keys(monitorCards)) destroyMonitorCard(sid);
             }
         }
-        function toggleMonitorSid(sid) {
+        function toggleMonitorSid(sid, forceOn) {
             const at = monitorSids.indexOf(sid);
-            if (at >= 0) monitorSids.splice(at, 1);
-            else monitorSids.push(sid);
+            // 滑块 onchange 传布尔值；「移除」按钮仍走无参取反，保持兼容。
+            const wantOn = (typeof forceOn === "boolean") ? forceOn : at < 0;
+            if (wantOn && at < 0) monitorSids.push(sid);
+            else if (!wantOn && at >= 0) monitorSids.splice(at, 1);
             saveMonitorSids();
             render();
             if (monitorViewOpen) syncMonitorCards();
@@ -2824,7 +2834,10 @@
         }
 
         function render() {
-            const list = Object.values(instances);
+            // 实例按创建时间倒序（最新创建的在最前）；没有 created_at 的旧实例排在最后。
+            const list = Object.values(instances).sort((a, b) =>
+                (b.created_at || 0) - (a.created_at || 0)
+            );
             $("sideStat").textContent = list.length;
 
             if (!list.some(i => i.sid === selectedSid)) {
@@ -2839,9 +2852,13 @@
                 $("instanceList").innerHTML = list.map(i =>
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
                         '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
-                            '<button class="mon-toggle' + (monitorSids.includes(i.sid) ? ' on' : '') + '"' +
-                                ' title="加入/移出监控主面板"' +
-                                ' onclick="event.stopPropagation();toggleMonitorSid(' + jsArg(i.sid) + ')">预览</button>' +
+                            '<label class="mon-toggle switch-wrap" title="加入/移出监控主面板"' +
+                                ' onclick="event.stopPropagation()">' +
+                                '<span>预览</span>' +
+                                '<input type="checkbox"' + (monitorSids.includes(i.sid) ? ' checked' : '') +
+                                    ' onchange="toggleMonitorSid(' + jsArg(i.sid) + ', this.checked)">' +
+                                '<span class="switch"></span>' +
+                            '</label>' +
                         '</div>' +
                         '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                             (i.host && i.host !== "local"

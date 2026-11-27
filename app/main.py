@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 from urllib.parse import quote, urlencode, urlsplit
@@ -898,6 +899,16 @@ def sync_instances():
             pass
 
 
+def container_created_at(container) -> float:
+    """容器创建时间（epoch 秒）；解析失败时兜底为当前时间。排序键，重启后仍稳定。"""
+    raw = (container.attrs or {}).get("Created") or ""
+    try:
+        # Docker 返回形如 2026-11-27T06:12:33.123456789Z，Python 只接受微秒级。
+        return datetime.fromisoformat(str(raw).rstrip("Z").split(".")[0] + "+00:00").timestamp()
+    except Exception:
+        return time.time()
+
+
 def restore_instances():
     for c in client.containers.list(
         all=True, filters={"label": f"{CONTAINER_LABEL}={MANAGER_ID}"}
@@ -922,6 +933,7 @@ def restore_instances():
             "container_name": c.name,
             **ports,
             "status": c.status,
+            "created_at": container_created_at(c),
             "browser_mode": mode,
             "profile_mode": c.labels.get("cdp.profile.mode", "ephemeral"),
             "profile_name": c.labels.get("cdp.profile.name", ""),

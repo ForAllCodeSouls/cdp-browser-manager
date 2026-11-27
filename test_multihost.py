@@ -504,19 +504,56 @@ class MonitorPanelJsTests(unittest.TestCase):
         self.assertIn('id="monitorView"', self.src)
         self.assertIn('id="monitorGrid"', self.src)
         self.assertIn("function toggleMonitorView()", self.src)
-        self.assertIn("function toggleMonitorSid(sid)", self.src)
+        self.assertIn("function toggleMonitorSid(sid, forceOn)", self.src)
         self.assertIn('id="btnMonitor"', self.src)
 
-    def test_preview_button_in_instance_list(self):
-        self.assertIn('class="mon-toggle', self.src)
-        self.assertIn("event.stopPropagation();toggleMonitorSid(", self.src)
+    def test_preview_switch_in_instance_list(self):
+        # 「预览」由文字按钮改为滑动开关（label + checkbox + switch）。
+        self.assertIn('class="mon-toggle switch-wrap"', self.src)
+        self.assertIn('this.checked)', self.src)
+        self.assertIn('<span class="switch"></span>', self.src)
         self.assertIn('const MONITOR_KEY = "cdpManagerMonitorSids"', self.src)
+
+    def test_monitor_view_not_hidden_with_layout(self):
+        # 回归：曾把整个 .layout display:none 导致监控面板（其子元素）一起被藏。
+        self.assertIn('.layout.monitor-mode > aside', self.src)
+        self.assertIn('.layout.monitor-mode > .viewer', self.src)
+        self.assertIn('classList.toggle("monitor-mode", monitorViewOpen)', self.src)
+        self.assertNotIn('.layout").style.display = monitorViewOpen', self.src)
+
+    def test_instances_sorted_by_created_at(self):
+        self.assertIn("Object.values(instances).sort((a, b)", self.src)
+        self.assertIn("(b.created_at || 0) - (a.created_at || 0)", self.src)
 
     def test_monitor_uses_screencast_monitor_quality(self):
         self.assertIn("quality=monitor", self.src)
         self.assertIn("function monitorWsUrl(inst, tid)", self.src)
         # 远端实例也走 /remote 前缀（复用 cast_ws）
         self.assertIn("inst.cast_ws", self.src)
+
+
+class CreatedAtTests(unittest.TestCase):
+    """实例创建时间：重启恢复后按容器 Created 字段还原，供前端排序。"""
+
+    def test_parse_docker_created(self):
+        c = SimpleNamespace(attrs={"Created": "2026-11-27T06:12:33.123456789Z"})
+        ts = main.container_created_at(c)
+        self.assertGreater(ts, 0)
+        # 与手工解析的 UTC 时间戳一致（纳秒被截到秒）
+        from datetime import datetime, timezone
+        expect = datetime(2026, 11, 27, 6, 12, 33, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(ts, expect)
+
+    def test_bad_value_falls_back(self):
+        ts = main.container_created_at(SimpleNamespace(attrs={}))
+        self.assertGreater(ts, 0)
+
+    def test_restore_writes_created_at(self):
+        # 恢复路径必须写入 created_at，否则重启后前端排序失效。
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        seg = src[src.index("def restore_instances()"):src.index("def to_view(")]
+        self.assertIn('"created_at": container_created_at(c)', seg)
 
 
 class AuthExemptTests(unittest.TestCase):
