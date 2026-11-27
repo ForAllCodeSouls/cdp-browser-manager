@@ -1337,6 +1337,18 @@
         try { apiKey = localStorage.getItem(API_KEY_STORAGE) || ""; } catch (e) {}
 
         function authHeaders() { return apiKey ? { "X-API-Key": apiKey } : {}; }
+        // CDP HTTP 端点读取：同源代理（/<port>/json/*、/remote/<host>/<port>/json/*）
+        // 不在鉴权白名单，必须带 X-API-Key；旧字段的跨源直连不带（自定义头会触发
+        // CORS，且浏览器自带 CDP 不需要面板密钥）。三处弹窗读取统一走这里，避免
+        // 密钥模式下「页面 UA」正常而「原始值」全部 401。
+        async function cdpFetch(url) {
+            let sameOrigin = true;
+            try { sameOrigin = new URL(url, location.href).origin === location.origin; }
+            catch (e) {}
+            const res = await fetch(url, sameOrigin ? { headers: authHeaders() } : {});
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return await res.json();
+        }
         function keyQuery(url) {
             if (!apiKey) return url;
             return url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(apiKey);
@@ -4076,9 +4088,7 @@
             const base = (sel.cdp_http_proxy || sel.cdp_http || "").replace(/\/$/, "");
             if (!base) { toast("没有可用的 CDP 地址"); return; }
             try {
-                const res = await fetch(base + "/json/version");
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                const data = await res.json();
+                const data = await cdpFetch(base + "/json/version");
                 const ws = data.webSocketDebuggerUrl || "";
                 if (!ws) throw new Error("版本信息里没有 webSocketDebuggerUrl");
                 try { await navigator.clipboard.writeText(ws); }
@@ -4114,9 +4124,7 @@
             const body = $("cdpInfoBody");
             body.textContent = "加载中…";
             try {
-                const res = await fetch(cdpRootOf(i) + "/json/version");
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                const d = await res.json();
+                const d = await cdpFetch(cdpRootOf(i) + "/json/version");
                 // Browser / User-Agent 是浏览器进程级原始值（/json/version 写死，
                 // 没有 CDP 命令能覆盖），页面伪装改不到它——标注「原始」避免误读成
                 // 伪装失败。真正反映反爬所见的是下面异步读的「页面 UA」。
@@ -4192,9 +4200,7 @@
             const tid = castState && castState.sid === sel.sid ? castState.tid : "";
             if (!tid) { toast("请先选中一个标签"); return; }
             try {
-                const res = await fetch(cdpRootOf(sel) + "/json/list");
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                const list = await res.json();
+                const list = await cdpFetch(cdpRootOf(sel) + "/json/list");
                 const t = (Array.isArray(list) ? list : []).find(x => x.id === tid);
                 const ws = t && (t.webSocketDebuggerUrl || t.wssUrl || t.wsUrl);
                 if (!ws) throw new Error("没找到当前标签的 WS 地址");
@@ -4270,9 +4276,7 @@
             const sel = instances[snippetSid];
             if (!sel) return;
             try {
-                const res = await fetch(cdpRootOf(sel) + "/json/version");
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                const d = await res.json();
+                const d = await cdpFetch(cdpRootOf(sel) + "/json/version");
                 let ws = d.webSocketDebuggerUrl || "";
                 if (!ws) throw new Error("版本信息里没有 webSocketDebuggerUrl");
                 $("snippetWs").value = keyQuery(ws);

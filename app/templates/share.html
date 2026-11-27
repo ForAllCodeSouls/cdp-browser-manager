@@ -131,13 +131,22 @@
         return proto + "//" + location.host + tpl;
     }
 
+    // screencast 缩放帧与 captureScreenshot 原始帧尺寸不同且解码异步，旧帧可能后到
+    // 覆盖新帧。序号挂在各自 canvas 上（卡片与大画面互不干扰，重渲染后自动清零），
+    // 只画最新帧；画布尺寸只在宽高比真正变化时重设，平时缩放绘制，避免重设黑闪。
     function drawFrame(canvas, data, onFirst) {
+        const seq = canvas._frameSeq = (canvas._frameSeq || 0) + 1;
         const img = new Image();
         img.onload = () => {
-            if (canvas.width !== img.width || canvas.height !== img.height) {
+            const drawnSeq = canvas._drawnSeq || 0;
+            if (seq <= drawnSeq) return;
+            canvas._drawnSeq = seq;
+            const cw = canvas.width, ch = canvas.height;
+            const ratio = img.width / (img.height || 1);
+            if (!cw || !ch || Math.abs(ratio - cw / ch) > 0.02) {
                 canvas.width = img.width; canvas.height = img.height;
             }
-            canvas.getContext("2d").drawImage(img, 0, 0);
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
             if (onFirst) onFirst();
         };
         img.src = "data:image/jpeg;base64," + data;

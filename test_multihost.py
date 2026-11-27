@@ -1480,8 +1480,10 @@ class PanelEcoAndShareTests(unittest.TestCase):
         # captureScreenshot 保底帧是原始视口（1920x1080）。旧前端每帧按图片尺寸
         # 重设 canvas，重设会先清空画布露出深色背景 → 周期性黑闪；异步 Image
         # onload 还会让旧帧后画覆盖新帧。三处绘制统一改为：帧序号丢弃过期帧，
-        # canvas 只在宽高比真正变化时重设，其余帧缩放绘制。
-        for src, label in ((self.src, "index.html"), (self.cast_src, "cast.html")):
+        # canvas 只在宽高比真正变化时重设，其余帧缩放绘制。三处绘制都要覆盖：
+        # 管理页、独立抓屏页、只读分享页（分享页也走 mode=cast，之前漏修会闪）。
+        for src, label in ((self.src, "index.html"), (self.cast_src, "cast.html"),
+                           (self.share_src, "share.html")):
             self.assertIn("frameSeq", src, label)
             self.assertIn("drawnSeq", src, label)
             self.assertIn("seq <= drawnSeq", src, label)
@@ -1532,6 +1534,27 @@ class PanelEcoAndShareTests(unittest.TestCase):
             'fetch(scopeUrl(url), opts)',
         ):
             self.assertIn(token, self.src)
+
+        # 6) CDP 信息弹窗/脚本库三处 JSON 读取统一走 cdpFetch：同源代理带 X-API-Key
+        #    （/json/* 不在鉴权白名单），跨源直连不带（避免 CORS 破坏旧回退）。
+        #    密钥模式下不能再出现裸 fetch，否则「页面 UA」正常而「原始值」全 401。
+        self.assertIn("async function cdpFetch(url)", self.src)
+        self.assertIn("new URL(url, location.href).origin === location.origin", self.src)
+        self.assertIn("fetch(url, sameOrigin ? { headers: authHeaders() } : {})", self.src)
+        for token in (
+            'cdpFetch(base + "/json/version")',        # copyBrowserWs
+            'cdpFetch(cdpRootOf(i) + "/json/version")',  # refreshCdpInfo
+            'cdpFetch(cdpRootOf(sel) + "/json/list")',   # copyCurrentPageWs
+            'cdpFetch(cdpRootOf(sel) + "/json/version")',  # loadSnippetWs
+        ):
+            self.assertIn(token, self.src)
+        for bare in (
+            'await fetch(base + "/json/version")',
+            'await fetch(cdpRootOf(i) + "/json/version")',
+            'await fetch(cdpRootOf(sel) + "/json/list")',
+            'await fetch(cdpRootOf(sel) + "/json/version")',
+        ):
+            self.assertNotIn(bare, self.src)
 
     def test_snippet_modal_width_overrides_base_panel(self):
         # 脚本弹窗要宽于 .panel 基类(440px)。基类规则在文件后面定义，特异性相同会覆盖，
