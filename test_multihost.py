@@ -293,6 +293,54 @@ class BinaryFrameForwardingTests(unittest.TestCase):
         self.assertIn("if request_shot():", src)
 
 
+class VncRefreshTests(unittest.TestCase):
+    """VNC 刷新档：x11vnc 采集节流由 VNC_WAIT/VNC_DEFER 控制，新建实例生效。"""
+
+    def test_normalize_falls_back_to_standard(self):
+        self.assertEqual(main.normalize_vnc_refresh(""), "standard")
+        self.assertEqual(main.normalize_vnc_refresh(None), "standard")
+        self.assertEqual(main.normalize_vnc_refresh("bogus"), "standard")
+        self.assertEqual(main.normalize_vnc_refresh("FAST"), "fast")
+
+    def test_profiles_get_progressively_faster(self):
+        std = main.VNC_REFRESH_PROFILES["standard"]
+        fast = main.VNC_REFRESH_PROFILES["fast"]
+        ultra = main.VNC_REFRESH_PROFILES["ultra"]
+        # 标准保持 x11vnc 自带默认，旧实例行为不变
+        self.assertEqual((std["wait"], std["defer"]), (20, 30))
+        self.assertGreater(std["wait"], fast["wait"])
+        self.assertGreater(fast["wait"], ultra["wait"])
+        self.assertEqual((ultra["wait"], ultra["defer"]), (0, 0))
+
+    def test_start_script_applies_throttle_flags(self):
+        with open(os.path.join(ROOT, "start.sh"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('VNC_WAIT="${VNC_WAIT:-20}"', src)
+        self.assertIn('VNC_DEFER="${VNC_DEFER:-30}"', src)
+        self.assertIn('-wait "$VNC_WAIT" -defer "$VNC_DEFER"', src)
+        # 非数字兜底：异常环境变量不能让 x11vnc 起不来
+        self.assertIn("*[!0-9]*", src)
+
+    def test_manager_passes_env_and_label(self):
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('environment["VNC_WAIT"] = str(vp["wait"])', src)
+        self.assertIn('environment["VNC_DEFER"] = str(vp["defer"])', src)
+        self.assertIn("VNC_REFRESH_LABEL: vnc_key", src)
+        self.assertIn('"vnc_refresh": vnc_refresh', src)  # 远端创建转发
+        self.assertIn('"vnc_refresh": vnc_key', src)      # 实例信息回传
+
+    def test_js_sends_vnc_refresh_on_create(self):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('id="createVncRefresh"', src)
+        self.assertIn("vnc_refresh: $(\"createVncRefresh\")", src)
+        self.assertIn("VNC_REFRESH_LABELS", src)
+        # 无头内核隐藏该行
+        self.assertIn("function onBrowserChange()", src)
+        self.assertIn('row.style.display = ($("createBrowser").value === "full")', src)
+
+
 class CastQualityProfileTests(unittest.TestCase):
     """抓屏画质三档：未知档位回落均衡，参数不越界。"""
 

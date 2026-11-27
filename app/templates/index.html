@@ -611,12 +611,21 @@
             </div>
             <div class="row">
                 <label for="createBrowser">浏览器内核</label>
-                <select id="createBrowser">
+                <select id="createBrowser" onchange="onBrowserChange()">
                     <option value="full">完整 Chrome — 有地址栏/标签栏，支持 VNC 与抓屏</option>
                     <option value="headless">老无头 chrome-headless-shell — 轻量，身份自动伪装</option>
                     <option value="headless-new">新无头 Chrome --headless=new — 完整内核，身份自动伪装</option>
                 </select>
                 <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。两种无头都会自动隐藏 HeadlessChrome 身份；都不提供 VNC。</div>
+            </div>
+            <div class="row" id="vncRefreshRow">
+                <label for="createVncRefresh">VNC 刷新速度</label>
+                <select id="createVncRefresh">
+                    <option value="standard">标准 — x11vnc 默认（20/30ms，约 30fps 上限）</option>
+                    <option value="fast">快速 — 10/10ms，动态画面更跟手</option>
+                    <option value="ultra">极速 — 0/0ms，变化即推，CPU/带宽最高</option>
+                </select>
+                <div class="hint">只影响 VNC 模式的画面刷新节奏（由容器内 x11vnc 的采集节流决定），抓屏模式不受影响。参数在容器启动时固定，只对新建实例生效，换档需重建实例。</div>
             </div>
             <div class="row">
                 <label for="createMode">用户目录模式</label>
@@ -1474,6 +1483,8 @@
 
         // 全局画质档位切换：对所有实例生效，切换后重连画面让 VNC/抓屏都按新档位生效。
         const QUALITY_LABELS = { low: "省流", medium: "均衡", high: "高清" };
+        // VNC 刷新档（容器内 x11vnc 采集节流，仅完整内核、新建实例时生效）。
+        const VNC_REFRESH_LABELS = { standard: "标准", fast: "快速", ultra: "极速" };
         // 按「画面模式 + 画质档位」给出一句建议，帮用户快速判断当前组合是否合适。
         function qualityHint(mode, q) {
             const byMode = {
@@ -1504,9 +1515,16 @@
         function openCreate() {
             if (busy) return;
             onModeChange();
+            onBrowserChange();
             $("createMask").classList.add("open");
         }
         function closeCreate() { $("createMask").classList.remove("open"); }
+        // VNC 刷新档只对完整内核有意义：无头实例没有 VNC，隐藏整行避免误解。
+        function onBrowserChange() {
+            const row = $("vncRefreshRow");
+            if (!row) return;
+            row.style.display = ($("createBrowser").value === "full") ? "" : "none";
+        }
         function onModeChange() {
             const mode = $("createMode").value;
             $("nameRow").style.display = mode === "new" ? "block" : "none";
@@ -1555,6 +1573,7 @@
                             profile_mode: profileMode,
                             profile_name: profileName,
                             browser_mode: browserMode,
+                            vnc_refresh: $("createVncRefresh") ? $("createVncRefresh").value : "standard",
                             host: $("createHost") ? $("createHost").value : "local",
                         }),
                     },
@@ -2549,6 +2568,10 @@
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
                     : '';
+                const vncInfo = (!headless && sel.vnc_refresh)
+                    ? '<span class="kv">VNC 刷新 <b>' +
+                        esc(VNC_REFRESH_LABELS[sel.vnc_refresh] || sel.vnc_refresh) + '</b></span>'
+                    : '';
                 const qseg =
                     '<span class="seg qseg" title="全局画质档位，对所有实例生效">' +
                         ['low', 'medium', 'high'].map(k =>
@@ -2576,7 +2599,7 @@
                         ? '<span class="kv">CDP(直连) <b>' + esc(sel.cdp_addr || cdpDirectFull) + '</b>' +
                             '<button class="copy" onclick="copyCdp(\'direct\')">复制</button></span>'
                         : '') +
-                    pinfo +
+                    pinfo + vncInfo +
                     '<span class="spacer"></span>' +
                     '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +

@@ -314,6 +314,22 @@ BROWSER_IMAGE_HEADLESS = os.environ.get(
 VALID_BROWSER_MODES = ("full", "headless", "headless-new")
 HEADLESS_MODES = ("headless", "headless-new")
 
+# VNC 刷新档：只控制完整内核里 x11vnc 的采集节流（-wait 轮询 / -defer 合并延迟），
+# 前端 noVNC 的 quality/compression 只影响清晰度与带宽，改不了帧率。
+# 注意：参数是 x11vnc 启动参数，只在**新建实例**时生效；改档需重建实例。
+# 默认值与 x11vnc 自带默认一致（20/30ms），旧实例行为不变。
+VNC_REFRESH_LABEL = "cdp.vnc.refresh"
+VNC_REFRESH_PROFILES = {
+    "standard": {"wait": 20, "defer": 30, "label": "标准"},
+    "fast": {"wait": 10, "defer": 10, "label": "快速"},
+    "ultra": {"wait": 0, "defer": 0, "label": "极速"},
+}
+
+
+def normalize_vnc_refresh(name: str) -> str:
+    key = str(name or "").strip().lower()
+    return key if key in VNC_REFRESH_PROFILES else "standard"
+
 
 def image_for_mode(browser_mode: str) -> str:
     """按内核选择对应的浏览器镜像。headless-new 复用 full 镜像。"""
@@ -838,6 +854,7 @@ def restore_instances():
             "browser_mode": mode,
             "profile_mode": c.labels.get("cdp.profile.mode", "ephemeral"),
             "profile_name": c.labels.get("cdp.profile.name", ""),
+            "vnc_refresh": normalize_vnc_refresh(c.labels.get(VNC_REFRESH_LABEL, "")),
         }
 
 
@@ -968,8 +985,10 @@ def start_browser_instance(
     profile_mode: str = "ephemeral",
     profile_name: str = "",
     browser_mode: str = "full",
+    vnc_refresh: str = "standard",
 ) -> dict:
     persistent = profile_mode == "persistent"
+    vnc_key = normalize_vnc_refresh(vnc_refresh)
     # 先确认镜像在本地：否则 containers.run 会触发 pull，长时间占着全局锁，
     # 导致面板其它接口（/api/list 等）全部超时。镜像缺失时立即给出提示。
     ensure_image_available(image_for_mode(browser_mode))
@@ -994,8 +1013,14 @@ def start_browser_instance(
             "cdp.browser.image": image,
             "cdp.profile.mode": profile_mode,
             "cdp.profile.name": profile_name if persistent else "",
+            VNC_REFRESH_LABEL: vnc_key,
         }
         environment = {"BROWSER_MODE": browser_mode}
+        if browser_mode == "full":
+            # 只有完整内核跑 x11vnc；无头实例不传这组变量（传了也无害，但少点噪音）。
+            vp = VNC_REFRESH_PROFILES[vnc_key]
+            environment["VNC_WAIT"] = str(vp["wait"])
+            environment["VNC_DEFER"] = str(vp["defer"])
         volumes = None
         if persistent:
             name = profile_name or uuid.uuid4().hex[:12]
@@ -1063,6 +1088,7 @@ def start_browser_instance(
             "browser_mode": browser_mode,
             "profile_mode": profile_mode,
             "profile_name": profile_name if persistent else "",
+            "vnc_refresh": vnc_key,
         }
         INSTANCES[sid] = info
 
@@ -2010,6 +2036,7 @@ async def new_instance(request: Request):
     name = ""
     browser_mode = "full"
     host_id = "local"
+    vnc_refresh = "standard"
     try:
         payload = await request.json()
         if isinstance(payload, dict):
@@ -2017,8 +2044,10 @@ async def new_instance(request: Request):
             name = str(payload.get("profile_name", "") or "")
             browser_mode = payload.get("browser_mode", browser_mode)
             host_id = str(payload.get("host") or "local")
+            vnc_refresh = str(payload.get("vnc_refresh") or "standard")
     except Exception:
         pass
+    vnc_refresh = normalize_vnc_refresh(vnc_refresh)
 
     # 远端主机：由本机代理转发创建，密钥只在本机使用。
     if host_id != "local":
@@ -2027,7 +2056,7 @@ async def new_instance(request: Request):
             raise HTTPException(status_code=404, detail=f"未知主机: {host_id}")
         forwarded = {
             "profile_mode": mode, "profile_name": name,
-            "browser_mode": browser_mode,
+            "browser_mode": browser_mode, "vnc_refresh": vnc_refresh,
         }
         try:
             _, raw, _ = await run_in_threadpool(
@@ -2053,7 +2082,7 @@ async def new_instance(request: Request):
     try:
         sid = str(uuid.uuid4())
         data = await run_in_threadpool(
-            start_browser_instance, sid, mode, name, browser_mode
+            start_browser_instance, sid, mode, name, browser_mode, vnc_refresh
         )
         return JSONResponse(to_view(data, request))
     except Exception as e:

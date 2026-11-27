@@ -122,7 +122,18 @@ if [ "$BROWSER_MODE" = "full" ]; then
     done
 
     # 2) VNC 服务端
-    x11vnc -display "$DISPLAY" -rfbport 5900 -forever -shared -nopw -quiet >/tmp/x11vnc.log 2>&1 &
+    # 刷新档：manager 按「标准/快速/极速」传入 VNC_WAIT / VNC_DEFER（毫秒），
+    # 控制 x11vnc 的采集节流——wait 是轮询间隔，defer 是合并延迟。
+    # 默认 20/30 与 x11vnc 自带默认一致；0/0 表示画面一变化立刻推（最跟手，
+    # 但连续动画时容器 CPU 和带宽明显上升）。前端 noVNC 的 quality/compression
+    # 只影响清晰度和带宽，改不了帧率，所以刷新速度必须在这里调。
+    VNC_WAIT="${VNC_WAIT:-20}"
+    VNC_DEFER="${VNC_DEFER:-30}"
+    case "$VNC_WAIT" in ''|*[!0-9]*) VNC_WAIT=20 ;; esac
+    case "$VNC_DEFER" in ''|*[!0-9]*) VNC_DEFER=30 ;; esac
+    echo "VNC refresh: wait=${VNC_WAIT}ms defer=${VNC_DEFER}ms"
+    x11vnc -display "$DISPLAY" -rfbport 5900 -forever -shared -nopw -quiet \
+        -wait "$VNC_WAIT" -defer "$VNC_DEFER" >/tmp/x11vnc.log 2>&1 &
     sleep 1
 
     # 3) noVNC websocket 桥
