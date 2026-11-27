@@ -1612,6 +1612,16 @@ class PanelEcoAndShareTests(unittest.TestCase):
             'd["WebKit-Version"]', "d.webSocketDebuggerUrl", "copyTextValue(",
         ):
             self.assertIn(token, self.src)
+        # 原始身份标注「·原始」+ 页面 UA 一行：用 Runtime.evaluate 读 navigator.userAgent，
+        # 显示 [已伪装]/[未伪装]，让「进程原始值含 HeadlessChrome」不再被误读成伪装失败。
+        for token in (
+            "浏览器·原始", "UA·原始", "cdpPageUa", "async function refreshPageUa(sid, gen)",
+            "cdpInfoGen", "gen !== cdpInfoGen", 't.type === "page"',
+            '"Runtime.evaluate"', '"navigator.userAgent"', "returnByValue: true",
+            "r.result.result.value", "[已伪装]", "[未伪装]", "/HeadlessChrome/i.test(ua)",
+            '"/api/instance/" + encodeURIComponent(sid) + "/cmd"',
+        ):
+            self.assertIn(token, self.src)
 
         # 当前页 WS：代理重写后的 WS + 自动附加 API_KEY。
         for token in (

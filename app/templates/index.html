@@ -4096,6 +4096,7 @@
 
         // ---- CDP 信息弹窗：结构化展示版本信息，不必读原始 JSON ----
         let cdpInfoSid = "";
+        let cdpInfoGen = 0;   // 刷新代数：异步补页面 UA 时防止写回已过期的弹窗内容
         async function openCdpInfo(sid) {
             const i = instances[sid || selectedSid];
             if (!i) return;
@@ -4109,29 +4110,78 @@
         async function refreshCdpInfo() {
             const i = instances[cdpInfoSid];
             if (!i) return;
+            const gen = ++cdpInfoGen;
             const body = $("cdpInfoBody");
             body.textContent = "加载中…";
             try {
                 const res = await fetch(cdpRootOf(i) + "/json/version");
                 if (!res.ok) throw new Error("HTTP " + res.status);
                 const d = await res.json();
+                // Browser / User-Agent 是浏览器进程级原始值（/json/version 写死，
+                // 没有 CDP 命令能覆盖），页面伪装改不到它——标注「原始」避免误读成
+                // 伪装失败。真正反映反爬所见的是下面异步读的「页面 UA」。
                 const rows = [
-                    ["浏览器", d.Browser],
-                    ["协议版本", d["Protocol-Version"]],
-                    ["User-Agent", d["User-Agent"]],
-                    ["V8 版本", d["V8-Version"]],
-                    ["Blink", d["WebKit-Version"]],
-                    ["浏览器 WS", d.webSocketDebuggerUrl],
+                    ["浏览器·原始", d.Browser, "浏览器进程原始身份，CDP 写死、网站读不到"],
+                    ["协议版本", d["Protocol-Version"], ""],
+                    ["UA·原始", d["User-Agent"], "浏览器进程原始 User-Agent，网站读不到"],
+                    ["V8 版本", d["V8-Version"], ""],
+                    ["Blink", d["WebKit-Version"], ""],
+                    ["浏览器 WS", d.webSocketDebuggerUrl, ""],
                 ];
-                body.innerHTML = rows.map(([k, v]) =>
-                    '<div class="cdp-info-row"><span class="k">' + esc(k) + '</span>' +
+                body.innerHTML = rows.map(([k, v, tip]) =>
+                    '<div class="cdp-info-row"><span class="k"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + esc(k) + '</span>' +
                     '<span class="v">' + esc(v || "—") + '</span>' +
                     (v ? '<button class="btn-mini" onclick="copyTextValue(' + jsArg(v) + ',' + jsArg(k) + ')">复制</button>' : '') +
                     '</div>'
-                ).join("");
+                ).join("") +
+                '<div class="cdp-info-row"><span class="k" title="网站 JS 读到的 navigator.userAgent，身份伪装作用在这里">' +
+                '页面 UA</span><span class="v" id="cdpPageUa">读取中…</span></div>';
+                // 页面 UA 走实例级 API（/cmd 的 Runtime.evaluate 已在后端白名单），
+                // scopeUrl 自动给远端实例加 /remote/<host> 前缀，同源继承密钥。
+                refreshPageUa(i.sid, gen);
             } catch (e) {
                 body.innerHTML = '<div class="hint">读取失败：' + esc(e.message) +
                     '。远端主机跨源时可能取不到，可到「版本信息」页手动复制。</div>';
+            }
+        }
+        // 用任一 page 标签读 navigator.userAgent，标出伪装是否真的生效。
+        async function refreshPageUa(sid, gen) {
+            const set = (text) => {
+                if (gen !== cdpInfoGen) return;
+                const el = $("cdpPageUa");
+                if (el) el.textContent = text;
+            };
+            try {
+                const tl = await api("/api/instance/" + encodeURIComponent(sid) + "/targets");
+                if (gen !== cdpInfoGen) return;
+                const pages = (tl.targets || []).filter(t => t.type === "page");
+                const tid = pages[0] && pages[0].id;
+                if (!tid) { set("（该实例没有可用标签页）"); return; }
+                const r = await api("/api/instance/" + encodeURIComponent(sid) + "/cmd", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        target_id: tid,
+                        method: "Runtime.evaluate",
+                        params: { expression: "navigator.userAgent", returnByValue: true },
+                    }),
+                }, 20000);
+                if (gen !== cdpInfoGen) return;
+                const ua = r && r.result && r.result.result && r.result.result.value;
+                if (!ua || typeof ua !== "string") { set("（读取失败，守护可能未连上 CDP）"); return; }
+                const masked = !/HeadlessChrome/i.test(ua);
+                set(ua + (masked ? "  [已伪装]" : "  [未伪装]"));
+                if (gen !== cdpInfoGen) return;
+                const row = $("cdpPageUa") && $("cdpPageUa").parentNode;
+                if (row && !row.querySelector("button")) {
+                    const btn = document.createElement("button");
+                    btn.className = "btn-mini";
+                    btn.textContent = "复制";
+                    btn.onclick = () => copyTextValue(ua, "页面 UA");
+                    row.appendChild(btn);
+                }
+            } catch (e) {
+                set("（读取失败：" + e.message + "）");
             }
         }
 
