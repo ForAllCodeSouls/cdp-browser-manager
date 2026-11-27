@@ -1356,6 +1356,99 @@ class PanelEcoAndShareTests(unittest.TestCase):
                       'id="btnRestoreTab"', "#i-restore", "loadClosedTabs();"):
             self.assertIn(token, self.src)
 
+    def test_vnc_auto_switch_toggle_and_screen_lock_restore(self):
+        # VNC 新标签自动切换默认关；屏幕锁期间挂起，解锁后恢复用户原状态。
+        for token in (
+            "autoSwitchTab: s.autoSwitchTab === true",
+            "autoSwitchTab: false, quality: suggestQuality()",
+            "let autoSwitchBeforeLock = null;",
+            "function autoSwitchEnabled()",
+            "settings.autoSwitchTab === true && !screenLocked",
+            "function toggleAutoSwitchTab()",
+            'id="setAutoSwitchTab"',
+            'id="btnAutoSwitch"',
+            '"自动切:暂停"',
+        ):
+            self.assertIn(token, self.src)
+
+        # 新标签分支必须受开关约束，且只在 VNC 模式生效。
+        i = self.src.index("async function pollCastTargets(")
+        seg = self.src[i:i + 3000]
+        self.assertIn("if (vncMode && !autoSwitchEnabled())", seg)
+        self.assertIn("renderCastBar(sel, true);", seg)
+        # 当前标签被外部关掉的兜底激活：屏幕锁期间也跳过。
+        self.assertIn("if (!screenLocked) {", seg)
+
+        # 屏幕锁：上锁记录用户原状态，解锁恢复（不写死为开/关）。
+        j = self.src.index("function toggleScreenLock()")
+        seg2 = self.src[j:j + 1400]
+        self.assertIn(
+            "if (autoSwitchBeforeLock === null) autoSwitchBeforeLock = settings.autoSwitchTab === true;",
+            seg2,
+        )
+        self.assertIn("settings.autoSwitchTab = autoSwitchBeforeLock;", seg2)
+        self.assertIn("autoSwitchBeforeLock = null;", seg2)
+
+        # 手动激活/实例切换时也不在屏幕锁期间抢焦点。
+        k = self.src.index("async function mountVncNav(")
+        seg3 = self.src[k:k + 1400]
+        self.assertIn("if (changed && !screenLocked)", seg3)
+
+    def test_detail_cdp_quick_links_and_current_page(self):
+        # 「新窗口打开」拆成「当前网页」+「CDP 信息」：抓屏模式不再把 JSON 当画面入口。
+        self.assertIn("function currentPageUrl()", self.src)
+        self.assertIn("function openCurrentPage()", self.src)
+        self.assertIn('window.open(url, "_blank", "noopener")', self.src)
+        self.assertIn('">当前网页 ↗</button>', self.src)
+        self.assertNotIn('>新窗口打开</a>', self.src)
+        # CDP 信息移到左侧实例列表项右上角（红框位置），点它不切换当前实例。
+        self.assertIn("function cdpVersionUrl(i)", self.src)
+        self.assertIn('class="inst-cdp-link"', self.src)
+        self.assertIn("openCdpInfo(", self.src)
+        self.assertNotIn('title="浏览器版本与 webSocketDebuggerUrl">CDP 信息 ↗</a>', self.src)
+
+        # 详情栏第二行快捷链接：版本 / 标签 / 协议 / VNC / noVNC / 文档 / WS 复制。
+        for token in (
+            'class="detail-links"',
+            '{ label: "版本信息", url: versionUrl',
+            'cdpRoot + "/json/list"',
+            'cdpRoot + "/json/protocol"',
+            'sel.vnc_url_proxy || sel.vnc_url',
+            "vncUrl(sel)",
+            "chromedevtools.github.io/devtools-protocol",
+            'onclick="copyBrowserWs()"',
+            "async function copyBrowserWs()",
+            "data.webSocketDebuggerUrl",
+        ):
+            self.assertIn(token, self.src)
+
+    def test_cdp_info_panel_and_script_copy(self):
+        # CDP 信息弹窗：结构化展示 /json/version，每项可复制，不再跳原始 JSON。
+        for token in (
+            'id="cdpInfoMask"', 'id="cdpInfoBody"',
+            "async function openCdpInfo(sid)", "async function refreshCdpInfo()",
+            "function closeCdpInfo()", "cdp-info-row",
+            'd["Protocol-Version"]', 'd["User-Agent"]', 'd["V8-Version"]',
+            'd["webkit-version"]', "d.webSocketDebuggerUrl", "copyTextValue(",
+        ):
+            self.assertIn(token, self.src)
+
+        # 当前页 WS 与脚本连接代码：代理重写后的 WS + 自动附加 API_KEY。
+        for token in (
+            "function cdpRootOf(i)",
+            "async function copyTextValue(text, label)",
+            "async function copyCurrentPageWs()",
+            '"/json/list"',
+            "t.webSocketDebuggerUrl || t.wssUrl || t.wsUrl",
+            "async function copyScriptSnippet(kind)",
+            "ws = withKey(ws)",
+            "browserWSEndpoint:",
+            "websocket.create_connection(",
+            "copyScriptSnippet(\\'node\\')",
+            "copyScriptSnippet(\\'python\\')",
+        ):
+            self.assertIn(token, self.src)
+
     def test_viewer_page_is_readonly_with_grid_and_zoom(self):
         for token in ('id="grid"', 'id="large"', "function openLarge(sid)",
                       "function closeLarge()", 'wsUrl(inst, "monitor")',

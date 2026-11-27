@@ -327,6 +327,38 @@
         .detail .kv { color: var(--muted); }
         .detail .kv b { color: var(--text); font-family: ui-monospace, monospace; font-weight: 500; }
         .detail .spacer { flex: 1; }
+        /* 详情栏第二行：对应主机的 CDP 常用端点快捷链接 */
+        .detail .detail-links {
+            flex-basis: 100%;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding-top: 7px;
+            border-top: 1px dashed var(--border);
+        }
+        .detail .detail-links .lk-label { color: var(--muted); font-size: 11px; margin-right: 2px; }
+        .detail .detail-links .lk {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 9px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface-2);
+            color: var(--muted);
+            font: inherit;
+            font-size: 11px;
+            text-decoration: none;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .detail .detail-links .lk:hover { color: var(--text); border-color: var(--accent); }
+
+        /* CDP 信息弹窗：结构化展示 /json/version，长值允许折行 */
+        .cdp-info-body { display: flex; flex-direction: column; gap: 9px; max-height: 60vh; overflow: auto; }
+        .cdp-info-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+        .cdp-info-row .k { flex: 0 0 104px; color: var(--muted); }
+        .cdp-info-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
 
         .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
         .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
@@ -346,6 +378,19 @@
         .mon-toggle input:checked + .switch { background: var(--accent); border-color: var(--accent); }
         .mon-toggle input:checked + .switch::after { transform: translateX(11px); background: #fff; }
         .item .sid-row { display: flex; align-items: center; gap: 8px; }
+        .item .sid-row .inst-cdp-link {
+            margin-left: auto;
+            flex: none;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font: inherit;
+            font-size: 11px;
+            text-decoration: none;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .item .sid-row .inst-cdp-link:hover { color: var(--accent); }
 
         .castbar {
             display: none;
@@ -366,6 +411,8 @@
         .castbar .navrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
         .castbar .tabrow { flex-wrap: nowrap; overflow: hidden; padding-bottom: 2px; }
         .castbar .lock-tip { color: var(--warn); font-size: 11px; margin-left: auto; }
+        .castbar .btn-auto-switch { flex: none; white-space: nowrap; }
+        .castbar .btn-auto-switch.on { color: var(--accent); border-color: var(--accent); }
         .chip {
             flex: 0 1 132px;
             min-width: 26px;
@@ -1027,6 +1074,14 @@
                 </select>
             </div>
             <div class="row">
+                <label class="switch-wrap">
+                    <span>VNC 新标签自动切换</span>
+                    <input type="checkbox" id="setAutoSwitchTab">
+                    <span class="switch"></span>
+                </label>
+                <div class="hint">默认关闭：脚本弹出新标签时管理页不会激活它、不抢焦点，避免干扰 CDP 脚本。开启后新标签会自动切到前台。<br>屏幕锁打开期间会自动挂起，解锁后恢复此设置；VNC 导航条上也有快捷开关。</div>
+            </div>
+            <div class="row">
                 <label>浏览器镜像 <span id="imageStatusBadge" style="font-size:11px;color:var(--muted)"></span></label>
                 <div class="hint" id="autoUpdateInfo" style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">自动更新计划加载中…</div>
                 <button id="btnUpdateAuto" onclick="updateAuto()" style="width:100%" class="btn-primary">立即更新（仅在无实例运行时）</button>
@@ -1065,6 +1120,18 @@
             <div class="actions">
                 <button onclick="closeKey()">取消</button>
                 <button class="btn-primary" onclick="saveKey()">保存并连接</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CDP 信息弹窗：结构化展示 /json/version，长值可复制，不必读原始 JSON -->
+    <div class="mask" id="cdpInfoMask" onclick="if(event.target===this) closeCdpInfo()">
+        <div class="panel">
+            <h3>CDP 信息 <span id="cdpInfoSid" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+            <div id="cdpInfoBody" class="cdp-info-body">加载中…</div>
+            <div class="actions">
+                <button onclick="refreshCdpInfo()">刷新</button>
+                <button class="btn-primary" onclick="closeCdpInfo()">关闭</button>
             </div>
         </div>
     </div>
@@ -1450,13 +1517,16 @@
                     page: s.page === "vnc.html" ? "vnc.html" : "vnc_lite.html",
                     scale: s.scale === "0" ? "0" : "1",
                     screenLocked: s.screenLocked === true,
+                    // VNC 新标签自动切换默认关闭：脚本控制浏览器时不要抢焦点/激活标签。
+                    autoSwitchTab: s.autoSwitchTab === true,
                     quality: q,
                     captureMode: s.captureMode === "snap" ? "snap" : "cast",
                     snapRate: ["fast", "normal", "eco"].includes(s.snapRate) ? s.snapRate : "normal",
                 };
             } catch (e) {
                 return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false,
-                    quality: suggestQuality(), captureMode: "cast", snapRate: "normal" };
+                    autoSwitchTab: false, quality: suggestQuality(),
+                    captureMode: "cast", snapRate: "normal" };
             }
         }
         let settings = loadSettings();
@@ -1484,10 +1554,30 @@
             saveLastView();
         }
 
+        // ---- VNC 新标签自动切换开关 ----
+        // 用户设置存在 settings.autoSwitchTab（默认关），避免脚本弹新标签时被抢焦点。
+        // 屏幕锁打开期间临时挂起：记下锁定前的用户状态，解锁后恢复，
+        // 临时挂起不写回用户设置（导航条/设置里看到的始终是用户自己的选择）。
+        let autoSwitchBeforeLock = null;
+        function autoSwitchEnabled() {
+            return settings.autoSwitchTab === true && !screenLocked;
+        }
+        function toggleAutoSwitchTab() {
+            settings.autoSwitchTab = settings.autoSwitchTab !== true;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            if (screenLocked) autoSwitchBeforeLock = settings.autoSwitchTab;
+            const sel = currentSel();
+            if (sel && castState && castState.sid === sel.sid) renderCastBar(sel, true);
+            toast(settings.autoSwitchTab
+                ? "已开启 VNC 新标签自动切换：新标签会切到前台，可能干扰脚本"
+                : "已关闭 VNC 新标签自动切换：新标签不再抢焦点", "ok");
+        }
+
         function openSettings() {
             $("setPreview").value = settings.preview;
             $("setPage").value = settings.page;
             $("setScale").value = settings.scale;
+            $("setAutoSwitchTab").checked = settings.autoSwitchTab === true;
             $("settingsMask").classList.add("open");
             // 统一使用缓存数据源，避免与红点轮询结果不一致造成「误报有更新」。
             checkImageStatus();
@@ -1500,9 +1590,12 @@
                 page: $("setPage").value,
                 scale: $("setScale").value,
                 screenLocked: screenLocked,
+                autoSwitchTab: $("setAutoSwitchTab").checked,
                 // 画质由详情栏的全局快捷切换维护，saveSettings 不要覆盖它。
                 quality: settings.quality,
             };
+            // 锁定期间改了设置，就把它当作新的「锁定前状态」，解锁后按它恢复。
+            if (screenLocked) autoSwitchBeforeLock = settings.autoSwitchTab;
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
             closeSettings();
@@ -1538,6 +1631,14 @@
         function toggleScreenLock() {
             screenLocked = !screenLocked;
             settings.screenLocked = screenLocked;
+            // 屏幕锁期间挂起 VNC 新标签自动切换：记下锁定前的用户状态，
+            // 解锁后恢复。临时挂起不写进用户设置，设置面板仍显示用户的选择。
+            if (screenLocked) {
+                if (autoSwitchBeforeLock === null) autoSwitchBeforeLock = settings.autoSwitchTab === true;
+            } else if (autoSwitchBeforeLock !== null) {
+                settings.autoSwitchTab = autoSwitchBeforeLock;
+                autoSwitchBeforeLock = null;
+            }
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             if (screenLocked) {
                 // 让可能持有焦点的 iframe/canvas/input 失焦，避免锁定后键盘仍进入画面。
@@ -1552,9 +1653,13 @@
             const sel = currentSel();
             if (sel && castState && castState.sid === sel.sid) renderCastBar(sel, true);
             if (screenLocked) {
-                toast("画面已锁定：鼠标/键盘/导航输入均已拦截", "warn");
+                toast(settings.autoSwitchTab
+                    ? "画面已锁定：输入与 VNC 新标签自动切换均已暂停，解锁后恢复"
+                    : "画面已锁定：鼠标/键盘/导航输入均已拦截", "warn");
             } else {
-                toast("画面已解锁，可正常操作", "ok");
+                toast(settings.autoSwitchTab
+                    ? "画面已解锁，VNC 新标签自动切换已恢复"
+                    : "画面已解锁，可正常操作", "ok");
             }
         }
 
@@ -2132,6 +2237,15 @@
             return location.origin + "/" + port;
         }
 
+        // 实例列表项右上角「CDP 信息」：基于该实例对应主机的代理地址，
+        // 远端实例走对方面板代理，不暴露容器内网；无端口时返回空不渲染链接。
+        function cdpVersionUrl(i) {
+            if (!i || (!i.debug_port && !i.cdp_http_proxy && !i.cdp_http)) return "";
+            const base = (i.cdp_http_proxy || i.cdp_http ||
+                (location.origin + "/" + i.debug_port)).replace(/\/$/, "");
+            return base ? base + "/json/version" : "";
+        }
+
         function vncUrl(i) {
             const base = proxyBase(i, i.novnc_port, "novnc_url_proxy")
                 .split("?")[0]
@@ -2415,7 +2529,8 @@
                 const changed = !castState || castState.sid !== sel.sid ||
                     castState.tid !== tid;
                 castState = { sid: sel.sid, targets: targets, tid: tid, sig: "" };
-                if (changed) {
+                // 屏幕锁期间绝不激活标签：脚本执行时不能改变浏览器前台。
+                if (changed && !screenLocked) {
                     try {
                         await api(
                             "/api/instance/" + encodeURIComponent(sel.sid) +
@@ -2752,6 +2867,21 @@
             const canBack = !!hist && hist.index > 0;
             const canForward = !!hist && hist.index < hist.ids.length - 1;
 
+            // VNC 模式才显示自动切换开关：默认关，脚本弹新标签时不抢焦点。
+            const autoLabel = screenLocked ? "自动切:暂停"
+                : (settings.autoSwitchTab ? "自动切:开" : "自动切:关");
+            const autoTip = screenLocked
+                ? "屏幕锁期间自动切换已挂起，解锁后恢复"
+                : (settings.autoSwitchTab
+                    ? "已开启：新标签自动切到前台，可能干扰脚本。点击关闭"
+                    : "已关闭：新标签不抢焦点。点击开启");
+            const autoSwitchBtn = effectiveMode(sel) === "vnc"
+                ? '<button class="btn-mini btn-nav btn-auto-switch' +
+                    (settings.autoSwitchTab && !screenLocked ? " on" : "") +
+                    '" id="btnAutoSwitch" title="' + esc(autoTip) +
+                    '" onclick="toggleAutoSwitchTab()">' + autoLabel + '</button>'
+                : '';
+
             bar.className = "castbar show" + (screenLocked ? " locked" : "");
             const lockTip = screenLocked
                 ? '<span class="lock-tip"><svg class="ico ico-sm" style="margin-right:4px"><use href="#i-lock"/></svg>画面已锁定，导航已禁用</span>'
@@ -2774,6 +2904,7 @@
                         '<svg class="ico"><use href="#i-refresh"/></svg></button>' +
                     '<button class="btn-mini btn-nav" id="btnRestoreTab" title="恢复上次关闭的标签页" onclick="restoreClosedTab()">' +
                         '<svg class="ico"><use href="#i-restore"/></svg></button>' +
+                    autoSwitchBtn +
                     '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后按回车跳转">' +
                     lockTip +
                 '</div>';
@@ -3362,13 +3493,20 @@
                     }
                     return;
                 }
-                // 新标签（含页面脚本 window.open 弹出）自动切过去，跟正常浏览器一致。
+                // 新标签（含页面脚本 window.open 弹出）是否自动切过去由开关决定：
+                // VNC 模式默认关，脚本控制浏览器时不激活标签、不抢焦点；
+                // 抓屏模式只是管理页画面重连，不影响浏览器前台，保持原行为。
                 // 后端已按打开顺序排列，末尾即最新打开的；只在确实新增了标签时切换，
                 // 避免重连/轮询把用户手动选中的标签抢走。
                 const knownIds = new Set((castState.targets || []).map(t => t.id));
                 const added = targets.filter(t => !knownIds.has(t.id));
                 castState.targets = targets;
                 if (added.length) {
+                    // 开关关闭或屏幕锁挂起：只把新标签加入导航条，画面和前台都不动。
+                    if (vncMode && !autoSwitchEnabled()) {
+                        renderCastBar(sel, true);
+                        return;
+                    }
                     const newest = added[added.length - 1].id;
                     setPreferredTid(newest);
                     castState.tid = newest;
@@ -3391,14 +3529,18 @@
                     castState.tid = targets[0].id;
                     if (vncMode) {
                         // VNC 模式：重载 iframe 会闪屏，只更新导航条并激活新标签。
+                        // 当前标签被外部关掉属于必要兜底，不受自动切换开关限制；
+                        // 但屏幕锁期间仍不激活，避免打断脚本。
                         renderCastBar(sel, true);
-                        try {
-                            await api(
-                                "/api/instance/" + encodeURIComponent(sel.sid) +
-                                    "/targets/" + encodeURIComponent(castState.tid) + "/activate",
-                                { method: "POST" }
-                            );
-                        } catch (e) {}
+                        if (!screenLocked) {
+                            try {
+                                await api(
+                                    "/api/instance/" + encodeURIComponent(sel.sid) +
+                                        "/targets/" + encodeURIComponent(castState.tid) + "/activate",
+                                    { method: "POST" }
+                                );
+                            } catch (e) {}
+                        }
                     } else {
                         await remountCurrent();
                     }
@@ -3468,8 +3610,9 @@
             if (sec) sec.classList.toggle("collapsed", !!groupsCollapsed[key]);
         }
         function renderInstGroup(key, name, items, actionBtn, emptyText) {
-            const row = i =>
-                '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" draggable="true"' +
+            const row = i => {
+                const cdpInfoUrl = cdpVersionUrl(i);
+                return '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" draggable="true"' +
                     ' ondragstart="dragStart(event,' + jsArg(i.sid) + ')" ondragend="dragEnd(event)"' +
                     ' onclick="selectSid(' + jsArg(i.sid) + ')">' +
                     '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
@@ -3480,6 +3623,12 @@
                                 ' onchange="toggleMonitorSid(' + jsArg(i.sid) + ', this.checked)">' +
                             '<span class="switch"></span>' +
                         '</label>' +
+                        // 红框位置：sid 行右端的 CDP 信息入口，点它不切换当前实例。
+                        (cdpInfoUrl
+                            ? '<button class="inst-cdp-link"' +
+                                ' title="浏览器版本、UA、WS 地址等 CDP 信息"' +
+                                ' onclick="event.stopPropagation(); openCdpInfo(' + jsArg(i.sid) + ')">CDP 信息 ↗</button>'
+                            : '') +
                     '</div>' +
                     '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                         (i.host && i.host !== "local"
@@ -3487,6 +3636,7 @@
                         '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
                     '</div>' +
                 '</div>';
+            };
             return '<section class="inst-group' + (groupsCollapsed[key] ? ' collapsed' : '') + '"' +
                     ' id="group-' + key + '">' +
                 '<div class="group-head" onclick="toggleGroup(\'' + key + '\')" title="点击折叠/展开">' +
@@ -3574,13 +3724,11 @@
                 const cdpDirectFull = sel.cdp_http || "";
                 const mode = effectiveMode(sel);
                 const headless = isHeadless(sel);
-                // 抓屏模式没有独立页面地址，提供 CDP 版本端点便于单独调试。
+                // CDP 端点统一基于对应主机的代理地址（远端实例也走代理，不暴露容器内网）。
                 // 同源地址优先；旧后端无 proxy 字段时回退到旧字段（直连格式）。
-                const cdpBase = sel.cdp_http_proxy || sel.cdp_http ||
-                    (location.origin + "/" + sel.debug_port);
-                const openUrl = mode === "cast"
-                    ? cdpBase.replace(/\/$/, "") + "/json/version"
-                    : vncUrl(sel);
+                const cdpRoot = (sel.cdp_http_proxy || sel.cdp_http ||
+                    (location.origin + "/" + sel.debug_port)).replace(/\/$/, "");
+                const versionUrl = cdpRoot + "/json/version";
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
                     : '';
@@ -3626,6 +3774,44 @@
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
                     '</span>' + qseg + capseg +
                     '<span class="qhint">' + esc(qualityHint(mode, settings.quality, cm, settings.snapRate)) + '</span>';
+                // 常用 CDP 端点快捷链接：版本 / 标签 / 协议；完整内核再加 VNC / noVNC 直达。
+                const cdpLinks = [
+                    { label: "版本信息", url: versionUrl,
+                      tip: "浏览器版本与浏览器级 webSocketDebuggerUrl，脚本连接入口" },
+                    { label: "标签列表", url: cdpRoot + "/json/list",
+                      tip: "所有标签的 id / url / 页面级 webSocketDebuggerUrl" },
+                    { label: "协议定义", url: cdpRoot + "/json/protocol",
+                      tip: "完整 CDP 协议 JSON，文件较大，打开会慢" },
+                ];
+                if (!headless) {
+                    cdpLinks.push({ label: "VNC 直达",
+                        url: sel.vnc_url_proxy || sel.vnc_url || "",
+                        tip: "容器原生 VNC 服务地址" });
+                    cdpLinks.push({ label: "noVNC 画面", url: vncUrl(sel),
+                        tip: "浏览器里直接打开 noVNC 画面（跟随当前画质/缩放设置）" });
+                }
+                cdpLinks.push({ label: "协议文档",
+                    url: "https://chromedevtools.github.io/devtools-protocol/",
+                    tip: "Chrome DevTools Protocol 官方文档（新窗口）" });
+                const linksHtml = '<div class="detail-links">' +
+                    '<span class="lk-label">快捷链接</span>' +
+                    cdpLinks.filter(l => l.url).map(l =>
+                        '<a class="lk" href="' + esc(l.url) + '" target="_blank" rel="noopener"' +
+                        ' title="' + esc(l.tip) + '">' + esc(l.label) + ' ↗</a>'
+                    ).join('') +
+                    '<button class="lk" onclick="copyBrowserWs()"' +
+                    ' title="读取版本信息并复制浏览器级 webSocketDebuggerUrl，脚本连接常用">' +
+                    '复制浏览器 WS</button>' +
+                    '<button class="lk" onclick="copyCurrentPageWs()"' +
+                    ' title="复制当前选中标签的页面级 webSocketDebuggerUrl，操作具体页面用">' +
+                    '复制当前页 WS</button>' +
+                    '<button class="lk" onclick="copyScriptSnippet(\'node\')"' +
+                    ' title="生成 Puppeteer connect 代码（自动附带已保存的 API_KEY）">' +
+                    'Puppeteer 代码</button>' +
+                    '<button class="lk" onclick="copyScriptSnippet(\'python\')"' +
+                    ' title="生成 Python websocket 连接代码（自动附带已保存的 API_KEY）">' +
+                    'Python 代码</button>' +
+                    '</div>';
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
                     statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
@@ -3638,9 +3824,10 @@
                         : '') +
                     pinfo + vncInfo +
                     '<span class="spacer"></span>' +
-                    '<a class="link" href="' + esc(openUrl) + '" target="_blank" rel="noopener">新窗口打开</a>' +
+                    '<button class="btn-mini" onclick="openCurrentPage()"' +
+                        ' title="在新窗口打开浏览器当前标签的网页">当前网页 ↗</button>' +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
-                    seg;
+                    seg + linksHtml;
             }
 
             // 右侧日志抽屉与画面并存：开关决定抽屉是否滑出，画面区独立按实例状态渲染。
@@ -3667,6 +3854,23 @@
             render();
         }
 
+        // 实例的 CDP 根地址：代理优先，远端实例也走代理。
+        function cdpRootOf(i) {
+            return ((i && (i.cdp_http_proxy || i.cdp_http ||
+                (location.origin + "/" + i.debug_port))) || "").replace(/\/$/, "");
+        }
+        // 统一复制入口：剪贴板不可用时退回 textarea 选中复制。
+        async function copyTextValue(text, label) {
+            if (!text) return;
+            try { await navigator.clipboard.writeText(text); }
+            catch (e) {
+                const ta = document.createElement("textarea");
+                ta.value = text; document.body.appendChild(ta); ta.select();
+                document.execCommand("copy"); document.body.removeChild(ta);
+            }
+            toast("已复制" + (label ? " " + label : ""), "ok");
+        }
+
         async function copyCdp(kind) {
             const sel = selectedSid ? instances[selectedSid] : null;
             if (!sel) return;
@@ -3688,6 +3892,128 @@
                 document.execCommand("copy");
                 document.body.removeChild(ta);
                 toast("已复制 " + label, "ok");
+            }
+        }
+
+        // 详情栏「当前网页」：打开导航条当前选中标签的网页地址。
+        // 抓屏模式没有独立画面 URL，原「新窗口打开」给的是 /json/version（JSON 文本），
+        // 按钮名与结果不符；现在拆成「当前网页」与「CDP 信息」两个明确入口。
+        function currentPageUrl() {
+            const sel = currentSel();
+            if (!sel || !castState || castState.sid !== sel.sid) return "";
+            const t = (castState.targets || []).find(x => x.id === castState.tid);
+            return t ? (t.url || "") : "";
+        }
+        function openCurrentPage() {
+            const url = currentPageUrl();
+            if (!url || url === "about:blank" || /^(devtools|chrome):/.test(url)) {
+                toast("当前标签没有可用的网页地址"); return;
+            }
+            window.open(url, "_blank", "noopener");
+        }
+
+        // 从版本信息读取浏览器级 webSocketDebuggerUrl 并复制（脚本连接常用入口）。
+        async function copyBrowserWs() {
+            const sel = currentSel();
+            if (!sel) return;
+            const base = (sel.cdp_http_proxy || sel.cdp_http || "").replace(/\/$/, "");
+            if (!base) { toast("没有可用的 CDP 地址"); return; }
+            try {
+                const res = await fetch(base + "/json/version");
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const data = await res.json();
+                const ws = data.webSocketDebuggerUrl || "";
+                if (!ws) throw new Error("版本信息里没有 webSocketDebuggerUrl");
+                try { await navigator.clipboard.writeText(ws); }
+                catch (e2) {
+                    const ta = document.createElement("textarea");
+                    ta.value = ws; document.body.appendChild(ta); ta.select();
+                    document.execCommand("copy"); document.body.removeChild(ta);
+                }
+                toast("已复制浏览器 WS 地址", "ok");
+            } catch (e) {
+                // 远端主机跨源代理可能取不到；引导从「版本信息」页手动复制。
+                toast("自动复制失败（" + e.message + "），可在「版本信息」页手动复制", "error");
+            }
+        }
+
+        // ---- CDP 信息弹窗：结构化展示版本信息，不必读原始 JSON ----
+        let cdpInfoSid = "";
+        async function openCdpInfo(sid) {
+            const i = instances[sid || selectedSid];
+            if (!i) return;
+            cdpInfoSid = i.sid;
+            const host = i.host && i.host !== "local" ? " · " + (i.host_name || i.host) : "";
+            $("cdpInfoSid").textContent = i.sid.slice(0, 8) + host;
+            $("cdpInfoMask").classList.add("open");
+            await refreshCdpInfo();
+        }
+        function closeCdpInfo() { $("cdpInfoMask").classList.remove("open"); }
+        async function refreshCdpInfo() {
+            const i = instances[cdpInfoSid];
+            if (!i) return;
+            const body = $("cdpInfoBody");
+            body.textContent = "加载中…";
+            try {
+                const res = await fetch(cdpRootOf(i) + "/json/version");
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const d = await res.json();
+                const rows = [
+                    ["浏览器", d.Browser],
+                    ["协议版本", d["Protocol-Version"]],
+                    ["User-Agent", d["User-Agent"]],
+                    ["V8 版本", d["V8-Version"]],
+                    ["Blink", d["webkit-version"]],
+                    ["浏览器 WS", d.webSocketDebuggerUrl],
+                ];
+                body.innerHTML = rows.map(([k, v]) =>
+                    '<div class="cdp-info-row"><span class="k">' + esc(k) + '</span>' +
+                    '<span class="v">' + esc(v || "—") + '</span>' +
+                    (v ? '<button class="btn-mini" onclick="copyTextValue(' + jsArg(v) + ',' + jsArg(k) + ')">复制</button>' : '') +
+                    '</div>'
+                ).join("");
+            } catch (e) {
+                body.innerHTML = '<div class="hint">读取失败：' + esc(e.message) +
+                    '。远端主机跨源时可能取不到，可到「版本信息」页手动复制。</div>';
+            }
+        }
+
+        // 当前标签的页面级 WS：代理返回的 /json/list 里 WS 已被后端重写成外网可连地址。
+        async function copyCurrentPageWs() {
+            const sel = currentSel();
+            if (!sel) return;
+            const tid = castState && castState.sid === sel.sid ? castState.tid : "";
+            if (!tid) { toast("请先选中一个标签"); return; }
+            try {
+                const res = await fetch(cdpRootOf(sel) + "/json/list");
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const list = await res.json();
+                const t = (Array.isArray(list) ? list : []).find(x => x.id === tid);
+                const ws = t && (t.webSocketDebuggerUrl || t.wssUrl || t.wsUrl);
+                if (!ws) throw new Error("没找到当前标签的 WS 地址");
+                await copyTextValue(ws, "当前页 WS 地址");
+            } catch (e) {
+                toast("复制失败（" + e.message + "），可在「标签列表」页手动复制", "error");
+            }
+        }
+
+        // 脚本连接片段：用代理重写后的 WS，并自动附上面板保存的 API_KEY。
+        async function copyScriptSnippet(kind) {
+            const sel = currentSel();
+            if (!sel) return;
+            try {
+                const res = await fetch(cdpRootOf(sel) + "/json/version");
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const d = await res.json();
+                let ws = d.webSocketDebuggerUrl || "";
+                if (!ws) throw new Error("版本信息里没有 webSocketDebuggerUrl");
+                ws = withKey(ws);
+                const snippet = kind === "node"
+                    ? 'const puppeteer = require("puppeteer-core");\n\nconst browser = await puppeteer.connect({\n  browserWSEndpoint: ' + JSON.stringify(ws) + ',\n});\n'
+                    : 'import json, websocket\n\nws = websocket.create_connection(' + JSON.stringify(ws) + ')\nws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))\n';
+                await copyTextValue(snippet, kind === "node" ? "Puppeteer 连接代码" : "Python 连接代码");
+            } catch (e) {
+                toast("生成失败（" + e.message + "）", "error");
             }
         }
 
