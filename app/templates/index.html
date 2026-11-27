@@ -825,6 +825,10 @@
             border: 1px solid var(--border); border-radius: 8px;
         }
         .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+        .hint.error { color: var(--danger); }
+        .badge-jump { cursor: pointer; }
+        .badge-jump:hover { filter: brightness(1.25); }
+        .profile-offline { color: var(--danger); }
         .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
         .foot { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 
@@ -1122,6 +1126,27 @@
             <div class="actions">
                 <button onclick="closeCreate()">取消</button>
                 <button class="btn-primary" onclick="confirmCreate()" id="btnConfirmCreate">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导入远端持久目录弹窗 -->
+    <div class="mask" id="importMask" onclick="if(event.target===this) closeImportProfile()">
+        <div class="panel">
+            <h3>导入持久目录到本机</h3>
+            <div class="row">
+                <label>来源</label>
+                <div class="hint" id="importSource">—</div>
+            </div>
+            <div class="row">
+                <label for="importName">本机目录名</label>
+                <input id="importName" maxlength="48" oninput="checkImportName()">
+                <div class="hint" id="importNameHint">默认与远端同名；本机已有同名目录时需换一个名字。</div>
+            </div>
+            <div class="foot">导入会把远端的登录态、Cookie、浏览数据整体复制到本机新卷；远端目录需先停止占用它的实例才能导出。仅允许字母、数字、下划线、点、短横线（1-48 位）。</div>
+            <div class="actions">
+                <button onclick="closeImportProfile()">取消</button>
+                <button class="btn-primary" onclick="confirmImportProfile()" id="btnConfirmImport">导入</button>
             </div>
         </div>
     </div>
@@ -2303,12 +2328,34 @@
                 if (!profileName) { toast("没有可复用的目录，请先新建持久目录", "error"); return; }
             }
             const browserMode = $("createBrowser").value;
+            const createHost = $("createHost") ? $("createHost").value : "local";
             setBusy(true);
             const btn = $("btnConfirmCreate");
             const original = btn.textContent;
-            btn.textContent = "启动中…";
-            toast("正在创建实例，界面将立即返回，画面在后台自动连接…");
             try {
+                // 复用持久目录前实时复核占用：下拉里的 used_by 是 60 秒缓存，
+                // 这期间对应主机可能刚启动了占用该目录的实例。后端创建时也会
+                // 挡 409，但前端先拦下能给出更明确的提示，不用白跑一趟。
+                if (profileMode === "persistent") {
+                    try {
+                        const listUrl = createHost !== "local"
+                            ? "/remote/" + encodeURIComponent(createHost) + "/api/profiles"
+                            : "/api/profiles";
+                        const check = await api(listUrl, {}, 10000);
+                        const cur = (check.profiles || []).find(p => p.name === profileName);
+                        if (cur && cur.used_by) {
+                            toast((createHost !== "local" ? "远端主机 " + createHost + " 的" : "") +
+                                "实例 " + String(cur.used_by).slice(0, 8) +
+                                " 正在使用该目录，请先停止实例再复用", "error");
+                            return;
+                        }
+                    } catch (e) {
+                        // 复核失败不阻止创建：后端 start_browser_instance 在锁内
+                        // 仍会用实例表挡 409，作为最后一道防线。
+                    }
+                }
+                btn.textContent = "启动中…";
+                toast("正在创建实例，界面将立即返回，画面在后台自动连接…");
                 // 后端不再空等 CDP 就绪：容器创建成功即返回，通常 1-2 秒。
                 const data = await api(
                     "/instance/new",
@@ -2320,7 +2367,7 @@
                             profile_name: profileName,
                             browser_mode: browserMode,
                             // VNC 刷新档全局统一，服务端用持久化的档位创建，不再随请求传。
-                            host: $("createHost") ? $("createHost").value : "local",
+                            host: createHost,
                         }),
                     },
                     30000
@@ -2512,27 +2559,42 @@
         // 拉取各远端主机的持久目录：通过本机 /remote/<host>/api/profiles 代理，
         // 不直连远端、复用本机密钥。单台失败只跳过它，不影响本机与其他主机；
         // 与 load() 的 10 秒轮询解耦，独立低频刷新，避免远端离线拖慢面板。
+        // remoteProfileFail: host id -> true，记录哪台拉取失败，避免把「离线」误显示成
+        // 「暂无持久目录」。force=true 表示删除等写操作后的主动刷新：若当前正有一轮在跑，
+        // 排队等它结束后再跑一遍，不能像以前那样直接 return 丢掉（否则列表残留已删目录）。
         let remoteProfilesBusy = false;
-        async function loadRemoteProfiles() {
-            if (remoteProfilesBusy) return;
+        let remoteProfilesQueued = false;
+        let remoteProfileFail = {};
+        async function loadRemoteProfiles(force = false) {
+            if (remoteProfilesBusy) {
+                if (force) remoteProfilesQueued = true;
+                return;
+            }
             const remotes = (hosts || []).filter(h => h.id !== "local");
-            if (!remotes.length) { remoteProfiles = []; render(); return; }
+            if (!remotes.length) { remoteProfiles = []; remoteProfileFail = {}; render(); return; }
             remoteProfilesBusy = true;
             try {
                 const results = await Promise.all(remotes.map(async h => {
                     try {
                         const data = await api("/remote/" + encodeURIComponent(h.id) + "/api/profiles", {}, 10000);
+                        remoteProfileFail[h.id] = false;
                         return (data.profiles || []).map(p => Object.assign({}, p, {
                             host: h.id, host_name: h.name || h.id,
                         }));
                     } catch (e) {
-                        return [];   // 该主机离线/鉴权失败：跳过，不打断其他主机
+                        remoteProfileFail[h.id] = true;  // 离线/鉴权失败：标记，不打断其他主机
+                        return [];
                     }
                 }));
                 remoteProfiles = [].concat(...results);
                 render();
             } finally {
                 remoteProfilesBusy = false;
+                // 排队中的主动刷新：等这一轮落地后再跑，确保写操作后的列表是最新的。
+                if (remoteProfilesQueued) {
+                    remoteProfilesQueued = false;
+                    loadRemoteProfiles();
+                }
             }
         }
 
@@ -3806,6 +3868,7 @@
             const row = i => {
                 const cdpInfoUrl = cdpVersionUrl(i);
                 return '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" draggable="true"' +
+                    ' data-sid="' + esc(i.sid) + '"' +
                     ' ondragstart="dragStart(event,' + jsArg(i.sid) + ')" ondragend="dragEnd(event)"' +
                     ' onclick="selectSid(' + jsArg(i.sid) + ')">' +
                     '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
@@ -3916,9 +3979,22 @@
             $("profileStat").textContent = hostFilter === "all"
                 ? shownProfiles.length
                 : shownProfiles.length + "/" + allProfiles.length;
+            // 拉取失败的远端主机单独标注，别让用户把「离线/未授权」误当成「没目录」。
+            const offlineHosts = (hosts || []).filter(h =>
+                h.id !== "local" && remoteProfileFail[h.id] &&
+                (hostFilter === "all" || hostFilter === h.id));
+            const offlineHint = offlineHosts.length
+                ? '<div class="side-empty profile-offline" title="' +
+                    esc(offlineHosts.map(h => h.name || h.id).join("、")) + '">⚠ ' +
+                    offlineHosts.length + ' 台主机目录无法获取（离线/未授权）</div>'
+                : '';
             if (!shownProfiles.length) {
-                $("profileList").innerHTML = '<div class="side-empty">' +
-                    (hostFilter === "all" ? "暂无持久目录" : "该主机暂无持久目录") + '</div>';
+                $("profileList").innerHTML =
+                    (offlineHosts.length
+                        ? '<div class="side-empty">' + esc(offlineHosts[0].name || offlineHosts[0].id) +
+                          ' 目录无法获取（主机离线/未授权）</div>'
+                        : '<div class="side-empty">' +
+                          (hostFilter === "all" ? "暂无持久目录" : "该主机暂无持久目录") + '</div>');
             } else {
                 $("profileList").innerHTML = shownProfiles.map(p =>
                     '<div class="profile-item">' +
@@ -3928,11 +4004,16 @@
                             : '<span class="badge host" title="' + esc(p.volume) + '">' +
                                 esc(p.host_name || p.host) + '</span>') +
                         (p.used_by
-                            ? '<span class="badge running" title="实例 ' + esc(p.used_by) + '">使用中</span>'
+                            ? '<span class="badge running badge-jump" title="点击定位到占用该目录的实例 ' +
+                                esc(p.used_by) + '" onclick="jumpToInstance(' + jsArg(p.used_by) + ')">使用中 ↗</span>'
                             : '<button class="btn-danger btn-mini" onclick="deleteProfile(' +
                                 jsArg(p.name) + ', ' + jsArg(p.host) + ')">删除</button>') +
+                        (p.host !== "local"
+                            ? '<button class="btn-mini" title="复制该目录到本机" onclick="openImportProfile(' +
+                                jsArg(p.host) + ', ' + jsArg(p.name) + ')">导入</button>'
+                            : '') +
                     '</div>'
-                ).join("");
+                ).join("") + offlineHint;
             }
 
             const sel = selectedSid ? instances[selectedSid] : null;
@@ -4070,6 +4151,24 @@
             selectedSid = sid;
             saveLastView();
             render();
+        }
+
+        // 从持久目录的「使用中」徽标跳到占用它的实例：实例可能属于别的主机、
+        // 当前筛选/折叠状态会把它藏起来，这里一次性切好筛选、展开分组、选中并滚动定位。
+        function jumpToInstance(sid) {
+            const inst = (instances || {})[sid];
+            if (!inst) { toast("该实例已不存在或尚未加载", "error"); return; }
+            const owner = (inst.host && inst.host !== "local") ? inst.host : "local";
+            if (hostFilter !== "all" && hostFilter !== owner) {
+                hostFilter = owner; saveHostFilter();
+            }
+            const gkey = inst.profile_mode === "persistent" ? "persist" : "temp";
+            if (groupsCollapsed[gkey]) { groupsCollapsed[gkey] = false; saveGroups(); }
+            selectedSid = sid;
+            saveLastView();
+            render();
+            const el = document.querySelector('.item[data-sid="' + sid + '"]');
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
 
         // 实例的 CDP 根地址：代理优先，远端实例也走代理。
@@ -4413,11 +4512,73 @@
                     ? "/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)
                     : "/profile/" + encodeURIComponent(name);
                 await api(url, { method: "DELETE" });
-                toast("目录已删除", "ok");
-                await Promise.all([load(), loadRemoteProfiles()]);
+                toast(isRemote
+                    ? "远端主机 " + hostName + " 的目录「" + name + "」已删除"
+                    : "目录「" + name + "」已删除", "ok");
+                await load();
+                // force：若此刻 60 秒定时器那轮正在跑，排队等它落地后再刷一遍，
+                // 避免刚删的目录残留在列表里直到下个刷新周期。
+                await loadRemoteProfiles(true);
             } catch (e) {
                 toast("删除失败: " + e.message, "error");
             } finally {
+                setBusy(false);
+            }
+        }
+
+        // 导入远端持久目录到本机：默认沿用远端名字，本机同名则提示改名。
+        let importCtx = { host: "", source: "" };
+        function openImportProfile(host, source) {
+            importCtx = { host: host, source: source };
+            const hName = ((hosts || []).find(h => h.id === host) || {}).name || host;
+            $("importSource").textContent = "远端主机 " + hName + " / 目录「" + source + "」";
+            $("importName").value = source;
+            checkImportName();
+            $("importMask").classList.add("open");
+        }
+        function closeImportProfile() { $("importMask").classList.remove("open"); }
+        function checkImportName() {
+            const name = $("importName").value.trim();
+            const hint = $("importNameHint");
+            const btn = $("btnConfirmImport");
+            if (!name) { hint.textContent = "请填写本机目录名。"; hint.className = "hint error"; btn.disabled = true; return; }
+            if (!/^[A-Za-z0-9_.-]{1,48}$/.test(name)) {
+                hint.textContent = "目录名只能包含字母、数字、下划线、点和短横线（1-48 位）。";
+                hint.className = "hint error"; btn.disabled = true; return;
+            }
+            const dup = (profiles || []).some(p => p.name === name);
+            if (dup) {
+                hint.textContent = "⚠ 本机已存在同名目录「" + name + "」，导入会失败，请换一个名字。";
+                hint.className = "hint error"; btn.disabled = true;
+            } else {
+                hint.textContent = "可导入为新目录「" + name + "」。";
+                hint.className = "hint"; btn.disabled = false;
+            }
+        }
+        async function confirmImportProfile() {
+            if (busy) return;
+            const name = $("importName").value.trim();
+            checkImportName();
+            if ($("btnConfirmImport").disabled) return;
+            setBusy(true);
+            const btn = $("btnConfirmImport");
+            const original = btn.textContent;
+            btn.textContent = "导入中…";
+            try {
+                await api("/profile/import", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        host: importCtx.host, source_name: importCtx.source, name: name,
+                    }),
+                }, 300000);
+                closeImportProfile();
+                toast("目录「" + name + "」已导入本机", "ok");
+                await load();
+            } catch (e) {
+                toast("导入失败: " + e.message, "error");
+            } finally {
+                btn.textContent = original;
                 setBusy(false);
             }
         }

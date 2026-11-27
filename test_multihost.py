@@ -1689,7 +1689,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
         s = self.src
         for token in (
             "let remoteProfiles = []",
-            "async function loadRemoteProfiles()",
+            "async function loadRemoteProfiles(force = false)",
             '"/remote/" + encodeURIComponent(h.id) + "/api/profiles"',
             "remoteProfilesBusy",  # 防并发，低频拉取不叠请求
             "const allProfiles = profiles.map",
@@ -1703,7 +1703,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
         # 删除：远端走 /remote/<host>/profile/<name> 的 DELETE 代理，本机走原路径。
         self.assertIn("async function deleteProfile(name, host)", s)
         self.assertIn('"/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)', s)
-        self.assertIn('await Promise.all([load(), loadRemoteProfiles()])', s)
+        self.assertIn('await loadRemoteProfiles(true)', s)  # force：删除后主动刷新不被 busy 丢掉
         # 删除前实时复核远端实例的 used_by：远端走 /remote/<host>/api/profiles
         # 读那台主机自己的实例表，占用则拦截、不发 DELETE；后端 409 兜底。
         self.assertIn('const listUrl = isRemote', s)
@@ -1729,6 +1729,101 @@ class PanelEcoAndShareTests(unittest.TestCase):
         for bad in ("dispatchMouseEvent", "dispatchKeyEvent", "Input.insertText",
                     "castSend(", "stopAll(", "openCreate("):
             self.assertNotIn(bad, self.share_src)
+
+
+class ProfileSafetyAndMigrationTests(unittest.TestCase):
+    """持久目录：创建/删除占用检查、离线提示、导入迁移、徽标跳转。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path(ROOT, "app", "templates", "index.html").read_text(encoding="utf-8")
+        cls.main_src = Path(ROOT, "app", "main.py").read_text(encoding="utf-8")
+
+    def test_create_rejects_reusing_busy_profile_backend(self):
+        m = self.main_src
+        # 专用异常区分占用（409），不被 new_instance 的泛化 catch 吞成 500。
+        self.assertIn("class ProfileInUseError(RuntimeError):", m)
+        # 检查必须在持锁分配端口前，避免并发请求都通过后挂同一卷。
+        self.assertIn("if persistent:", m)
+        self.assertIn('item.get("profile_name") == target', m)
+        self.assertIn("raise ProfileInUseError(", m)
+        self.assertIn("except ProfileInUseError as e:", m)
+        self.assertIn("raise HTTPException(status_code=409, detail=str(e))", m)
+        # 远端转发时透传 409。
+        self.assertIn("except urllib.error.HTTPError as e:", m)
+        self.assertIn("if e.code == 409:", m)
+
+    def test_create_rechecks_busy_profile_frontend(self):
+        s = self.src
+        self.assertIn('if (profileMode === "persistent") {', s)
+        self.assertIn("正在使用该目录，请先停止实例再复用", s)
+        # 复核失败不阻止创建，靠后端 409 兜底。
+        self.assertIn("复核失败不阻止创建", s)
+
+    def test_remote_offline_not_shown_as_empty(self):
+        s = self.src
+        self.assertIn("let remoteProfileFail = {}", s)
+        self.assertIn("remoteProfileFail[h.id] = true", s)
+        self.assertIn("remoteProfileFail[h.id] = false", s)
+        self.assertIn("目录无法获取（离线/未授权）", s)
+        self.assertIn("profile-offline", s)
+
+    def test_forced_remote_refresh_queues_when_busy(self):
+        s = self.src
+        self.assertIn("let remoteProfilesQueued = false", s)
+        self.assertIn("if (force) remoteProfilesQueued = true", s)
+        self.assertIn("if (remoteProfilesQueued)", s)
+        # 删除与导入后的主动刷新都走 force。
+        self.assertIn("await loadRemoteProfiles(true)", s)
+
+    def test_delete_toast_names_remote_host(self):
+        s = self.src
+        self.assertIn('"远端主机 " + hostName + " 的目录「" + name + "」已删除"', s)
+
+    def test_profile_export_import_backend(self):
+        m = self.main_src
+        # 导出用 get_archive + 只读挂卷，占用时拒绝导出；导入用 put_archive 解包。
+        self.assertIn("def export_profile_bytes(name: str) -> bytes:", m)
+        self.assertIn('"bind": "/data", "mode": "ro"', m)
+        self.assertIn("tmp.get_archive(\"/data\")", m)
+        self.assertIn("def import_profile_bytes(name: str, raw: bytes) -> bool:", m)
+        self.assertIn("tmp.put_archive(\"/\", io.BytesIO(raw))", m)
+        # 卷名与 label 按本机 MANAGER_ID 重建，面板才能列出并复用。
+        self.assertIn("PROFILE_OWNER_LABEL: MANAGER_ID", m)
+        self.assertIn('"cdp.profile.name": name', m)
+        # 解包失败回滚半个卷。
+        self.assertIn("volume.remove(force=True)", m)
+        # 三个路由。
+        self.assertIn('@app.get("/profile/{name}/export")', m)
+        self.assertIn('@app.post("/profile/import")', m)
+        self.assertIn('@app.delete("/profile/{name}")', m)
+        # 导出/导入端点在鉴权中间件里不豁免（会走 API_KEY）。
+        self.assertNotIn('"/profile/import"', m[m.index("def auth_exempt"):m.index("def auth_exempt") + 900])
+
+    def test_import_modal_defaults_name_and_detects_duplicate(self):
+        s = self.src
+        self.assertIn('id="importMask"', s)
+        self.assertIn('id="importName"', s)
+        self.assertIn('id="btnConfirmImport"', s)
+        self.assertIn("function openImportProfile(host, source)", s)
+        self.assertIn("$(\"importName\").value = source", s)  # 默认沿用远端名字
+        self.assertIn("function checkImportName()", s)
+        self.assertIn("const dup = (profiles || []).some(p => p.name === name)", s)
+        self.assertIn("请换一个名字", s)
+        self.assertIn("btn.disabled = true", s)
+        self.assertIn("async function confirmImportProfile()", s)
+        self.assertIn('method: "POST"', s)
+        self.assertIn('"/profile/import"', s)
+        self.assertIn("source_name: importCtx.source", s)
+
+    def test_used_by_badge_jumps_to_instance(self):
+        s = self.src
+        self.assertIn("function jumpToInstance(sid)", s)
+        self.assertIn("badge-jump", s)
+        self.assertIn("' data-sid=\"' + esc(i.sid) + '\"'", s)  # 实例项加 data-sid 锚点
+        self.assertIn("scrollIntoView", s)
+        self.assertIn("groupsCollapsed[gkey] = false", s)
+        self.assertIn("hostFilter = owner", s)
 
 
 class TabOrderTests(unittest.TestCase):

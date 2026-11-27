@@ -919,6 +919,97 @@ def remove_profile(name: str) -> bool:
         raise RuntimeError(str(e))
 
 
+def export_profile_bytes(name: str) -> bytes:
+    """把一个持久目录卷打包成 tar 字节，供跨主机迁移。
+
+    用临时容器挂载该卷（只读），通过 Docker 的 get_archive 直接取 tar 流，
+    不依赖容器内是否装了 tar 命令。被运行中实例占用时拒绝，避免拷到
+    写一半的 Cookie/SQLite。
+    """
+    vname = profile_volume_name(name)
+    with LOCK:
+        for sid, item in INSTANCES.items():
+            if (item.get("profile_mode") == "persistent"
+                    and item.get("profile_name") == name):
+                raise ProfileInUseError(
+                    f"实例 {sid[:8]} 正在使用该目录，请先停止实例再导出"
+                )
+    try:
+        client.volumes.get(vname)
+    except docker.errors.NotFound:
+        raise RuntimeError(f"目录不存在: {name}")
+    img = image_for_mode("headless")
+    ensure_image_available(img)
+    tmp = None
+    try:
+        tmp = client.containers.create(
+            img,
+            command="sleep 3600",
+            volumes={vname: {"bind": "/data", "mode": "ro"}},
+        )
+        stream, _ = tmp.get_archive("/data")
+        buf = io.BytesIO()
+        for chunk in stream:
+            buf.write(chunk)
+        return buf.getvalue()
+    finally:
+        if tmp is not None:
+            try:
+                tmp.remove(force=True)
+            except docker.errors.APIError:
+                pass
+
+
+def import_profile_bytes(name: str, raw: bytes) -> bool:
+    """把 tar 字节解包成本机新的持久目录卷（带正确 label）。
+
+    Docker 的 get_archive 把卷内容放在 tar 的 data/ 目录下；put_archive 到
+    容器的 / 即可还原成 /data。卷名与 label 按本机 MANAGER_ID 重建，保证
+    面板「持久用户目录」能列出并正常复用。
+    """
+    if not PROFILE_NAME_RE.fullmatch(name):
+        raise RuntimeError("目录名只能包含字母、数字、下划线、点和短横线，长度 1-48")
+    vname = profile_volume_name(name)
+    try:
+        client.volumes.get(vname)
+        raise ProfileExistsError(f"本机已存在同名目录「{name}」，请换一个名字")
+    except docker.errors.NotFound:
+        pass
+    img = image_for_mode("headless")
+    ensure_image_available(img)
+    volume = client.volumes.create(
+        name=vname,
+        labels={
+            PROFILE_LABEL: "1",
+            PROFILE_OWNER_LABEL: MANAGER_ID,
+            "cdp.profile.name": name,
+        },
+    )
+    tmp = None
+    try:
+        tmp = client.containers.create(
+            img,
+            command="sleep 3600",
+            volumes={vname: {"bind": "/data", "mode": "rw"}},
+        )
+        tmp.put_archive("/", io.BytesIO(raw))
+        log.info("导入持久目录 %s（%s，%d 字节）", name, vname, len(raw))
+        return True
+    except Exception:
+        # 解包失败不留半个卷，避免面板列出一个损坏的目录。
+        try:
+            volume.remove(force=True)
+        except docker.errors.APIError:
+            pass
+        raise
+    finally:
+        if tmp is not None:
+            try:
+                tmp.remove(force=True)
+            except docker.errors.APIError:
+                pass
+
+
 def sync_instances():
     with LOCK:
         snapshot = list(INSTANCES.items())
@@ -1112,6 +1203,14 @@ def wait_cdp_ready(container, timeout: float = 20.0) -> bool:
     return False
 
 
+class ProfileInUseError(RuntimeError):
+    """复用持久目录时该目录已被运行中实例占用。"""
+
+
+class ProfileExistsError(RuntimeError):
+    """导入持久目录时本机已存在同名目录。"""
+
+
 def start_browser_instance(
     sid: str,
     profile_mode: str = "ephemeral",
@@ -1127,6 +1226,18 @@ def start_browser_instance(
     ensure_image_available(image_for_mode(browser_mode))
     # 端口分配必须在锁内完成，避免并发创建分配到同一端口
     with LOCK:
+        # 复用持久目录时，先确认没有其它运行中实例占用同名目录。两个 Chrome 同时
+        # 挂同一个 user-data-dir 会触发 SingletonLock 冲突并写坏 Cookie/SQLite，
+        # 比「删除时被挡」严重得多，必须在创建这一侧就拦下。检查放在锁内，避免
+        # 两个并发请求都通过检查后挂上同一卷。
+        if persistent:
+            target = profile_name or ""
+            for other_sid, item in INSTANCES.items():
+                if (item.get("profile_mode") == "persistent"
+                        and item.get("profile_name") == target):
+                    raise ProfileInUseError(
+                        f"实例 {other_sid[:8]} 正在使用该持久目录，请先停止实例再复用"
+                    )
         used = collect_used_ports()
 
         debug_port = find_free(PORT_DEBUG_START, PORT_DEBUG_END, used["debug"])
@@ -2367,12 +2478,25 @@ async def new_instance(request: Request):
             "profile_mode": mode, "profile_name": name,
             "browser_mode": browser_mode, "vnc_refresh": vnc_refresh,
         }
+        import urllib.error
         try:
             _, raw, _ = await run_in_threadpool(
                 remote_request, host, "/instance/new", "POST", forwarded
             )
             view = json.loads(raw.decode("utf-8", "replace"))
             return JSONResponse(remote_view(host, view, request))
+        except urllib.error.HTTPError as e:
+            # 远端目录被它自己的实例占用时，远端 /instance/new 返回 409；
+            # 原样透传状态码与提示，让本机面板知道是哪台主机、哪个目录被占。
+            if e.code == 409:
+                try:
+                    detail = json.loads(e.read().decode("utf-8", "replace")).get(
+                        "detail", "远端持久目录正被占用"
+                    )
+                except Exception:
+                    detail = "远端持久目录正被占用"
+                raise HTTPException(status_code=409, detail=detail)
+            raise HTTPException(status_code=502, detail=f"远端主机创建失败: {e}")
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"远端主机创建失败: {e}")
 
@@ -2394,6 +2518,8 @@ async def new_instance(request: Request):
             start_browser_instance, sid, mode, name, browser_mode, vnc_refresh
         )
         return JSONResponse(to_view(data, request))
+    except ProfileInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         log.warning("创建实例失败: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -3368,11 +3494,84 @@ async def stop_all():
     return {"ok": True}
 
 
+@app.get("/profile/{name}/export")
+async def export_profile(name: str):
+    """导出持久目录为 tar 字节（远端迁移的数据源）。"""
+    try:
+        raw = await run_in_threadpool(export_profile_bytes, name)
+        return Response(
+            content=raw,
+            media_type="application/x-tar",
+            headers={"Content-Disposition": f'attachment; filename="profile-{name}.tar"'},
+        )
+    except ProfileInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/profile/import")
+async def import_profile(request: Request):
+    """从远端主机导入持久目录到本机。
+
+    payload: {host: <远端主机 id>, source_name: <远端目录名>, name: <本机目录名>}
+    远端 tar 走本机 /remote/<host> 代理，远端 key 由服务端配置提供。
+    """
+    import urllib.error
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON")
+    host_id = str(payload.get("host") or "")
+    source_name = str(payload.get("source_name") or "")
+    name = str(payload.get("name") or "")
+    if not host_id or host_id == "local":
+        raise HTTPException(status_code=400, detail="host 必须是远端主机 id")
+    if not source_name or not name:
+        raise HTTPException(status_code=400, detail="source_name 与 name 不能为空")
+    host = get_remote(host_id)
+    if not host:
+        raise HTTPException(status_code=404, detail=f"未知主机: {host_id}")
+    try:
+        _, raw, _ = await run_in_threadpool(
+            remote_request,
+            host,
+            "/profile/" + quote(source_name, safe="") + "/export",
+            "GET", None, 300.0,
+        )
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8", "replace")).get("detail", "")
+        except Exception:
+            detail = ""
+        raise HTTPException(
+            status_code=409 if e.code == 409 else 502,
+            detail=detail or f"远端导出失败: HTTP {e.code}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"远端导出失败: {e}")
+    try:
+        await run_in_threadpool(import_profile_bytes, name, raw)
+        return {"ok": True, "name": name, "bytes": len(raw)}
+    except ProfileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ProfileInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/profile/{name}")
 async def delete_profile(name: str):
     try:
         ok = await run_in_threadpool(remove_profile, name)
         return {"ok": ok}
+    except ProfileInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
