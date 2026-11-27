@@ -543,20 +543,25 @@ class MonitorPanelJsTests(unittest.TestCase):
         # 侧栏折叠按钮放在侧栏右边缘中部的把手上，顶栏不再放「侧栏」按钮。
         self.assertIn('class="sidebar-handle"', self.src)
         self.assertIn('.sidebar-handle {', self.src)
-        # VSCode 风格 sash：全高细线 + hover 高亮加粗 + 浮出箭头。
+        # 细线 sash + hover 浮出三叠波浪纹（无蓝框方块/阴影）。
         self.assertIn('.sidebar-handle::before {', self.src)
         self.assertIn('width: 2px; background: var(--border);', self.src)
         self.assertIn('.sidebar-handle:hover::before, .sidebar-handle:focus-visible::before {', self.src)
         self.assertIn('background: var(--accent); width: 3px;', self.src)
+        self.assertNotIn('box-shadow: 0 2px 10px', self.src)
+        self.assertIn('width: 11px; height: 22px;', self.src)
         self.assertIn('opacity: 0; transform: scale(.8);', self.src)
         self.assertIn('.sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { opacity: 1;', self.src)
+        self.assertIn('rotate(90deg)', self.src)
         self.assertIn('.layout.sidebar-hidden .sidebar-handle { left: 0', self.src)
         # 按钮在 layout 内、aside 之前，而非 header 的 toolbar 内。
         i = self.src.index('id="btnSidebar"')
         self.assertIn('<div class="layout">', self.src[max(0, i - 120):i])
         self.assertNotIn('class="btn-icon" title="隐藏/显示左侧实例列表', self.src)
-        # 把手图标随状态切换方向，隐藏侧栏后把手仍可见可点回来。
-        self.assertIn('setAttribute("href", sidebarHidden ? "#i-forward" : "#i-back")', self.src)
+        # 三叠波浪纹图标（无方向切换），隐藏侧栏后把手仍可见可点回来。
+        self.assertIn('<use href="#i-wave"/>', self.src)
+        self.assertIn('<symbol id="i-wave"', self.src)
+        self.assertNotIn('setAttribute("href", sidebarHidden ? "#i-forward" : "#i-back")', self.src)
 
     def test_instances_local_first_then_created_at(self):
         self.assertIn("Object.values(instances).sort((a, b)", self.src)

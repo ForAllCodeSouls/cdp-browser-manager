@@ -108,8 +108,8 @@
         /* 全局侧栏显隐：.sidebar-hidden 隐藏侧栏，监控视图与普通视图都生效。
            把手放在 .layout 上（不在 aside 内），所以侧栏隐藏后仍可见、可点回来。 */
         .layout.sidebar-hidden > aside { display: none; }
-        /* VSCode 风格 sash：平时只是一条融入边框的细线，hover 时高亮加粗并浮出箭头。
-           命中区给 12px 宽便于点击，视觉上仍只有 2px 的线。 */
+        /* 细线 sash：平时只是一条融入边框的细线，hover 时高亮加粗并浮出三叠波浪纹。
+           命中区给 12px 宽便于点击，视觉上仍只有 2px 的线；波浪无方框、无阴影。 */
         .sidebar-handle {
             position: absolute; left: 282px; top: 0; bottom: 0;
             width: 12px; padding: 0; margin: 0; z-index: 6;
@@ -125,10 +125,8 @@
             background: var(--accent); width: 3px; left: 4.5px;
         }
         .sidebar-handle .ico {
-            position: relative; z-index: 1; width: 14px; height: 14px;
-            padding: 4px; box-sizing: content-box; border-radius: 6px;
-            background: var(--surface-3); border: 1px solid var(--accent); color: var(--accent);
-            box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+            position: relative; z-index: 1; width: 11px; height: 22px;
+            color: var(--accent); stroke-width: 2;
             opacity: 0; transform: scale(.8);
             transition: opacity .15s ease, transform .15s ease;
         }
@@ -814,6 +812,9 @@
                 width: auto; height: 2px; }
             .sidebar-handle:hover::before, .sidebar-handle:focus-visible::before {
                 top: 4.5px; width: auto; height: 3px; }
+            /* 窄屏把手是横条，波浪纹旋转 90° 变成横向三条，贴合横条方向 */
+            .sidebar-handle .ico { transform: rotate(90deg) scale(.8); }
+            .sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { transform: rotate(90deg) scale(1); }
             .layout.sidebar-hidden .sidebar-handle { left: 0; right: 0; top: 0; bottom: auto; }
         }
 
@@ -856,6 +857,11 @@
         <symbol id="i-forward" viewBox="0 0 24 24">
             <path d="M5 12h14"/>
             <path d="m13 6 6 6-6 6"/>
+        </symbol>
+        <symbol id="i-wave" viewBox="0 0 12 24">
+            <path d="M1 5c2-2.5 4-2.5 5 0s3 2.5 5 0"/>
+            <path d="M1 12c2-2.5 4-2.5 5 0s3 2.5 5 0"/>
+            <path d="M1 19c2-2.5 4-2.5 5 0s3 2.5 5 0"/>
         </symbol>
         <symbol id="i-warn" viewBox="0 0 24 24">
             <path d="M12 3 2 20h20L12 3z"/>
@@ -921,7 +927,7 @@
     </header>
 
     <div class="layout">
-        <button id="btnSidebar" class="sidebar-handle" onclick="toggleSidebar()" title="收起左侧实例列表"><svg class="ico"><use href="#i-back"/></svg></button>
+        <button id="btnSidebar" class="sidebar-handle" onclick="toggleSidebar()" title="收起左侧实例列表"><svg class="ico"><use href="#i-wave"/></svg></button>
         <aside>
             <div class="side-head">
                 <span>实例列表（点击切换画面）</span>
@@ -3304,10 +3310,8 @@
             document.querySelector(".layout").classList.toggle("sidebar-hidden", sidebarHidden);
             const btn = $("btnSidebar");
             if (btn) {
-                // 把手在侧栏右边缘：侧栏可见时显示「收起」箭头，隐藏时显示「展开」箭头。
+                // 波浪纹无方向概念，只切换 title 提示；图标始终为三叠波浪。
                 btn.title = sidebarHidden ? "展开左侧实例列表" : "收起左侧实例列表（画面占满）";
-                const use = btn.querySelector("use");
-                if (use) use.setAttribute("href", sidebarHidden ? "#i-forward" : "#i-back");
             }
         }
         // 供页面初始化恢复与顶栏按钮点击共用；force 为布尔时强制设为该值。
