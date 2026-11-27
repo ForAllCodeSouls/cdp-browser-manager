@@ -1080,8 +1080,9 @@ class PanelUiStateTests(unittest.TestCase):
 
     def test_instances_split_into_temp_and_persist_groups(self):
         self.assertIn('const GROUP_STATE_KEY = "cdpManagerGroups";', self.src)
-        self.assertIn('renderInstGroup("temp", "临时列表"', self.src)
-        self.assertIn('renderInstGroup("persist", "持久"', self.src)
+        self.assertIn('renderInstGroup("temp", "临时实例"', self.src)
+        self.assertIn('renderInstGroup("persist", "持久实例"', self.src)
+        self.assertNotIn('renderInstGroup("temp", "临时列表"', self.src)
         self.assertIn("i.profile_mode !== \"persistent\"", self.src)
         self.assertIn("i.profile_mode === \"persistent\"", self.src)
         self.assertIn(".inst-group.collapsed .group-body", self.src)
@@ -1089,20 +1090,41 @@ class PanelUiStateTests(unittest.TestCase):
         self.assertIn("localStorage.setItem(GROUP_STATE_KEY", self.src)
 
     def test_create_and_stop_icons_moved_into_group_heads(self):
+        g = self.src.index("const groupBtns = (key, name) =>")
+        gseg = self.src[g:g + 900]
+        for token in ('data-grp-action="create"', 'data-grp-action="stop"',
+                      "openCreate(\\'' + key + '\\')", "openStopDialog(\\'' + key + '\\')",
+                      '#i-plus', '#i-stop'):
+            self.assertIn(token, gseg)
         i = self.src.index('renderInstGroup("temp"')
-        seg = self.src[i:i + 900]
-        self.assertIn('id="btnCreate"', seg)
-        self.assertIn('openCreate()', seg)
-        self.assertIn('#i-plus', seg)
+        self.assertIn('groupBtns("temp", "临时实例")', self.src[i:i + 200])
         j = self.src.index('renderInstGroup("persist"')
-        seg2 = self.src[j:j + 900]
-        self.assertIn('id="btnStopAll"', seg2)
-        self.assertIn('openStopDialog()', seg2)
-        self.assertIn('#i-stop', seg2)
+        self.assertIn('groupBtns("persist", "持久实例")', self.src[j:j + 200])
+        self.assertIn('document.querySelectorAll(".group-head .grp-btn")', self.src)
+
+    def test_create_dialog_locked_to_clicked_group(self):
+        i = self.src.index("function openCreate(group)")
+        seg = self.src[i:i + 1700]
+        for token in ('const persist = group === "persist"',
+                      'textContent = persist ? "新建持久实例" : "新建临时实例"',
+                      'eph.hidden = persist', 'eph.disabled = persist',
+                      '$("createMode").value = "new"', '$("createMode").value = "ephemeral"',
+                      'id="createModeEphemeral"'):
+            self.assertIn(token, seg if token != 'id="createModeEphemeral"' else self.src)
+        self.assertNotIn("function openCreate() {", self.src)
+
+    def test_stop_dialog_scoped_to_clicked_group(self):
+        i = self.src.index("function openStopDialog(group)")
+        seg = self.src[i:i + 1200]
+        for token in ('.filter(i => persist ? i.profile_mode === "persistent" : i.profile_mode !== "persistent")',
+                      'textContent = persist ? "停止持久实例" : "停止临时实例"',
+                      '默认全选本组全部持久实例', '默认全选本组全部临时实例'):
+            self.assertIn(token, seg)
+        self.assertNotIn("function openStopDialog() {", self.src)
 
     def test_stop_dialog_checks_all_with_full_browser_info(self):
         for token in ('id="stopMask"', 'id="stopList"', 'id="stopSelectAll"',
-                      "function openStopDialog()", "function confirmStopSelected()",
+                      "function openStopDialog(group)", "function confirmStopSelected()",
                       'input type="checkbox" data-sid=', "Promise.allSettled"):
             self.assertIn(token, self.src)
         i = self.src.index("function stopItemHtml(i)")

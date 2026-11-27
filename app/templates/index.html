@@ -150,7 +150,7 @@
         }
         .side-empty { padding: 20px 16px; text-align: center; color: var(--muted); font-size: 12px; }
 
-        /* 实例列表按「临时 / 持久」分组：标题可折叠，右侧是全局操作图标 */
+        /* 实例列表按「临时实例 / 持久实例」分组：标题可折叠，右侧各有新建 + 停止图标 */
         .inst-group { border-bottom: 1px solid var(--border); }
         .group-head {
             display: flex; align-items: center; gap: 7px;
@@ -737,7 +737,7 @@
                 <div class="stage-main">
                     <div class="empty-view" id="viewerEmpty">
                         <h2>暂无可显示的画面</h2>
-                        <div>点击实例列表，或点「临时列表」右侧的 + 新建</div>
+                        <div>点击实例列表，或点「临时实例」右侧的 + 新建</div>
                     </div>
                     <div class="frame-wrap" id="frameWrap" style="display:none">
                         <div class="frame-overlay" id="frameOverlay"></div>
@@ -781,8 +781,8 @@
     <!-- 停止实例弹窗：默认全选，按完整浏览器信息逐条确认 -->
     <div class="mask" id="stopMask" onclick="if(event.target===this) closeStopDialog()">
         <div class="panel stop-panel">
-            <h3>停止实例</h3>
-            <div class="hint">默认全选。取消勾选可只停止部分实例；持久用户目录会保留，不会删除登录态。</div>
+            <h3 id="stopTitle">停止实例</h3>
+            <div class="hint" id="stopHint">默认全选。取消勾选可只停止部分实例；持久用户目录会保留，不会删除登录态。</div>
             <label class="stop-all"><input type="checkbox" id="stopSelectAll" checked onchange="toggleStopAll(this.checked)"><span>全选 / 取消全选</span></label>
             <div class="stop-list" id="stopList"></div>
             <div class="actions">
@@ -839,7 +839,7 @@
     <!-- 新建实例弹窗 -->
     <div class="mask" id="createMask" onclick="if(event.target===this) closeCreate()">
         <div class="panel">
-            <h3>新建浏览器实例</h3>
+            <h3 id="createTitle">新建浏览器实例</h3>
             <div class="row" id="hostRow" style="display:none">
                 <label for="createHost">目标主机</label>
                 <select id="createHost"></select>
@@ -854,13 +854,16 @@
                 </select>
                 <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。两种无头都会自动隐藏 HeadlessChrome 身份；都不提供 VNC。</div>
             </div>
-            <div class="row">
-                <label for="createMode">用户目录模式</label>
+            <div class="row" id="modeRow">
+                <label for="createMode">持久目录来源</label>
                 <select id="createMode" onchange="onModeChange()">
-                    <option value="ephemeral">临时目录 — 停止即清理（推荐日常用）</option>
+                    <option value="ephemeral" id="createModeEphemeral">临时目录 — 停止即清理（推荐日常用）</option>
                     <option value="new">新建持久目录 — 保存登录态，需手动删除</option>
                     <option value="reuse">复用已有持久目录 — 恢复之前的登录态</option>
                 </select>
+            </div>
+            <div class="row" id="createGroupHint" style="display:none">
+                <div class="hint" id="createGroupHintText"></div>
             </div>
             <div class="row" id="nameRow" style="display:none">
                 <label for="createName">目录名称</label>
@@ -872,7 +875,7 @@
                 <select id="reuseName"></select>
                 <div class="hint">被运行中实例占用的目录不会出现在列表里。</div>
             </div>
-            <div class="foot">持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。</div>
+            <div class="foot" id="createFoot">持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。</div>
             <div class="actions">
                 <button onclick="closeCreate()">取消</button>
                 <button class="btn-primary" onclick="confirmCreate()" id="btnConfirmCreate">创建</button>
@@ -1876,8 +1879,28 @@
         }
 
         // ---- 新建实例弹窗 ----
-        function openCreate() {
+        // 从哪个分组点 +，就只能建哪类实例：temp=临时目录；persist=持久目录（新建或复用）。
+        function openCreate(group) {
             if (busy) return;
+            const persist = group === "persist";
+            $("createTitle").textContent = persist ? "新建持久实例" : "新建临时实例";
+            $("modeRow").style.display = persist ? "block" : "none";
+            // 持久组禁用并隐藏「临时目录」选项，防止从持久组建出临时实例。
+            const eph = $("createModeEphemeral");
+            eph.hidden = persist;
+            eph.disabled = persist;
+            if (persist) {
+                if ($("createMode").value === "ephemeral") $("createMode").value = "new";
+                $("createGroupHint").style.display = "none";
+                $("createFoot").textContent =
+                    "持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。";
+            } else {
+                $("createMode").value = "ephemeral";
+                $("createGroupHint").style.display = "block";
+                $("createGroupHintText").textContent =
+                    "临时实例使用临时目录，停止后浏览器数据自动清理；想保存登录态请到「持久实例」分组点 + 新建。";
+                $("createFoot").textContent = "临时实例停止后数据自动清理，不会留下持久目录。";
+            }
             onModeChange();
             $("createMask").classList.add("open");
         }
@@ -2069,9 +2092,8 @@
 
         function setBusy(v) {
             busy = v;
-            // 两个按钮现在由 render() 动态生成，首轮渲染前可能还不存在。
-            const c = $("btnCreate"); if (c) c.disabled = v;
-            const s = $("btnStopAll"); if (s) s.disabled = v;
+            // 四个分组按钮由 render() 动态生成，首轮渲染前可能还不存在。
+            document.querySelectorAll(".group-head .grp-btn").forEach(el => { el.disabled = v; });
         }
 
         async function api(url, options = {}, timeoutMs = 15000) {
@@ -3227,17 +3249,22 @@
             const tempList = list.filter(i => i.profile_mode !== "persistent");
             const persistList = list.filter(i => i.profile_mode === "persistent");
             const busyAttr = busy ? ' disabled' : '';
+            // 每组都放「新建 + 停止」两个图标，且只作用于本组：临时组不碰持久实例，反之亦然。
+            const groupBtns = (key, name) =>
+                '<button class="grp-btn btn-primary" data-grp-action="create"' + busyAttr +
+                    ' title="新建' + esc(name) + '" onclick="event.stopPropagation(); openCreate(\'' + key + '\')">' +
+                    '<svg class="ico"><use href="#i-plus"/></svg></button>' +
+                '<button class="grp-btn btn-danger" data-grp-action="stop"' + busyAttr +
+                    ' title="停止' + esc(name) + '（默认全选，可勾选）"' +
+                    ' onclick="event.stopPropagation(); openStopDialog(\'' + key + '\')">' +
+                    '<svg class="ico"><use href="#i-stop"/></svg></button>';
             $("instanceList").innerHTML =
-                renderInstGroup("temp", "临时列表", tempList,
-                    '<button class="grp-btn btn-primary" id="btnCreate"' + busyAttr +
-                        ' title="新建浏览器实例" onclick="event.stopPropagation(); openCreate()">' +
-                        '<svg class="ico"><use href="#i-plus"/></svg></button>',
+                renderInstGroup("temp", "临时实例", tempList,
+                    groupBtns("temp", "临时实例"),
                     hostFilter === "all" ? "暂无临时实例 · 点 + 新建" : "该主机暂无临时实例") +
-                renderInstGroup("persist", "持久", persistList,
-                    '<button class="grp-btn btn-danger" id="btnStopAll"' + busyAttr +
-                        ' title="选择实例停止（默认全选，可勾选）" onclick="event.stopPropagation(); openStopDialog()">' +
-                        '<svg class="ico"><use href="#i-stop"/></svg></button>',
-                    hostFilter === "all" ? "暂无持久实例" : "该主机暂无持久实例");
+                renderInstGroup("persist", "持久实例", persistList,
+                    groupBtns("persist", "持久实例"),
+                    hostFilter === "all" ? "暂无持久实例 · 点 + 新建" : "该主机暂无持久实例");
 
             $("profileStat").textContent = profiles.length;
             if (!profiles.length) {
@@ -3443,14 +3470,22 @@
                 '</div>' +
             '</label>';
         }
-        function openStopDialog() {
-            const all = Object.values(instances).sort((a, b) => {
-                const ha = (a.host && a.host !== "local") ? 1 : 0;
-                const hb = (b.host && b.host !== "local") ? 1 : 0;
-                if (ha !== hb) return ha - hb;
-                return (b.created_at || 0) - (a.created_at || 0);
-            });
-            if (!all.length) { toast("当前没有实例可停止"); return; }
+        // 只列当前分组的实例：临时组的停止按钮不碰持久实例，持久组同理。
+        function openStopDialog(group) {
+            const persist = group === "persist";
+            const all = Object.values(instances)
+                .filter(i => persist ? i.profile_mode === "persistent" : i.profile_mode !== "persistent")
+                .sort((a, b) => {
+                    const ha = (a.host && a.host !== "local") ? 1 : 0;
+                    const hb = (b.host && b.host !== "local") ? 1 : 0;
+                    if (ha !== hb) return ha - hb;
+                    return (b.created_at || 0) - (a.created_at || 0);
+                });
+            if (!all.length) { toast(persist ? "当前没有持久实例可停止" : "当前没有临时实例可停止"); return; }
+            $("stopTitle").textContent = persist ? "停止持久实例" : "停止临时实例";
+            $("stopHint").textContent = persist
+                ? "默认全选本组全部持久实例；持久用户目录会保留，下次新建可复用登录态。"
+                : "默认全选本组全部临时实例；停止后临时目录自动清理。";
             $("stopList").innerHTML = all.map(stopItemHtml).join("");
             $("stopSelectAll").checked = true;
             $("stopMask").classList.add("open");
@@ -3485,7 +3520,10 @@
                     toast("已停止 " + (sids.length - failed.length) + " 个；失败 " + failed.length +
                         " 个（" + failed.map(s => s.slice(0, 8)).join("、") + "）", "error");
                 } else {
-                    toast("已停止 " + sids.length + " 个实例，持久目录已保留", "ok");
+                    const hasPersist = sids.some(sid =>
+                        (instances[sid] || {}).profile_mode === "persistent");
+                    toast("已停止 " + sids.length + " 个实例" +
+                        (hasPersist ? "，持久目录已保留" : ""), "ok");
                 }
                 await load();
             } finally {
