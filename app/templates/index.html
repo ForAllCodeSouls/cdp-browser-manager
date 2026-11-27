@@ -4381,13 +4381,34 @@
         async function deleteProfile(name, host) {
             if (busy) return;
             const isRemote = host && host !== "local";
+            const hostName = isRemote
+                ? ((remoteProfiles.find(p => p.host === host && p.name === name) || {}).host_name || host)
+                : "";
             const where = isRemote
-                ? "（远端主机 " + (remoteProfiles.find(p => p.host === host && p.name === name) || {}).host_name +
-                  " — 删除的是那台主机上的目录）"
+                ? "（远端主机 " + hostName + " — 删除的是那台主机上的目录）"
                 : "";
             if (!confirm("确定删除持久目录「" + name + "」" + where + "？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。")) return;
             setBusy(true);
             try {
+                // 删除前实时复核 used_by：列表里的占用状态是 60 秒前的缓存，远端可能
+                // 刚好启动了占用该目录的实例。远端走 /remote/<host>/api/profiles 读
+                // 那台主机自己的实例表，本机走 /api/profiles，确保检查的是对应主机。
+                const listUrl = isRemote
+                    ? "/remote/" + encodeURIComponent(host) + "/api/profiles"
+                    : "/api/profiles";
+                try {
+                    const check = await api(listUrl, {}, 10000);
+                    const cur = (check.profiles || []).find(p => p.name === name);
+                    if (cur && cur.used_by) {
+                        toast((isRemote ? "远端主机 " + hostName + " 的" : "") +
+                            "实例 " + String(cur.used_by).slice(0, 8) +
+                            " 正在使用该目录，请先停止实例再删除", "error");
+                        return;   // 有占用直接拦下，不发 DELETE
+                    }
+                } catch (e) {
+                    // 复核失败（主机离线/鉴权）不阻止删除：后端 remove_profile 仍会
+                    // 用实例表挡 409，作为最后一道防线。
+                }
                 const url = isRemote
                     ? "/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)
                     : "/profile/" + encodeURIComponent(name);

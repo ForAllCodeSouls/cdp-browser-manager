@@ -1704,6 +1704,12 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("async function deleteProfile(name, host)", s)
         self.assertIn('"/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)', s)
         self.assertIn('await Promise.all([load(), loadRemoteProfiles()])', s)
+        # 删除前实时复核远端实例的 used_by：远端走 /remote/<host>/api/profiles
+        # 读那台主机自己的实例表，占用则拦截、不发 DELETE；后端 409 兜底。
+        self.assertIn('const listUrl = isRemote', s)
+        self.assertIn('"/remote/" + encodeURIComponent(host) + "/api/profiles"', s)
+        self.assertIn("if (cur && cur.used_by)", s)
+        self.assertIn("正在使用该目录，请先停止实例再删除", s)
         # 远端目录拉取与 10 秒实例轮询解耦，另有 60 秒独立定时器。
         self.assertIn("setInterval(() => { if (!document.hidden && !bgEcoMode) loadRemoteProfiles(); }, 60000);", s)
         # 远端目录只进展示列表，不进本机「复用已有持久目录」下拉（卷在远端宿主机上）。
