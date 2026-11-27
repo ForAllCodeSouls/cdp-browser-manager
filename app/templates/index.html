@@ -166,6 +166,20 @@
         .seg button.on { background: var(--accent); color: #fff; }
         .qseg { margin-left: 6px; }
         .qhint { font-size: 11px; color: var(--muted); white-space: nowrap; }
+        /* 详情栏 VNC 刷新下拉：与文字 badge 视觉一致，点档位即刻全局热改 */
+        .vnc-sel {
+            font: inherit; font-size: 11px; padding: 2px 6px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+        }
+        /* 实例列表里的「预览」小按钮：点一下把该实例加入/移出监控主面板 */
+        .mon-toggle {
+            font-size: 10px; padding: 1px 6px; line-height: 1.4;
+            border-radius: 999px; border: 1px solid var(--border);
+            background: var(--surface-2); color: var(--muted);
+        }
+        .mon-toggle.on { background: #23314f; border-color: var(--accent); color: #cfe0ff; }
+        .item .sid-row { display: flex; align-items: center; gap: 8px; }
 
         .castbar {
             display: none;
@@ -316,6 +330,49 @@
             text-align: center;
         }
         .empty-view h2 { color: var(--text); font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+
+        /* 监控主面板：全部选中实例的实时画面网格（抓屏监控档，约 1 帧/秒） */
+        .monitor-view {
+            flex: 1; min-height: 0; display: none; flex-direction: column;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); overflow: hidden;
+        }
+        .monitor-view.show { display: flex; }
+        .monitor-head {
+            flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+            padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px;
+        }
+        .monitor-head .mtitle { font-weight: 600; }
+        .monitor-head .mhint { color: var(--muted); }
+        .monitor-grid {
+            flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 12px; align-content: start;
+        }
+        .mon-card {
+            display: flex; flex-direction: column; min-width: 0;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius); overflow: hidden;
+        }
+        .mon-card-head {
+            display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+            font-size: 11px; border-bottom: 1px solid var(--border);
+        }
+        .mon-card-head .msid { font-family: ui-monospace, monospace; font-weight: 600; }
+        .mon-card-head .mstatus { color: var(--muted); margin-left: auto; }
+        .mon-card-head .mstatus.live { color: var(--success); }
+        .mon-card-head button { padding: 2px 7px; font-size: 10px; }
+        .mon-card .mon-stage {
+            position: relative; width: 100%; aspect-ratio: 16 / 9;
+            background: #0c0e14; display: flex; align-items: center; justify-content: center;
+        }
+        .mon-card canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+        .mon-card .mempty {
+            position: absolute; inset: 0; display: flex; align-items: center;
+            justify-content: center; color: var(--muted); font-size: 11px; text-align: center;
+            padding: 12px; pointer-events: none;
+        }
+        .mon-card.gone { opacity: .5; }
 
         /* 舞台：左侧画面 + 右侧日志抽屉，二者同处一行 */
         .stage {
@@ -531,6 +588,12 @@
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
         </symbol>
+        <symbol id="i-grid" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -539,6 +602,7 @@
             <div class="disclaimer-note"><svg class="ico" style="margin-right:4px"><use href="#i-warn"/></svg><span>仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</span></div>
         </div>
         <div class="toolbar">
+            <button id="btnMonitor" onclick="toggleMonitorView()" class="btn-icon" title="监控主面板：同屏查看所有已勾选实例的实时画面"><svg class="ico"><use href="#i-grid"/></svg><span>监控面板</span></button>
             <label class="switch-wrap" title="打开/收起右侧运行日志">
                 <span>运行日志</span>
                 <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
@@ -596,6 +660,15 @@
                 </aside>
             </div>
         </section>
+        <section class="monitor-view" id="monitorView">
+            <div class="monitor-head">
+                <span class="mtitle">监控主面板</span>
+                <span class="mhint" id="monitorHint">在左侧实例列表点「预览」加入画面；抓屏监控档约 1 帧/秒，多路同屏不卡顿</span>
+                <span class="spacer" style="flex:1"></span>
+                <button onclick="toggleMonitorView()">返回普通视图</button>
+            </div>
+            <div class="monitor-grid" id="monitorGrid"></div>
+        </section>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -611,21 +684,12 @@
             </div>
             <div class="row">
                 <label for="createBrowser">浏览器内核</label>
-                <select id="createBrowser" onchange="onBrowserChange()">
+                <select id="createBrowser">
                     <option value="full">完整 Chrome — 有地址栏/标签栏，支持 VNC 与抓屏</option>
                     <option value="headless">老无头 chrome-headless-shell — 轻量，身份自动伪装</option>
                     <option value="headless-new">新无头 Chrome --headless=new — 完整内核，身份自动伪装</option>
                 </select>
                 <div class="hint">三种方式的 CDP 端口与协议完全一致，外部程序连接方式不变。两种无头都会自动隐藏 HeadlessChrome 身份；都不提供 VNC。</div>
-            </div>
-            <div class="row" id="vncRefreshRow">
-                <label for="createVncRefresh">VNC 刷新速度</label>
-                <select id="createVncRefresh">
-                    <option value="standard">标准 — x11vnc 默认（20/30ms，约 30fps 上限）</option>
-                    <option value="fast">快速 — 10/10ms，动态画面更跟手</option>
-                    <option value="ultra">极速 — 0/0ms，变化即推，CPU/带宽最高</option>
-                </select>
-                <div class="hint">只影响 VNC 模式的画面刷新节奏（由容器内 x11vnc 的采集节流决定），抓屏模式不受影响。参数在容器启动时固定，只对新建实例生效，换档需重建实例。</div>
             </div>
             <div class="row">
                 <label for="createMode">用户目录模式</label>
@@ -773,6 +837,13 @@
         let screenLocked = false;   // 屏幕锁：拦截画面输入，防止脚本执行时误点击
         let frameRetryCount = 0;    // 画面断连自动重试次数（容器重启等瞬时故障自愈）
         let frameRetryTimer = null;
+        let vncRefresh = "standard"; // 全局 VNC 刷新档（服务端持久化，所有实例统一）
+        // 监控主面板：{sid: {ws, canvas, gen, tid, host}}，勾选列表持久化到 localStorage
+        const MONITOR_KEY = "cdpManagerMonitorSids";
+        let monitorSids = [];
+        let monitorCards = {};
+        let monitorGen = 0;
+        let monitorViewOpen = false;
         let busy = false;
 
         // ---- 多主机与鉴权：浏览器只连本机面板，远端由服务端代理 ----
@@ -1483,7 +1554,8 @@
 
         // 全局画质档位切换：对所有实例生效，切换后重连画面让 VNC/抓屏都按新档位生效。
         const QUALITY_LABELS = { low: "省流", medium: "均衡", high: "高清" };
-        // VNC 刷新档（容器内 x11vnc 采集节流，仅完整内核、新建实例时生效）。
+        // VNC 刷新档（容器内 x11vnc 采集节流，仅完整内核）。全局统一、随时可改：
+        // 切换时对所有主机所有运行实例热改，并持久化到服务端，新建实例也沿用。
         const VNC_REFRESH_LABELS = { standard: "标准", fast: "快速", ultra: "极速" };
         // 按「画面模式 + 画质档位」给出一句建议，帮用户快速判断当前组合是否合适。
         function qualityHint(mode, q) {
@@ -1511,20 +1583,63 @@
             toast("画质已切换为" + (QUALITY_LABELS[q] || q) + "，画面重新连接", "ok");
         }
 
+        // 全局 VNC 刷新档：本机 + 所有已接入远端主机一起切换，服务端持久化。
+        // 通过 x11vnc -R 热改运行中的实例，无需重建、画面不中断。
+        async function setVncRefresh(key) {
+            if (!(key in VNC_REFRESH_LABELS)) return;
+            const prev = vncRefresh;
+            vncRefresh = key;
+            render();
+            const results = [];
+            let anyOk = false;
+            const targets = [{ id: "local", name: "本机" }].concat(
+                hosts.filter(h => h.id && h.id !== "local")
+            );
+            for (const h of targets) {
+                const url = h.id === "local"
+                    ? "/api/vnc-refresh"
+                    : "/remote/" + encodeURIComponent(h.id) + "/api/vnc-refresh";
+                try {
+                    const r = await api(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ refresh: key }),
+                    });
+                    anyOk = true;
+                    const n = (r.applied || []).length;
+                    const bad = (r.failed || []).length;
+                    results.push(h.name + "：" + n + " 个生效" + (bad ? "（" + bad + " 个失败）" : ""));
+                } catch (e) {
+                    results.push(h.name + "：失败（" + e.message + "）");
+                }
+            }
+            if (!anyOk) {
+                vncRefresh = prev;
+                render();
+                toast("VNC 刷新切换失败：" + results.join("；"), "error");
+            } else {
+                toast("VNC 刷新已切到「" + VNC_REFRESH_LABELS[key] + "」 · " + results.join("；"), "ok");
+            }
+        }
+
+        // 页面首次加载后从服务端同步全局档位（面板换浏览器也能读到同一档）。
+        async function loadVncRefresh() {
+            try {
+                const r = await api("/api/vnc-refresh");
+                if (r && r.refresh && r.refresh !== vncRefresh) {
+                    vncRefresh = r.refresh;
+                    render();
+                }
+            } catch (e) {}
+        }
+
         // ---- 新建实例弹窗 ----
         function openCreate() {
             if (busy) return;
             onModeChange();
-            onBrowserChange();
             $("createMask").classList.add("open");
         }
         function closeCreate() { $("createMask").classList.remove("open"); }
-        // VNC 刷新档只对完整内核有意义：无头实例没有 VNC，隐藏整行避免误解。
-        function onBrowserChange() {
-            const row = $("vncRefreshRow");
-            if (!row) return;
-            row.style.display = ($("createBrowser").value === "full") ? "" : "none";
-        }
         function onModeChange() {
             const mode = $("createMode").value;
             $("nameRow").style.display = mode === "new" ? "block" : "none";
@@ -1573,7 +1688,7 @@
                             profile_mode: profileMode,
                             profile_name: profileName,
                             browser_mode: browserMode,
-                            vnc_refresh: $("createVncRefresh") ? $("createVncRefresh").value : "standard",
+                            // VNC 刷新档全局统一，服务端用持久化的档位创建，不再随请求传。
                             host: $("createHost") ? $("createHost").value : "local",
                         }),
                     },
@@ -1757,6 +1872,7 @@
                     if (rv.tid) castPreferredTid = rv.tid;
                 }
                 render();
+                if (monitorViewOpen) renderMonitor();
             } catch (e) {
                 if (!quiet) toast("加载失败: " + e.message, "error");
             }
@@ -2457,7 +2573,167 @@
             if (castState) await closeTargetById(castState.tid);
         }
 
+        // ---------------- 监控主面板 ----------------
+        // 每个勾选实例一条抓屏 WS，用后端 monitor 档（640×360 / 低码率 / 约 1 帧/秒）。
+        // 多路同屏时只收关键帧节奏，避免 N 路全速推帧把 CPU/带宽打满。
+        function loadMonitorSids() {
+            try {
+                const v = JSON.parse(localStorage.getItem(MONITOR_KEY) || "[]");
+                return Array.isArray(v) ? v.filter(x => typeof x === "string") : [];
+            } catch (e) { return []; }
+        }
+        function saveMonitorSids() {
+            try { localStorage.setItem(MONITOR_KEY, JSON.stringify(monitorSids)); } catch (e) {}
+        }
+        function toggleMonitorView() {
+            monitorViewOpen = !monitorViewOpen;
+            $("monitorView").classList.toggle("show", monitorViewOpen);
+            $("btnMonitor").classList.toggle("btn-primary", monitorViewOpen);
+            document.querySelector(".layout").style.display = monitorViewOpen ? "none" : "";
+            if (monitorViewOpen) {
+                renderMonitor();
+                // 面板打开时无需普通视图的画面 WS，断开省资源；关闭后由 render 重挂。
+                if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
+            } else {
+                resetFrameState();
+                render();
+                syncMonitorCards();
+            }
+        }
+        function toggleMonitorSid(sid) {
+            const at = monitorSids.indexOf(sid);
+            if (at >= 0) monitorSids.splice(at, 1);
+            else monitorSids.push(sid);
+            saveMonitorSids();
+            render();
+            if (monitorViewOpen) syncMonitorCards();
+        }
+        function monitorWsUrl(inst, tid) {
+            let tpl = inst.cast_ws || ("/ws/cast/" + inst.sid + "/{tid}");
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            tpl = keyQuery(tpl.replace("{tid}", encodeURIComponent(tid)));
+            tpl += (tpl.includes("?") ? "&" : "?") + "quality=monitor";
+            return proto + "//" + location.host + tpl;
+        }
+        function destroyMonitorCard(sid) {
+            const c = monitorCards[sid];
+            if (!c) return;
+            c.gen++;
+            if (c.ws) { try { c.ws.close(); } catch (e) {} }
+            if (c.el && c.el.parentNode) c.el.parentNode.removeChild(c.el);
+            delete monitorCards[sid];
+        }
+        // 按 monitorSids 与当前实例状态增删卡片；已存在的卡片不重建（避免闪屏）。
+        function syncMonitorCards() {
+            if (!monitorViewOpen) return;
+            for (const sid of Object.keys(monitorCards)) {
+                if (!monitorSids.includes(sid) || !instances[sid] || instances[sid].status !== "running") {
+                    destroyMonitorCard(sid);
+                }
+            }
+            for (const sid of monitorSids) {
+                const inst = instances[sid];
+                if (!inst || inst.status !== "running") continue;
+                if (monitorCards[sid]) continue;
+                createMonitorCard(sid, inst);
+            }
+            const empty = $("monitorGrid").querySelector(".mon-empty");
+            if (empty) empty.remove();
+            if (!$("monitorGrid").children.length) {
+                const d = document.createElement("div");
+                d.className = "mon-empty";
+                d.style.cssText = "color:var(--muted);font-size:12px;padding:24px;text-align:center;grid-column:1/-1";
+                d.textContent = "尚未勾选实例。到左侧实例列表点 sid 旁的「预览」按钮加入画面。";
+                $("monitorGrid").appendChild(d);
+            }
+        }
+        function createMonitorCard(sid, inst) {
+            const card = document.createElement("div");
+            card.className = "mon-card";
+            card.innerHTML =
+                '<div class="mon-card-head">' +
+                    '<span class="msid">' + esc(sid.slice(0, 8)) + '</span>' +
+                    (inst.host && inst.host !== "local" ? '<span class="badge host">' + esc(inst.host_name || inst.host) + '</span>' : '') +
+                    '<span class="mstatus">连接中…</span>' +
+                    '<button title="从监控面板移除" onclick="toggleMonitorSid(' + jsArg(sid) + ')">移除</button>' +
+                '</div>' +
+                '<div class="mon-stage"><div class="mempty">正在读取标签页…</div></div>';
+            $("monitorGrid").appendChild(card);
+            const state = { el: card, ws: null, gen: ++monitorGen, tid: "", stage: card.querySelector(".mon-stage") };
+            monitorCards[sid] = state;
+            const status = card.querySelector(".mstatus");
+            const connect = (attempt) => {
+                if (monitorCards[sid] !== state || !monitorViewOpen) return;
+                const ws = new WebSocket(monitorWsUrl(inst, state.tid));
+                state.ws = ws;
+                ws.onmessage = (ev) => {
+                    let msg;
+                    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                    if (msg.type === "error") {
+                        status.textContent = msg.message || "出错";
+                        status.className = "mstatus";
+                        return;
+                    }
+                    if (msg.type === "frame" && msg.data) {
+                        const img = new Image();
+                        img.onload = () => {
+                            if (monitorCards[sid] !== state) return;
+                            let canvas = state.stage.querySelector("canvas");
+                            if (!canvas) {
+                                state.stage.innerHTML = "";
+                                canvas = document.createElement("canvas");
+                                state.stage.appendChild(canvas);
+                            }
+                            if (canvas.width !== img.width || canvas.height !== img.height) {
+                                canvas.width = img.width; canvas.height = img.height;
+                            }
+                            canvas.getContext("2d").drawImage(img, 0, 0);
+                            status.textContent = "实时";
+                            status.className = "mstatus live";
+                        };
+                        img.src = "data:image/jpeg;base64," + msg.data;
+                    }
+                };
+                ws.onerror = () => {};
+                ws.onclose = () => {
+                    if (state.ws === ws) state.ws = null;
+                    if (monitorCards[sid] !== state || !monitorViewOpen) return;
+                    if (attempt < 2) { setTimeout(() => connect(attempt + 1), 700 * (attempt + 1)); return; }
+                    status.textContent = "已断开";
+                    status.className = "mstatus";
+                };
+            };
+            // 取第一个页面标签作为监控画面；无标签时提示去实例里新建。
+            fetchTargets(inst).then(targets => {
+                if (monitorCards[sid] !== state) return;
+                const pages = targets.filter(t => t.type === "page");
+                if (!pages.length) {
+                    status.textContent = "无标签";
+                    status.className = "mstatus";
+                    state.stage.querySelector(".mempty").textContent = "该实例暂无可抓屏标签";
+                    return;
+                }
+                state.tid = pages[0].id;
+                connect(0);
+            }).catch(e => {
+                if (monitorCards[sid] !== state) return;
+                status.textContent = "读取标签失败";
+                status.className = "mstatus";
+                state.stage.querySelector(".mempty").textContent = e.message;
+            });
+        }
+        function renderMonitor() {
+            syncMonitorCards();
+            for (const sid of Object.keys(monitorCards)) {
+                const inst = instances[sid];
+                if (!inst) continue;
+                const card = monitorCards[sid].el;
+                card.classList.toggle("gone", inst.status !== "running");
+            }
+        }
+
         async function pollCastTargets() {
+            if (monitorViewOpen) return;  // 监控面板打开时不维护普通视图的抓屏通道
             const sel = currentSel();
             if (!sel || !castState || castState.sid !== sel.sid) return;
             const vncMode = effectiveMode(sel) === "vnc";
@@ -2523,7 +2799,11 @@
             } else {
                 $("instanceList").innerHTML = list.map(i =>
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
-                        '<div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
+                        '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
+                            '<button class="mon-toggle' + (monitorSids.includes(i.sid) ? ' on' : '') + '"' +
+                                ' title="加入/移出监控主面板"' +
+                                ' onclick="event.stopPropagation();toggleMonitorSid(' + jsArg(i.sid) + ')">预览</button>' +
+                        '</div>' +
                         '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
                             (i.host && i.host !== "local"
                                 ? '<span class="badge host">' + esc(i.host_name || i.host) + '</span>' : '') +
@@ -2568,9 +2848,13 @@
                 const pinfo = sel.profile_mode === "persistent"
                     ? '<span class="kv">目录 <b>' + esc(sel.profile_name) + '</b></span>'
                     : '';
-                const vncInfo = (!headless && sel.vnc_refresh)
-                    ? '<span class="kv">VNC 刷新 <b>' +
-                        esc(VNC_REFRESH_LABELS[sel.vnc_refresh] || sel.vnc_refresh) + '</b></span>'
+                // 点档位即全局热改：对所有主机所有运行实例生效，服务端记住选择。
+                const vncInfo = !headless
+                    ? '<span class="kv">VNC 刷新 <select class="vnc-sel" title="全局档位，对所有实例生效；切换即刻热改，无需重建" onchange="setVncRefresh(this.value)">' +
+                        Object.keys(VNC_REFRESH_LABELS).map(k =>
+                            '<option value="' + k + '"' + (k === vncRefresh ? ' selected' : '') + '>' +
+                            VNC_REFRESH_LABELS[k] + '</option>'
+                        ).join('') + '</select></span>'
                     : '';
                 const qseg =
                     '<span class="seg qseg" title="全局画质档位，对所有实例生效">' +
@@ -2611,6 +2895,8 @@
             $("logDrawer").classList.toggle("open", logsOpen);
             if (logsOpen) loadLogs();
 
+            // 监控主面板打开时，普通视图整块隐藏，不挂载/重连画面 WS，省资源。
+            if (monitorViewOpen) return;
             if (!sel || sel.status !== "running") {
                 clearFrame();
                 $("frameWrap").style.display = "none";
@@ -2767,8 +3053,12 @@
         }
 
         applyScreenLock();
+        monitorSids = loadMonitorSids();
         initHosts().then(() => {
-            if (!authRequired || apiKey) load();
+            if (!authRequired || apiKey) {
+                load();
+                loadVncRefresh();
+            }
         });
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。

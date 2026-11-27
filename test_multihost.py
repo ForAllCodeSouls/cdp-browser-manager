@@ -294,7 +294,7 @@ class BinaryFrameForwardingTests(unittest.TestCase):
 
 
 class VncRefreshTests(unittest.TestCase):
-    """VNC 刷新档：x11vnc 采集节流由 VNC_WAIT/VNC_DEFER 控制，新建实例生效。"""
+    """VNC 刷新档：全局持久化 + x11vnc -R 热改运行中实例，随时可切换。"""
 
     def test_normalize_falls_back_to_standard(self):
         self.assertEqual(main.normalize_vnc_refresh(""), "standard")
@@ -330,15 +330,30 @@ class VncRefreshTests(unittest.TestCase):
         self.assertIn('"vnc_refresh": vnc_refresh', src)  # 远端创建转发
         self.assertIn('"vnc_refresh": vnc_key', src)      # 实例信息回传
 
-    def test_js_sends_vnc_refresh_on_create(self):
+    def test_global_persist_and_hot_apply(self):
+        self.assertTrue(hasattr(main, "VNC_REFRESH_FILE"))
+        self.assertTrue(hasattr(main, "get_global_vnc_refresh"))
+        self.assertTrue(hasattr(main, "apply_vnc_refresh_to_running"))
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("x11vnc -R wait:", src)
+        self.assertIn("x11vnc -R defer:", src)
+        self.assertIn('@app.post("/api/vnc-refresh")', src)
+        self.assertIn('@app.get("/api/vnc-refresh")', src)
+        # 新建实例用全局档位（空值回落到持久化的档位）
+        self.assertIn("vnc_refresh or get_global_vnc_refresh()", src)
+
+    def test_js_global_dropdown_no_create_option(self):
         with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
             src = f.read()
-        self.assertIn('id="createVncRefresh"', src)
-        self.assertIn("vnc_refresh: $(\"createVncRefresh\")", src)
+        self.assertIn('class="vnc-sel"', src)
+        self.assertIn("onchange=\"setVncRefresh(this.value)\"", src)
+        self.assertIn("async function setVncRefresh(key)", src)
+        self.assertIn("/api/vnc-refresh", src)
+        # 新建弹窗不再有 VNC 刷新选项
+        self.assertNotIn('id="createVncRefresh"', src)
+        self.assertNotIn("vnc_refresh: $(\"createVncRefresh\")", src)
         self.assertIn("VNC_REFRESH_LABELS", src)
-        # 无头内核隐藏该行
-        self.assertIn("function onBrowserChange()", src)
-        self.assertIn('row.style.display = ($("createBrowser").value === "full")', src)
 
 
 class CastQualityProfileTests(unittest.TestCase):
@@ -371,6 +386,46 @@ class CastQualityProfileTests(unittest.TestCase):
         a = main.cast_quality_profile("low")
         a["quality"] = 999
         self.assertNotEqual(main.cast_quality_profile("low")["quality"], 999)
+
+    def test_monitor_profile_is_small_and_throttled(self):
+        mon = main.cast_quality_profile("monitor")
+        self.assertLessEqual(mon["max_width"], 640)
+        self.assertLessEqual(mon["max_height"], 360)
+        self.assertLess(mon["quality"], main.cast_quality_profile("low")["quality"])
+        # 监控档限帧，避免多路同屏打满带宽
+        self.assertGreaterEqual(mon["min_interval"], 1.0)
+
+    def test_cast_pump_honors_min_interval(self):
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('min_interval = float(profile.get("min_interval", 0) or 0)', src)
+        self.assertIn("now_send - last_sent < min_interval", src)
+
+
+class MonitorPanelJsTests(unittest.TestCase):
+    """监控主面板：独立视图 + 实例列表预览按钮 + 抓屏监控档。"""
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            self.src = f.read()
+
+    def test_view_and_toggle_button(self):
+        self.assertIn('id="monitorView"', self.src)
+        self.assertIn('id="monitorGrid"', self.src)
+        self.assertIn("function toggleMonitorView()", self.src)
+        self.assertIn("function toggleMonitorSid(sid)", self.src)
+        self.assertIn('id="btnMonitor"', self.src)
+
+    def test_preview_button_in_instance_list(self):
+        self.assertIn('class="mon-toggle', self.src)
+        self.assertIn("event.stopPropagation();toggleMonitorSid(", self.src)
+        self.assertIn('const MONITOR_KEY = "cdpManagerMonitorSids"', self.src)
+
+    def test_monitor_uses_screencast_monitor_quality(self):
+        self.assertIn("quality=monitor", self.src)
+        self.assertIn("function monitorWsUrl(inst, tid)", self.src)
+        # 远端实例也走 /remote 前缀（复用 cast_ws）
+        self.assertIn("inst.cast_ws", self.src)
 
 
 class AuthExemptTests(unittest.TestCase):
@@ -504,6 +559,43 @@ class AddressRewriteTests(unittest.TestCase):
 
         out_local = main.rewrite_cdp_ws_urls(raw, FakeRequest(), 9222)
         self.assertIn("wss://panel.example.com/9222/devtools/browser/abc", out_local)
+
+
+@unittest.skipUnless(HAS_TESTCLIENT, "需要 fastapi + httpx，CI 环境自动运行")
+class VncRefreshApiTests(unittest.TestCase):
+    """全局 VNC 刷新档接口：GET 读档 / POST 持久化并热改。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cdpmgr-vnc-")
+        self.patches = [
+            patch.object(main, "API_KEY", ""),
+            patch.object(main, "VNC_REFRESH_FILE", Path(self.tmp) / "vnc_refresh.json"),
+            patch.object(main, "INSTANCES", {}),
+            patch.object(main, "apply_vnc_refresh_to_running",
+                         side_effect=lambda key: {"refresh": key, "applied": ["abc12345"], "failed": []}),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+
+    def test_get_default_and_post_persists(self):
+        client = TestClient(main.app)
+        self.assertEqual(client.get("/api/vnc-refresh").json()["refresh"], "standard")
+        r = client.post("/api/vnc-refresh", json={"refresh": "fast"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["refresh"], "fast")
+        self.assertEqual(r.json()["applied"], ["abc12345"])
+        self.assertEqual(client.get("/api/vnc-refresh").json()["refresh"], "fast")
+        # 新实例默认档位也应读到全局值
+        self.assertEqual(main.get_global_vnc_refresh(), "fast")
+
+    def test_post_bad_value_falls_back(self):
+        client = TestClient(main.app)
+        r = client.post("/api/vnc-refresh", json={"refresh": "bogus"})
+        self.assertEqual(r.json()["refresh"], "standard")
 
 
 @unittest.skipUnless(HAS_TESTCLIENT, "需要 fastapi + httpx，CI 环境自动运行")

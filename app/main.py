@@ -316,7 +316,9 @@ HEADLESS_MODES = ("headless", "headless-new")
 
 # VNC 刷新档：只控制完整内核里 x11vnc 的采集节流（-wait 轮询 / -defer 合并延迟），
 # 前端 noVNC 的 quality/compression 只影响清晰度与带宽，改不了帧率。
-# 注意：参数是 x11vnc 启动参数，只在**新建实例**时生效；改档需重建实例。
+# 档位是**全局**的：面板一次切换对所有实例生效，且持久化到 DATA_DIR，重启不丢。
+# 对运行中的实例用 x11vnc -R 热改参数（无需重建容器、不断开 noVNC）；
+# 新建实例时仍把参数写进 start.sh 环境变量，容器启动即按当前全局档位运行。
 # 默认值与 x11vnc 自带默认一致（20/30ms），旧实例行为不变。
 VNC_REFRESH_LABEL = "cdp.vnc.refresh"
 VNC_REFRESH_PROFILES = {
@@ -324,11 +326,66 @@ VNC_REFRESH_PROFILES = {
     "fast": {"wait": 10, "defer": 10, "label": "快速"},
     "ultra": {"wait": 0, "defer": 0, "label": "极速"},
 }
+VNC_REFRESH_FILE = DATA_DIR / "vnc_refresh.json"
 
 
 def normalize_vnc_refresh(name: str) -> str:
     key = str(name or "").strip().lower()
     return key if key in VNC_REFRESH_PROFILES else "standard"
+
+
+def get_global_vnc_refresh() -> str:
+    with _STORE_LOCK:
+        return normalize_vnc_refresh(
+            _load_json(VNC_REFRESH_FILE, {}).get("refresh", "standard")
+        )
+
+
+def set_global_vnc_refresh(name: str) -> str:
+    key = normalize_vnc_refresh(name)
+    with _STORE_LOCK:
+        _save_json(VNC_REFRESH_FILE, {"refresh": key})
+    return key
+
+
+def apply_vnc_refresh_to_running(key: str) -> dict:
+    """对所有运行中的完整内核实例热改 x11vnc 采集节流（-R wait/defer）。
+
+    x11vnc 的 -R 通过 X11 属性通道与已运行的实例通信，无需重启容器、
+    不会断开 noVNC 连接。无头实例没有 x11vnc，跳过。
+    """
+    key = normalize_vnc_refresh(key)
+    vp = VNC_REFRESH_PROFILES[key]
+    done, failed = [], []
+    with LOCK:
+        targets = [
+            (sid, dict(item)) for sid, item in INSTANCES.items()
+            if item.get("status") == "running" and item.get("browser_mode") == "full"
+        ]
+    for sid, item in targets:
+        cid = item.get("container_id")
+        try:
+            c = client.containers.get(cid)
+            # -R 走 X11 属性通道，容器内需带 DISPLAY；x11vnc 启动时未带 -noremote，
+            # 默认 yesremote，热改被接受。用 && 串联，任一条失败都反映到退出码，
+            # 不能用 "; echo ok"——那样退出码永远 0，会把失败误报成成功。
+            script = (
+                f"DISPLAY=:99 x11vnc -R wait:{vp['wait']} >/dev/null 2>&1 && "
+                f"DISPLAY=:99 x11vnc -R defer:{vp['defer']} >/dev/null 2>&1"
+            )
+            code, out = c.exec_run(["sh", "-c", script], timeout=8)
+            if code != 0:
+                failed.append({"sid": sid[:8], "error": "x11vnc -R 执行失败"})
+                log.warning("实例 %s 热改 VNC 刷新失败: code=%s", sid[:8], code)
+                continue
+            with LOCK:
+                if sid in INSTANCES:
+                    INSTANCES[sid]["vnc_refresh"] = key
+            done.append(sid[:8])
+        except Exception as e:
+            failed.append({"sid": sid[:8], "error": str(e)[:120]})
+            log.warning("实例 %s 热改 VNC 刷新异常: %s", sid[:8], e)
+    return {"refresh": key, "applied": done, "failed": failed}
 
 
 def image_for_mode(browser_mode: str) -> str:
@@ -589,6 +646,9 @@ CAST_PROFILES = {
     "low": {"quality": 45, "max_width": 960, "max_height": 540, "every_nth": 1},
     "medium": {"quality": 65, "max_width": 1280, "max_height": 720, "every_nth": 1},
     "high": {"quality": 80, "max_width": CAST_MAX_WIDTH, "max_height": CAST_MAX_HEIGHT, "every_nth": 1},
+    # 监控主面板专用：多画面同屏，缩小分辨率 + 低质量，并限制推帧频率（约 1 帧/秒），
+    # 避免 N 路并发把 manager 与浏览器的 CPU/带宽打满。用户在画质三档里看不到此档。
+    "monitor": {"quality": 30, "max_width": 640, "max_height": 360, "every_nth": 2, "min_interval": 1.0},
 }
 # 无 screencast 帧时，每隔多久主动 captureScreenshot 补一帧（秒）。
 CAST_KEEPALIVE_SEC = float(os.environ.get("CAST_KEEPALIVE_SEC", "1.5"))
@@ -856,6 +916,11 @@ def restore_instances():
             "profile_name": c.labels.get("cdp.profile.name", ""),
             "vnc_refresh": normalize_vnc_refresh(c.labels.get(VNC_REFRESH_LABEL, "")),
         }
+        # 全局档位是权威：manager 重启后，把持久化的档位覆盖回实例视图，
+        # 这样界面显示与实际已热改的 x11vnc 参数保持一致。运行中实例在启动时
+        # 也会由 reapply_global_vnc_refresh() 再热改一次（见下方）。
+        if mode == "full":
+            INSTANCES[sid]["vnc_refresh"] = get_global_vnc_refresh()
 
 
 def to_view(item: dict, request: Request) -> dict:
@@ -985,10 +1050,11 @@ def start_browser_instance(
     profile_mode: str = "ephemeral",
     profile_name: str = "",
     browser_mode: str = "full",
-    vnc_refresh: str = "standard",
+    vnc_refresh: str = "",
 ) -> dict:
     persistent = profile_mode == "persistent"
-    vnc_key = normalize_vnc_refresh(vnc_refresh)
+    # 空值 = 用全局档位：新建弹窗已不再提供该选项，全部实例统一由面板切换的档位决定。
+    vnc_key = normalize_vnc_refresh(vnc_refresh or get_global_vnc_refresh())
     # 先确认镜像在本地：否则 containers.run 会触发 pull，长时间占着全局锁，
     # 导致面板其它接口（/api/list 等）全部超时。镜像缺失时立即给出提示。
     ensure_image_available(image_for_mode(browser_mode))
@@ -1160,6 +1226,13 @@ try:
 except Exception as e:
     # Docker 暂时不可用时仍允许 manager 启动，后续接口给出明确错误。
     log.error("恢复已有实例失败（不影响新建）: %s", e)
+
+# manager 重启后，已运行容器的 x11vnc 仍是创建时的参数；用持久化的全局档位
+# 热改一次，让"界面显示 / 实际帧率 / 用户上次选择"三者一致。
+try:
+    apply_vnc_refresh_to_running(get_global_vnc_refresh())
+except Exception as e:
+    log.debug("启动时热改 VNC 刷新跳过: %s", e)
 
 
 def container_ip_by_id(container_id: str) -> str:
@@ -1685,6 +1758,30 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
 
 
+@app.get("/api/vnc-refresh")
+async def api_get_vnc_refresh():
+    """读取全局 VNC 刷新档位（面板打开时同步显示用）。"""
+    return {"refresh": get_global_vnc_refresh()}
+
+
+@app.post("/api/vnc-refresh")
+async def api_set_vnc_refresh(request: Request):
+    """全局切换 VNC 刷新档位：持久化 + 对所有运行中的完整内核实例热改。
+
+    前端同时在每一台已接入的远端主机上调用同名接口，实现"全部实例统一"。
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    name = payload.get("refresh", "") if isinstance(payload, dict) else ""
+    key = set_global_vnc_refresh(name)
+    result = await run_in_threadpool(apply_vnc_refresh_to_running, key)
+    # 远端主机由控制端面板通过 /remote/<id>/api/vnc-refresh 代理调用；
+    # 这里不做服务端 fan-out，避免 A 控制 B、B 又反向控制 A 的环路。
+    return JSONResponse(result)
+
+
 @app.get("/api/hosts")
 async def api_hosts(request: Request):
     """主机列表（免鉴权，供面板在输入密钥前判断是否需要鉴权）。
@@ -2036,7 +2133,9 @@ async def new_instance(request: Request):
     name = ""
     browser_mode = "full"
     host_id = "local"
-    vnc_refresh = "standard"
+    # 全局档位：新建弹窗已不再让用户选 VNC 刷新，统一用面板当前保存的档位。
+    # 仍接受 payload 里的 vnc_refresh（兼容旧前端 / 远端转发）。
+    vnc_refresh = get_global_vnc_refresh()
     try:
         payload = await request.json()
         if isinstance(payload, dict):
@@ -2044,7 +2143,8 @@ async def new_instance(request: Request):
             name = str(payload.get("profile_name", "") or "")
             browser_mode = payload.get("browser_mode", browser_mode)
             host_id = str(payload.get("host") or "local")
-            vnc_refresh = str(payload.get("vnc_refresh") or "standard")
+            if payload.get("vnc_refresh"):
+                vnc_refresh = normalize_vnc_refresh(payload["vnc_refresh"])
     except Exception:
         pass
     vnc_refresh = normalize_vnc_refresh(vnc_refresh)
@@ -2347,6 +2447,8 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             # 首帧兜底：startScreencast 对静止页面可能迟迟不推帧，主动抓当前画面。
             request_shot()
             last_frame = time.monotonic()
+            last_sent = 0.0  # 监控档限帧：距离上次转发不足 min_interval 的帧直接丢弃
+            min_interval = float(profile.get("min_interval", 0) or 0)
             while not stop.is_set():
                 now = time.monotonic()
                 # 静止超时 → 主动补帧（截图请求发出后，响应在下面按 id 匹配转发）。
@@ -2400,6 +2502,15 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     except Exception:
                         break
 
+                if data:
+                    # 监控档限帧：CDP 帧照常 ack（不能停流），但转发给前端的
+                    # 频率压到约 1 帧/秒，多画面监控才不会拖垮带宽与 CPU。
+                    if min_interval:
+                        now_send = time.monotonic()
+                        if now_send - last_sent < min_interval:
+                            data = ""
+                        else:
+                            last_sent = now_send
                 if data:
                     try:
                         asyncio.run_coroutine_threadsafe(
