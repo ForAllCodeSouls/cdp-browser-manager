@@ -2468,8 +2468,16 @@
                     y: Math.max(0, Math.min(vh, Math.round(iy * vh / ih))),
                 };
             };
-            const buttonName = (n) => n === 2 ? "right" : n === 1 ? "middle" : "left";
-            const buttonBits = (n) => n === 2 ? 2 : n === 1 ? 4 : 1;
+            // 鼠标按钮：0左 1中 2右 3后退 4前进（与 CDP 的 back/forward 对应）。
+            const buttonName = (n) => n === 2 ? "right" : n === 1 ? "middle"
+                : n === 3 ? "back" : n === 4 ? "forward" : "left";
+            // CDP 与浏览器 MouseEvent.buttons 的位定义一致：
+            // left=1, right=2, middle=4, back=8, forward=16。
+            // 因此直接透传 e.buttons 可保留多键组合状态（如按住左键再按右键）。
+            const buttonBits = (n) => n === 2 ? 2 : n === 1 ? 4
+                : n === 3 ? 8 : n === 4 ? 16 : 1;
+            const mods = (e) => (e.ctrlKey ? 2 : 0) | (e.altKey ? 1 : 0) |
+                (e.shiftKey ? 8 : 0) | (e.metaKey ? 4 : 0);
 
             // 屏幕锁开启时，所有输入都不转发到浏览器。
             // 遮罩层已拦截鼠标，这里额外守护键盘（焦点仍在 canvas 上）与拦截层失效的情况。
@@ -2493,8 +2501,7 @@
                     if (!p) return; // 留白区不产生输入
                     castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                         type: "mouseMoved", x: p.x, y: p.y, buttons: ev.buttons,
-                        modifiers: (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 1 : 0) |
-                            (ev.shiftKey ? 8 : 0) | (ev.metaKey ? 4 : 0),
+                        modifiers: mods(ev),
                     });
                 });
             });
@@ -2507,9 +2514,8 @@
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mousePressed", x: p.x, y: p.y,
                     button: buttonName(e.button), clickCount: e.detail || 1,
-                    buttons: buttonBits(e.button),
-                    modifiers: (e.ctrlKey ? 2 : 0) | (e.altKey ? 1 : 0) |
-                        (e.shiftKey ? 8 : 0) | (e.metaKey ? 4 : 0),
+                    buttons: e.buttons || buttonBits(e.button),
+                    modifiers: mods(e),
                 });
             });
             canvas.addEventListener("mouseup", (e) => {
@@ -2520,7 +2526,8 @@
                 if (!p) return; // 留白区不产生输入
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mouseReleased", x: p.x, y: p.y,
-                    button: buttonName(e.button), clickCount: e.detail || 1, buttons: 0,
+                    button: buttonName(e.button), clickCount: e.detail || 1,
+                    buttons: e.buttons, modifiers: mods(e),
                 });
             });
             // 在画面外松开：补发一次释放，避免远程拖拽卡在按下状态。
@@ -2532,18 +2539,26 @@
                 if (!p) return;
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mouseReleased", x: p.x, y: p.y,
-                    button: buttonName(e.button), clickCount: 1, buttons: 0,
+                    button: buttonName(e.button), clickCount: 1,
+                    buttons: e.buttons, modifiers: mods(e),
                 });
             });
             canvas.addEventListener("wheel", (e) => {
                 if (locked()) return;
-                e.preventDefault();
+                e.preventDefault(); // 阻止页面自身滚动；Ctrl+滚轮交给远程做缩放
                 const p = point(e);
                 if (!p) return; // 留白区不产生输入
+                // deltaMode: 0=像素, 1=行, 2=页；CDP 只认像素，统一换算。
+                const unit = e.deltaMode === 1 ? 16
+                    : e.deltaMode === 2 ? (viewport && viewport.h > 0 ? viewport.h : 720) : 1;
                 castSend(wsRef.ws, "Input.dispatchWheelEvent", {
-                    x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY,
+                    x: p.x, y: p.y,
+                    deltaX: e.deltaX * unit, deltaY: e.deltaY * unit,
+                    modifiers: mods(e),
                 });
             }, { passive: false });
+            // 中键点击会触发浏览器的自动滚动，侧键会触发前进/后退；本地一律拦掉。
+            canvas.addEventListener("auxclick", (e) => e.preventDefault());
             canvas.addEventListener("keydown", (e) => {
                 if (locked()) return;
                 // 新版浏览器里 KeyboardEvent.char 几乎恒为 undefined，
@@ -2555,6 +2570,8 @@
                     code: e.code,
                     windowsVirtualKeyCode: e.keyCode,
                     nativeVirtualKeyCode: e.keyCode,
+                    // 组合键（Ctrl+C/V、Shift+箭头等）必须带修饰键位，否则远程收不到。
+                    modifiers: mods(e),
                     text: printable ? e.key : undefined,
                     unmodifiedText: printable ? e.key : undefined,
                 });
@@ -2568,6 +2585,7 @@
                 castSend(wsRef.ws, "Input.dispatchKeyEvent", {
                     type: "keyUp", key: e.key, code: e.code,
                     windowsVirtualKeyCode: e.keyCode, nativeVirtualKeyCode: e.keyCode,
+                    modifiers: mods(e),
                 });
             });
             canvas.addEventListener("contextmenu", (e) => e.preventDefault());

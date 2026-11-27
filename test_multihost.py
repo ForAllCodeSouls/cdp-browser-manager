@@ -1225,6 +1225,35 @@ class PanelEcoAndShareTests(unittest.TestCase):
                       '"vh": viewport_h'):
             self.assertIn(token, self.main_src)
 
+    def test_cast_full_mouse_and_keyboard_input(self):
+        # 鼠标功能要对齐 VNC：侧键、组合按钮、修饰键、滚轮缩放都要下发到 CDP。
+        i = self.src.index("function bindCastInput(")
+        j = self.src.index("function castSig(", i)
+        seg = self.src[i:j]
+        for token in (
+            'n === 3 ? "back" : n === 4 ? "forward"',  # 前进/后退侧键
+            'const buttonBits = (n) => n === 2 ? 2 : n === 1 ? 4',
+            ': n === 3 ? 8 : n === 4 ? 16 : 1',  # 侧键 buttons 位
+            'const mods = (e) =>',  # 修饰键 Alt/Ctrl/Meta/Shift
+            'buttons: e.buttons || buttonBits(e.button)',  # 按下保留组合状态
+            'buttons: e.buttons, modifiers: mods(e)',  # 释放也带修饰键
+            'type: "mousePressed"', 'type: "mouseReleased"', 'type: "mouseMoved"',
+            'clickCount: e.detail || 1',  # 单击/双击/三击
+            'e.deltaMode === 1 ? 16',  # 行/页滚动量归一
+            'deltaX: e.deltaX * unit, deltaY: e.deltaY * unit',
+            'modifiers: mods(e),\n                });',  # Ctrl+滚轮缩放
+            'canvas.addEventListener("auxclick"',  # 中键自动滚动本地拦截
+            'canvas.addEventListener("contextmenu"',  # 右键菜单本地拦截
+            'modifiers: mods(e),\n                    text:',  # 键盘组合键
+        ):
+            self.assertIn(token, seg)
+        # 所有输入方法必须留在后端白名单里，否则前端发了也被丢弃
+        j = self.main_src.index('kind == "input":')
+        seg2 = self.main_src[j:j + 700]
+        for method in ("Input.dispatchMouseEvent", "Input.dispatchKeyEvent",
+                       "Input.insertText", "Input.dispatchWheelEvent"):
+            self.assertIn(method, seg2)
+
     def test_share_admin_ui_drag_and_reorder(self):
         for token in ('id="btnShare"', 'id="shareMask"', 'id="shareDrop"',
                       'id="shareList"', 'id="shareTtl"', "function renderSharePanel()",
