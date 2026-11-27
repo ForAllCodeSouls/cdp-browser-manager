@@ -2617,10 +2617,17 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             call_id = 100
             ack_id = call_id + 1
             shot_id = call_id + 2  # captureScreenshot 用递增 id，避免与 ack 混淆
+            metrics_id = call_id + 3  # 查询浏览器真实视口尺寸，供前端换算点击坐标
             pending_shots = set()  # 已发出、尚未收到响应的截图 id（首帧 + 多次补帧可能重叠）
             main_frame = {}  # 记住主 frame id，用于过滤 iframe 的导航事件
             q = profile["quality"]
+            # 画质档会把画面缩小（如 960×540），但 CDP 输入坐标用的是浏览器真实
+            # 视口（如 1920×1080）。前端必须知道视口尺寸才能把点击坐标按比例回算，
+            # 否则「键盘能输入、鼠标点不中」。screencast metadata 会在窗口变化时更新。
+            viewport_w = 0
+            viewport_h = 0
             upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
+            upstream_send({"id": metrics_id, "method": "Page.getLayoutMetrics", "params": {}})
             if capture_mode == "cast":
                 upstream_send({
                     "id": ack_id,
@@ -2700,7 +2707,28 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     except Exception:
                         pass
                     data = params.get("data", "")
+                    # metadata 带 deviceWidth/deviceHeight，窗口缩放后会变化，
+                    # 用它覆盖初次查询值，保证 click 坐标始终对应当前视口。
+                    metadata = params.get("metadata") or {}
+                    try:
+                        dw = int(metadata.get("deviceWidth") or 0)
+                        dh = int(metadata.get("deviceHeight") or 0)
+                        if dw > 0 and dh > 0:
+                            viewport_w, viewport_h = dw, dh
+                    except Exception:
+                        pass
                     last_frame = time.monotonic()  # 收到实帧，重置补帧计时
+                elif msg.get("id") == metrics_id and isinstance(msg.get("result"), dict):
+                    # 初次视口尺寸：cssLayoutViewport 是 CSS 像素，正好是
+                    # Input.dispatchMouseEvent 使用的坐标系；Snap 模式没有
+                    # screencast metadata，只能靠这里拿到尺寸。
+                    lay = msg["result"].get("cssLayoutViewport") or {}
+                    vis = msg["result"].get("cssVisualViewport") or {}
+                    try:
+                        viewport_w = int(lay.get("clientWidth") or vis.get("clientWidth") or 0)
+                        viewport_h = int(lay.get("clientHeight") or vis.get("clientHeight") or 0)
+                    except Exception:
+                        pass
                 elif msg.get("id") in pending_shots and isinstance(msg.get("result"), dict):
                     # captureScreenshot 响应：{id, result:{data}}；Snap 的每一帧、
                     # Cast 的首帧/保底帧都走这里。收到实帧即重置保底计时，
@@ -2734,7 +2762,10 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                 if data:
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            websocket.send_json({"type": "frame", "data": data}),
+                            websocket.send_json({
+                                "type": "frame", "data": data,
+                                "vw": viewport_w, "vh": viewport_h,
+                            }),
                             loop,
                         ).result(timeout=2)
                     except Exception:

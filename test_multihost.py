@@ -1206,6 +1206,24 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn('query_items.append(("readonly", "1"))', seg3)
         self.assertIn('if k not in ("key", "share")', seg3)
 
+    def test_cast_mouse_coords_map_to_real_viewport(self):
+        # 画质档会缩小图片；点击必须经「图片像素 -> 真实视口」两步换算，
+        # 否则键盘可用但鼠标点不中（旧代码把图片像素直接当 CDP 坐标）。
+        for token in ('bindCastInput(canvas, wsRef, sel, viewport)',
+                      'const scale = Math.min(r.width / iw, r.height / ih)',
+                      'const offX = (r.width - drawW) / 2',
+                      'ix * vw / iw', 'iy * vh / ih',
+                      'viewport.w = msg.vw', 'viewport.h = msg.vh',
+                      'point(ev, dragging)', 'document.addEventListener("mouseup"',
+                      'if (!p) return;'):
+            self.assertIn(token, self.src)
+        self.assertNotIn("canvas.width / r.width", self.src)
+        # 后端必须把浏览器真实视口尺寸随帧推送给前端
+        for token in ('"Page.getLayoutMetrics"', 'cssLayoutViewport',
+                      'metadata.get("deviceWidth")', '"vw": viewport_w',
+                      '"vh": viewport_h'):
+            self.assertIn(token, self.main_src)
+
     def test_share_admin_ui_drag_and_reorder(self):
         for token in ('id="btnShare"', 'id="shareMask"', 'id="shareDrop"',
                       'id="shareList"', 'id="shareTtl"', "function renderSharePanel()",

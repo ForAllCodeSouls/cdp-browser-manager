@@ -2360,9 +2360,12 @@
             const gen = ++castGen;
             let receivedAny = false;
             const wsRef = { ws: null };
+            // 浏览器真实视口尺寸（CDP 输入坐标系），由后端随帧推送。画质档会
+            // 缩小图片，点击坐标必须按比例回算，不能直接用图片像素。
+            const viewport = { w: 0, h: 0 };
 
             // 事件只绑定一次；重连时只替换 wsRef.ws，避免重复监听导致输入被放大。
-            bindCastInput(canvas, wsRef, sel);
+            bindCastInput(canvas, wsRef, sel, viewport);
 
             const connect = (attempt) => {
                 if (gen !== castGen || frameSid !== mySid) return;
@@ -2391,6 +2394,12 @@
                         return;
                     }
                     if (msg.type === "frame" && msg.data) {
+                        // 每帧都可能带新视口尺寸（浏览器窗口变化时更新），
+                        // 直接改对象属性，保持 bindCastInput 持有的引用有效。
+                        if (msg.vw > 0 && msg.vh > 0) {
+                            viewport.w = msg.vw;
+                            viewport.h = msg.vh;
+                        }
                         const img = new Image();
                         img.onload = () => {
                             if (gen !== castGen || frameSid !== mySid) return;
@@ -2435,13 +2444,28 @@
             }
         }
 
-        function bindCastInput(canvas, wsRef, sel) {
-            // 把浏览器内坐标换算成 CDP 视口坐标（canvas 可能被 CSS 缩放）
-            const point = (e) => {
+        function bindCastInput(canvas, wsRef, sel, viewport) {
+            // 画面用 object-fit:contain 居中，四周留白不属于画面；画质档还会
+            // 把图片缩小。两步换算：屏幕坐标 -> 图片像素 -> 浏览器真实视口坐标。
+            // clamp=true 用于拖拽：拖出画面边界时把坐标钳到边缘，保证远程
+            // 能收到连续的 mouseMoved 与最终的 mouseReleased，不会卡在按下态。
+            const point = (e, clamp) => {
                 const r = canvas.getBoundingClientRect();
+                const iw = canvas.width || 1, ih = canvas.height || 1;
+                if (!r.width || !r.height) return null;
+                const scale = Math.min(r.width / iw, r.height / ih);
+                const drawW = iw * scale, drawH = ih * scale;
+                const offX = (r.width - drawW) / 2, offY = (r.height - drawH) / 2;
+                let ix = (e.clientX - r.left - offX) / scale;
+                let iy = (e.clientY - r.top - offY) / scale;
+                if (!clamp && (ix < 0 || iy < 0 || ix > iw || iy > ih)) return null; // 留白区不发送
+                ix = Math.max(0, Math.min(iw, ix));
+                iy = Math.max(0, Math.min(ih, iy));
+                const vw = viewport && viewport.w > 0 ? viewport.w : iw;
+                const vh = viewport && viewport.h > 0 ? viewport.h : ih;
                 return {
-                    x: Math.round((e.clientX - r.left) * (canvas.width / r.width)),
-                    y: Math.round((e.clientY - r.top) * (canvas.height / r.height)),
+                    x: Math.max(0, Math.min(vw, Math.round(ix * vw / iw))),
+                    y: Math.max(0, Math.min(vh, Math.round(iy * vh / ih))),
                 };
             };
             const buttonName = (n) => n === 2 ? "right" : n === 1 ? "middle" : "left";
@@ -2450,6 +2474,9 @@
             // 屏幕锁开启时，所有输入都不转发到浏览器。
             // 遮罩层已拦截鼠标，这里额外守护键盘（焦点仍在 canvas 上）与拦截层失效的情况。
             const locked = () => screenLocked;
+            // 拖拽兜底：鼠标在画面外松开时 canvas 收不到 mouseup，远程会
+            // 一直保持按下态。用 pressed 标记确保只补发一次释放事件。
+            let pressed = false;
 
             // mousemove 用 requestAnimationFrame 合并，避免每像素一帧 WS 消息。
             let pendingMove = null;
@@ -2461,7 +2488,9 @@
                     const ev = pendingMove;
                     pendingMove = null;
                     if (!ev || frameSid !== sel.sid) return;
-                    const p = point(ev);
+                    const dragging = ev.buttons > 0;
+                    const p = point(ev, dragging);
+                    if (!p) return; // 留白区不产生输入
                     castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                         type: "mouseMoved", x: p.x, y: p.y, buttons: ev.buttons,
                         modifiers: (ev.ctrlKey ? 2 : 0) | (ev.altKey ? 1 : 0) |
@@ -2471,8 +2500,10 @@
             });
             canvas.addEventListener("mousedown", (e) => {
                 if (locked()) return;
-                canvas.focus();
                 const p = point(e);
+                if (!p) return; // 留白区不产生输入
+                canvas.focus();
+                pressed = true;
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mousePressed", x: p.x, y: p.y,
                     button: buttonName(e.button), clickCount: e.detail || 1,
@@ -2482,17 +2513,33 @@
                 });
             });
             canvas.addEventListener("mouseup", (e) => {
+                pressed = false;
+                e.__castHandled = true;
                 if (locked()) return;
                 const p = point(e);
+                if (!p) return; // 留白区不产生输入
                 castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mouseReleased", x: p.x, y: p.y,
                     button: buttonName(e.button), clickCount: e.detail || 1, buttons: 0,
+                });
+            });
+            // 在画面外松开：补发一次释放，避免远程拖拽卡在按下状态。
+            document.addEventListener("mouseup", (e) => {
+                if (e.__castHandled || !pressed) return;
+                pressed = false;
+                if (locked() || frameSid !== sel.sid) return;
+                const p = point(e, true);
+                if (!p) return;
+                castSend(wsRef.ws, "Input.dispatchMouseEvent", {
+                    type: "mouseReleased", x: p.x, y: p.y,
+                    button: buttonName(e.button), clickCount: 1, buttons: 0,
                 });
             });
             canvas.addEventListener("wheel", (e) => {
                 if (locked()) return;
                 e.preventDefault();
                 const p = point(e);
+                if (!p) return; // 留白区不产生输入
                 castSend(wsRef.ws, "Input.dispatchWheelEvent", {
                     x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY,
                 });
