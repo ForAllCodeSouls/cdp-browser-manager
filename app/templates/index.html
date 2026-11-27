@@ -756,6 +756,10 @@
             <path d="M20 11a8 8 0 1 0-2.3 6.3"/>
             <path d="M20 5v6h-6"/>
         </symbol>
+        <symbol id="i-restore" viewBox="0 0 24 24">
+            <path d="M4 9h11a5 5 0 0 1 5 5v5"/>
+            <path d="m8 5-4 4 4 4"/>
+        </symbol>
         <symbol id="i-back" viewBox="0 0 24 24">
             <path d="M19 12H5"/>
             <path d="m11 6-6 6 6 6"/>
@@ -1107,6 +1111,9 @@
         let castState = null;       // {sid, targets, tid, sig} 当前展示状态
         let castHistory = null;     // {sid, tid, index, ids} 当前标签的 CDP 导航历史
         let castPreferredTid = "";  // 用户期望抓屏的标签 id；清帧时保留，避免切换被重置
+        // 每个实例最近关闭的标签栈（url+title），供「恢复上次关闭」连续恢复；持久化到本地。
+        const CLOSED_TABS_KEY = "cdpManagerClosedTabs";
+        let closedTabs = {};        // sid -> [{url, title}, ...]，末尾为最近关闭
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
         let logsOpen = false;       // 右侧日志抽屉是否打开（顶栏滑动开关控制）
@@ -2667,6 +2674,9 @@
                 const unit = e.deltaMode === 1 ? 16
                     : e.deltaMode === 2 ? (viewport && viewport.h > 0 ? viewport.h : 720) : 1;
                 castSend(wsRef.ws, "Input.dispatchWheelEvent", {
+                    // CDP 要求 type 固定为 mouseWheel；漏传会被 Chrome 直接忽略，
+                    // 表现就是键盘/点击都正常、唯独滚轮没反应。
+                    type: "mouseWheel",
                     x: p.x, y: p.y,
                     deltaX: e.deltaX * unit, deltaY: e.deltaY * unit,
                     modifiers: mods(e),
@@ -2762,6 +2772,8 @@
                         '<svg class="ico"><use href="#i-forward"/></svg></button>' +
                     '<button class="btn-mini btn-nav" title="刷新当前页面" onclick="reloadCast()">' +
                         '<svg class="ico"><use href="#i-refresh"/></svg></button>' +
+                    '<button class="btn-mini btn-nav" id="btnRestoreTab" title="恢复上次关闭的标签页" onclick="restoreClosedTab()">' +
+                        '<svg class="ico"><use href="#i-restore"/></svg></button>' +
                     '<input class="url" id="castUrl" value="' + esc(urlValue) + '" placeholder="输入网址后按回车跳转">' +
                     lockTip +
                 '</div>';
@@ -2999,19 +3011,58 @@
             }
         }
 
-        // 关闭指定标签：标签右侧的 × 用它，关闭的是当前标签时画面会自动切到相邻标签；
+        // ---- 最近关闭标签栈：供「恢复上次关闭」按钮连续恢复 ----
+        function loadClosedTabs() {
+            try {
+                const v = JSON.parse(localStorage.getItem(CLOSED_TABS_KEY) || "{}");
+                closedTabs = (v && typeof v === "object") ? v : {};
+            } catch (e) { closedTabs = {}; }
+        }
+        function saveClosedTabs() {
+            try { localStorage.setItem(CLOSED_TABS_KEY, JSON.stringify(closedTabs)); } catch (e) {}
+        }
+        function pushClosedTab(sid, url, title) {
+            const list = Array.isArray(closedTabs[sid]) ? closedTabs[sid] : [];
+            list.push({ url: url || "about:blank", title: title || "" });
+            if (list.length > 50) list.shift();  // 防止无限增长
+            closedTabs[sid] = list;
+            saveClosedTabs();
+        }
+        async function restoreClosedTab() {
+            if (screenLocked) return;
+            const sel = currentSel();
+            if (!sel) return;
+            const list = Array.isArray(closedTabs[sel.sid]) ? closedTabs[sel.sid] : [];
+            const last = list[list.length - 1];
+            if (!last) { toast("没有可恢复的标签页"); return; }
+            try {
+                const created = await api(
+                    "/api/instance/" + encodeURIComponent(sel.sid) + "/targets",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: normalizeCastUrl(last.url || "about:blank") }),
+                    }
+                );
+                list.pop();
+                closedTabs[sel.sid] = list;
+                saveClosedTabs();
+                if (created && created.id) setPreferredTid(created.id);
+                toast("已恢复上次关闭的标签页", "ok");
+                await refreshAfterNavChange();
+            } catch (e) { toast("恢复标签页失败: " + e.message, "error"); }
+        }
+
+        // 关闭指定标签：点 × 直接关闭，不再弹确认框（与正常浏览器一致）。
+        // 关闭的是当前标签时画面会自动切到相邻标签；
         // 后端在关闭最后一个标签前会补建空白页，画面不会中断。
         async function closeTargetById(tid) {
             if (screenLocked || !tid) return;
             const sel = currentSel();
             if (!sel || !castState) return;
             const list = castState.targets || [];
-            if (!list.some(t => t.id === tid)) return;
-            const isLast = list.length <= 1;
-            const tip = isLast
-                ? "这是最后一个标签页。关闭后会自动新建一个空白页（和 VNC 行为一致），画面不会中断。\n\n确定关闭吗？"
-                : "关闭这个标签页？";
-            if (!confirm(tip)) return;
+            const target = list.find(t => t.id === tid);
+            if (!target) return;
             const wasCurrent = tid === castState.tid;
             try {
                 const res = await api(
@@ -3019,6 +3070,8 @@
                         "/targets/" + encodeURIComponent(tid),
                     { method: "DELETE" }
                 );
+                // 记录关闭前的地址/标题（最后一个标签被补建空白页时，记录的仍是用户关掉的那个）。
+                pushClosedTab(sel.sid, target.url, target.title);
                 if (res && res.recreated && res.tid) {
                     if (wasCurrent) setPreferredTid(res.tid);
                     toast("已关闭最后一个标签，自动新建了空白页以保持画面连接", "ok");
@@ -3309,7 +3362,30 @@
                     }
                     return;
                 }
+                // 新标签（含页面脚本 window.open 弹出）自动切过去，跟正常浏览器一致。
+                // 后端已按打开顺序排列，末尾即最新打开的；只在确实新增了标签时切换，
+                // 避免重连/轮询把用户手动选中的标签抢走。
+                const knownIds = new Set((castState.targets || []).map(t => t.id));
+                const added = targets.filter(t => !knownIds.has(t.id));
                 castState.targets = targets;
+                if (added.length) {
+                    const newest = added[added.length - 1].id;
+                    setPreferredTid(newest);
+                    castState.tid = newest;
+                    if (vncMode) {
+                        renderCastBar(sel, true);
+                        try {
+                            await api(
+                                "/api/instance/" + encodeURIComponent(sel.sid) +
+                                    "/targets/" + encodeURIComponent(newest) + "/activate",
+                                { method: "POST" }
+                            );
+                        } catch (e) {}
+                    } else {
+                        await remountCurrent();
+                    }
+                    return;
+                }
                 if (!targets.some(t => t.id === castState.tid)) {
                     setPreferredTid(targets[0].id);
                     castState.tid = targets[0].id;
@@ -3984,6 +4060,7 @@
         }
 
         applyScreenLock();
+        loadClosedTabs();
         monitorSids = loadMonitorSids();
         pendingMonitorRestore = loadMonitorView();
         sidebarHidden = loadSidebarHidden();

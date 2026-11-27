@@ -1318,6 +1318,44 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("::-webkit-scrollbar-corner", self.src)
         self.assertIn("::-webkit-scrollbar-corner", self.share_src)
 
+    def test_cast_wheel_event_has_required_type(self):
+        # CDP Input.dispatchWheelEvent 必须带 type:mouseWheel，否则 Chrome 忽略命令。
+        i = self.src.index('"Input.dispatchWheelEvent"')
+        seg = self.src[i:i + 380]
+        self.assertIn('type: "mouseWheel"', seg)
+        self.assertIn("deltaX: e.deltaX * unit", seg)
+        self.assertIn("deltaY: e.deltaY * unit", seg)
+
+    def test_tabs_sorted_by_open_order_backend(self):
+        # 后端按打开顺序返回标签：新标签追加末尾、切换不改变顺序、关闭后相对顺序不变。
+        for token in ('TAB_ORDER_FILE = DATA_DIR / "tab_order.json"',
+                      "def sort_targets_by_open_order(sid: str, pages: list)",
+                      'ordered_ids = [tid for tid in old if tid in known]',
+                      "ordered_ids.extend(reversed(fresh))",
+                      "return [known[tid] for tid in ordered_ids]",
+                      'return {"targets": sort_targets_by_open_order(sid, pages)}'):
+            self.assertIn(token, self.main_src)
+
+    def test_new_tab_auto_switch_and_restore_button(self):
+        # 新标签（含脚本弹出）自动切到最新打开的；VNC 同步激活。
+        i = self.src.index("async function pollCastTargets(")
+        seg = self.src[i:i + 2200]
+        self.assertIn("const added = targets.filter(t => !knownIds.has(t.id));", seg)
+        self.assertIn("const newest = added[added.length - 1].id;", seg)
+        self.assertIn("setPreferredTid(newest)", seg)
+        self.assertIn('"/targets/" + encodeURIComponent(newest) + "/activate"', seg)
+        # X 直接关闭：closeTargetById 内不应再出现 confirm。
+        j = self.src.index("async function closeTargetById(")
+        seg2 = self.src[j:j + 1300]
+        self.assertNotIn("confirm(", seg2)
+        # 恢复上次关闭标签：栈持久化 + 允许连续恢复 + 导航条图标按钮（VNC 共用）。
+        for token in ('const CLOSED_TABS_KEY = "cdpManagerClosedTabs"',
+                      "function pushClosedTab(sid, url, title)",
+                      "async function restoreClosedTab()",
+                      "list.pop()", "pushClosedTab(sel.sid, target.url, target.title)",
+                      'id="btnRestoreTab"', "#i-restore", "loadClosedTabs();"):
+            self.assertIn(token, self.src)
+
     def test_viewer_page_is_readonly_with_grid_and_zoom(self):
         for token in ('id="grid"', 'id="large"', "function openLarge(sid)",
                       "function closeLarge()", 'wsUrl(inst, "monitor")',
@@ -1328,6 +1366,35 @@ class PanelEcoAndShareTests(unittest.TestCase):
         for bad in ("dispatchMouseEvent", "dispatchKeyEvent", "Input.insertText",
                     "castSend(", "stopAll(", "openCreate("):
             self.assertNotIn(bad, self.share_src)
+
+
+class TabOrderTests(unittest.TestCase):
+    """标签打开顺序：新标签追加末尾，切换不动，关闭后相对顺序保持。"""
+
+    def setUp(self):
+        self.saved = dict(main.TAB_ORDER)
+
+    def tearDown(self):
+        main.TAB_ORDER.clear()
+        main.TAB_ORDER.update(self.saved)
+
+    def test_open_order_and_close(self):
+        sid = "test-tab-order"
+        main.TAB_ORDER[sid] = []
+        with patch.object(main, "save_tab_order", return_value=True):
+            p = lambda tid: {"id": tid, "title": tid, "url": "", "type": "page"}
+            # CDP 常把最近激活放最前；首次调用反转后 oldest 在左。
+            got = main.sort_targets_by_open_order(sid, [p("c"), p("a"), p("b")])
+            self.assertEqual([t["id"] for t in got], ["b", "a", "c"])
+            # 切换顺序（CDP 顺序变了）不改变已知标签的相对位置
+            got = main.sort_targets_by_open_order(sid, [p("a"), p("c"), p("b")])
+            self.assertEqual([t["id"] for t in got], ["b", "a", "c"])
+            # 新弹出的标签追加到最右
+            got = main.sort_targets_by_open_order(sid, [p("d"), p("a"), p("c"), p("b")])
+            self.assertEqual([t["id"] for t in got], ["b", "a", "c", "d"])
+            # 关闭一个后其余相对顺序不变
+            got = main.sort_targets_by_open_order(sid, [p("d"), p("c"), p("b")])
+            self.assertEqual([t["id"] for t in got], ["b", "c", "d"])
 
 
 @unittest.skipUnless(HAS_TESTCLIENT, "缺少 fastapi/httpx，跳过集成测试")

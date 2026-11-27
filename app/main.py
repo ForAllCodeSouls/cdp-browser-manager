@@ -2156,7 +2156,12 @@ async def api_share_view(request: Request, token: str = ""):
                     tid = str(tl[0].get("id") or "") if tl else ""
             else:
                 tl = await run_in_threadpool(cdp_http, sid, "/json/list")
-                pages = [t for t in (tl or []) if t.get("type") == "page" and t.get("id")]
+                raw_pages = [
+                    {"id": t.get("id", ""), "title": t.get("title", ""),
+                     "url": t.get("url", ""), "type": t.get("type", "")}
+                    for t in (tl or []) if t.get("type") == "page" and t.get("id")
+                ]
+                pages = sort_targets_by_open_order(sid, raw_pages)
                 tid = str(pages[0]["id"]) if pages else ""
         except Exception as e:
             log.warning("分享实例 %s 读取标签失败: %s", sid[:8], e)
@@ -2377,16 +2382,59 @@ async def new_instance(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+TAB_ORDER_FILE = DATA_DIR / "tab_order.json"
+TAB_ORDER: dict = {}  # sid -> [tid, ...]，按打开顺序；切换标签不改变顺序，关闭后其余相对顺序不变
+
+
+def load_tab_order():
+    raw = _load_json(TAB_ORDER_FILE, {})
+    TAB_ORDER.clear()
+    if isinstance(raw, dict):
+        for sid, tids in raw.items():
+            if isinstance(tids, list):
+                TAB_ORDER[str(sid)] = [str(x) for x in tids if x]
+
+
+def save_tab_order():
+    return _save_json(TAB_ORDER_FILE, TAB_ORDER)
+
+
+def sort_targets_by_open_order(sid: str, pages: list) -> list:
+    """把 CDP 返回的页面标签按打开顺序排列。
+
+    CDP /json/list 的顺序是 Chrome 内部的（通常是最近激活在前），直接展示会让
+    "切换标签后顺序跳变"。这里按已记录的顺序排：老标签保持原有相对位置，
+    新出现的追加到末尾（脚本 window.open 弹出的新标签也排到最后），关闭的自动消失。
+    顺序持久化到数据目录，manager 重启后仍保持。
+    """
+    known = {t.get("id"): t for t in pages if t.get("id")}
+    with _STORE_LOCK:
+        old = TAB_ORDER.get(sid, [])
+        ordered_ids = [tid for tid in old if tid in known]
+        seen = set(ordered_ids)
+        # 新标签按 CDP 返回顺序追加到末尾；CDP 一般把最新的放前面，这里反转
+        # 让"同时冒出多个新标签"时最新打开的落在最右。
+        fresh = [t["id"] for t in pages if t.get("id") and t["id"] not in seen]
+        ordered_ids.extend(reversed(fresh))
+        if ordered_ids != old:
+            TAB_ORDER[sid] = ordered_ids
+            save_tab_order()
+        return [known[tid] for tid in ordered_ids]
+
+
+load_tab_order()
+
+
 @app.get("/api/instance/{sid}/targets")
 async def api_targets(sid: str):
-    """列出实例里的页面标签，供抓屏视图选择要显示的目标。"""
+    """列出实例里的页面标签，供抓屏视图选择要显示的目标（按打开顺序）。"""
     try:
         raw = await run_in_threadpool(cdp_http, sid, "/json/list")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
-    targets = [
+    pages = [
         {
             "id": t.get("id", ""),
             "title": t.get("title", ""),
@@ -2396,7 +2444,7 @@ async def api_targets(sid: str):
         for t in (raw if isinstance(raw, list) else [])
         if t.get("type") == "page" and t.get("id")
     ]
-    return {"targets": targets}
+    return {"targets": sort_targets_by_open_order(sid, pages)}
 
 
 def normalize_target_url(raw: object) -> str:
