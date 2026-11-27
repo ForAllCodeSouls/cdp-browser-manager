@@ -145,7 +145,12 @@
             transition: opacity .15s ease, transform .15s ease;
         }
         .sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { opacity: 1; transform: scale(1); }
-        .layout.sidebar-hidden .sidebar-handle { left: 0; }
+        /* 收起态：侧栏不在了，把手要好找好点。命中区从 12px 扩到 32px，
+           波浪纹常态半透明可见（不用先 hover 到细线上才显形），线仍贴左边缘。 */
+        .layout.sidebar-hidden .sidebar-handle { left: 0; width: 32px; }
+        .layout.sidebar-hidden .sidebar-handle .ico { opacity: .45; transform: scale(1); }
+        .layout.sidebar-hidden .sidebar-handle:hover .ico,
+        .layout.sidebar-hidden .sidebar-handle:focus-visible .ico { opacity: 1; transform: scale(1); }
         aside {
             width: 288px;
             flex: 0 0 288px;
@@ -851,7 +856,12 @@
             /* 窄屏把手是横条，波浪纹旋转 90° 变成横向三条，贴合横条方向 */
             .sidebar-handle .ico { transform: rotate(90deg) scale(.8); }
             .sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { transform: rotate(90deg) scale(1); }
-            .layout.sidebar-hidden .sidebar-handle { left: 0; right: 0; top: 0; bottom: auto; }
+            /* 收起态横条同样加大命中高度、波浪纹常态可见；覆盖上面宽屏收起态的竖条规则 */
+            .layout.sidebar-hidden .sidebar-handle { left: 0; right: 0; top: 0; bottom: auto;
+                width: auto; height: 26px; }
+            .layout.sidebar-hidden .sidebar-handle .ico { transform: rotate(90deg) scale(1); }
+            .layout.sidebar-hidden .sidebar-handle:hover .ico,
+            .layout.sidebar-hidden .sidebar-handle:focus-visible .ico { transform: rotate(90deg) scale(1); }
         }
 
         /* 统一线性图标：跟随 currentColor，尺寸随所在元素 */

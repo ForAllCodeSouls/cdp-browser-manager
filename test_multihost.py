@@ -555,6 +555,12 @@ class MonitorPanelJsTests(unittest.TestCase):
         self.assertIn('.sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { opacity: 1;', self.src)
         self.assertIn('rotate(90deg)', self.src)
         self.assertIn('.layout.sidebar-hidden .sidebar-handle { left: 0', self.src)
+        # 收起态命中区加大到 32px + 波浪纹常态可见（不用先 hover 到 2px 细线上才显形）。
+        self.assertIn('.layout.sidebar-hidden .sidebar-handle { left: 0; width: 32px; }', self.src)
+        self.assertIn('.layout.sidebar-hidden .sidebar-handle .ico { opacity: .45; transform: scale(1); }', self.src)
+        # 窄屏收起态横条命中高度加大到 26px，且波浪纹保持 90° 横向。
+        self.assertIn('width: auto; height: 26px; }', self.src)
+        self.assertIn('.layout.sidebar-hidden .sidebar-handle .ico { transform: rotate(90deg) scale(1); }', self.src)
         # 按钮在 layout 内、aside 之前，而非 header 的 toolbar 内。
         i = self.src.index('id="btnSidebar"')
         self.assertIn('<div class="layout">', self.src[max(0, i - 120):i])
