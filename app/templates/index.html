@@ -100,6 +100,17 @@
         }
         .side-head.second { top: 41px; z-index: 1; }
         .side-stat { color: var(--text); font-weight: 600; }
+        /* 实例列表按主机筛选：一行小标签按钮 */
+        .host-filter {
+            display: flex; flex-wrap: wrap; gap: 5px;
+            padding: 8px 12px; border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+        .host-filter button {
+            padding: 2px 9px; font-size: 11px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+        }
+        .host-filter button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
         .item {
             padding: 11px 14px;
             border-bottom: 1px solid var(--border);
@@ -624,6 +635,7 @@
     <div class="layout">
         <aside>
             <div class="side-head"><span>实例列表（点击切换画面）</span><span class="side-stat" id="sideStat">0</span></div>
+            <div class="host-filter" id="hostFilter"></div>
             <div id="instanceList"></div>
             <div class="side-head second"><span>持久用户目录（保留登录态）</span><span class="side-stat" id="profileStat">0</span></div>
             <div id="profileList"></div>
@@ -841,6 +853,9 @@
         let frameRetryCount = 0;    // 画面断连自动重试次数（容器重启等瞬时故障自愈）
         let frameRetryTimer = null;
         let vncRefresh = "standard"; // 全局 VNC 刷新档（服务端持久化，所有实例统一）
+        // 实例列表按主机筛选：all / local / 远端 host id，持久化到 localStorage
+        const HOST_FILTER_KEY = "cdpManagerHostFilter";
+        let hostFilter = "all";
         // 监控主面板：{sid: {ws, canvas, gen, tid, host}}，勾选列表持久化到 localStorage
         const MONITOR_KEY = "cdpManagerMonitorSids";
         let monitorSids = [];
@@ -908,6 +923,12 @@
             }
         }
 
+        // 只允许 http(s) 地址跳转，避免连接串里混入 javascript: 等危险协议。
+        function safeHostUrl(base) {
+            const s = String(base || "").trim().replace(/\/+$/, "");
+            return /^https?:\/\//i.test(s) ? s : "";
+        }
+
         function renderRemoteHosts(list) {
             const remotes = list.filter(h => h.id !== "local");
             $("remoteHostStat").textContent = remotes.length ? remotes.length + " 台" : "";
@@ -916,12 +937,19 @@
                 box.textContent = "暂无远程主机，粘贴上方连接串添加。";
                 return;
             }
-            box.innerHTML = remotes.map(h =>
-                '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">' +
-                '<span class="badge host">' + esc(h.id) + '</span>' +
-                '<span style="flex:1;word-break:break-all">' + esc(h.name) + ' · ' + esc(h.base) + '</span>' +
-                (h.removable ? '<button onclick="delRemoteHost(\'' + esc(h.id) + '\')">删除</button>' : '') +
-                '</div>').join("");
+            box.innerHTML = remotes.map(h => {
+                const url = safeHostUrl(h.base);
+                // 点地址新标签页打开对端面板；对端若自己的浏览器存过密钥会自动带上。
+                const addr = url
+                    ? '<a href="' + esc(url) + '" target="_blank" rel="noopener" title="在新标签页打开该主机面板">' +
+                        esc(h.base) + '</a>'
+                    : esc(h.base);
+                return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+                    '<span class="badge host">' + esc(h.id) + '</span>' +
+                    '<span style="flex:1;word-break:break-all">' + esc(h.name) + ' · ' + addr + '</span>' +
+                    (h.removable ? '<button onclick="delRemoteHost(\'' + esc(h.id) + '\')">删除</button>' : '') +
+                    '</div>';
+            }).join("");
         }
 
         async function addRemoteHost() {
@@ -979,6 +1007,8 @@
                 if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
                 latestLinkToken = data.token || "";
                 updateSelfConn();
+                // 立即刷新令牌列表，不用重新打开弹窗或点「刷新」才看到新令牌。
+                await refreshRemotePanel();
                 toast("接入令牌已生成，复制连接串发给要接入你的主机", "ok");
             } catch (e) {
                 toast("生成失败：" + e.message);
@@ -2833,12 +2863,61 @@
             if (sel) mountFrame(sel);
         }
 
+        // 主机筛选：全部 / 本机 / 各远端主机；选项从当前实例动态生成并持久化。
+        function loadHostFilter() {
+            try { hostFilter = localStorage.getItem(HOST_FILTER_KEY) || "all"; } catch (e) { hostFilter = "all"; }
+        }
+        function saveHostFilter() {
+            try { localStorage.setItem(HOST_FILTER_KEY, hostFilter); } catch (e) {}
+        }
+        function setHostFilter(id) {
+            hostFilter = id || "all";
+            saveHostFilter();
+            render();
+        }
+        function renderHostFilter(all) {
+            // 统计各主机实例数（本机永远在第一个，远端按 hosts 顺序）。
+            const counts = {};
+            for (const i of all) {
+                const key = (i.host && i.host !== "local") ? i.host : "local";
+                counts[key] = (counts[key] || 0) + 1;
+            }
+            const opts = [{ id: "all", name: "全部", n: all.length }];
+            opts.push({ id: "local", name: "本机", n: counts.local || 0 });
+            for (const h of hosts) {
+                if (h.id === "local") continue;
+                opts.push({ id: h.id, name: h.name || h.id, n: counts[h.id] || 0 });
+            }
+            // 选中项已不存在（主机被删/实例清空）时回落到全部，避免空白列表。
+            if (hostFilter !== "all" && !opts.some(o => o.id === hostFilter)) {
+                hostFilter = "all"; saveHostFilter();
+            }
+            $("hostFilter").innerHTML = opts.map(o =>
+                '<button class="' + (hostFilter === o.id ? 'on' : '') + '"' +
+                    ' title="只看' + esc(o.name) + '的实例"' +
+                    ' onclick="setHostFilter(' + jsArg(o.id) + ')">' +
+                    esc(o.name) + ' ' + o.n + '</button>'
+            ).join("");
+        }
+
         function render() {
-            // 实例按创建时间倒序（最新创建的在最前）；没有 created_at 的旧实例排在最后。
-            const list = Object.values(instances).sort((a, b) =>
-                (b.created_at || 0) - (a.created_at || 0)
+            // 排序：本机在前、远端主机在后，各自按创建时间倒序（最新在前）。
+            const all = Object.values(instances).sort((a, b) => {
+                const ha = (a.host && a.host !== "local") ? 1 : 0;
+                const hb = (b.host && b.host !== "local") ? 1 : 0;
+                if (ha !== hb) return ha - hb;
+                return (b.created_at || 0) - (a.created_at || 0);
+            });
+            renderHostFilter(all);
+            const list = all.filter(i =>
+                hostFilter === "all" ||
+                (hostFilter === "local"
+                    ? (!i.host || i.host === "local")
+                    : i.host === hostFilter)
             );
-            $("sideStat").textContent = list.length;
+            $("sideStat").textContent = hostFilter === "all"
+                ? list.length
+                : list.length + "/" + all.length;
 
             if (!list.some(i => i.sid === selectedSid)) {
                 const first = list.find(i => i.status === "running") || list[0];
@@ -2847,7 +2926,8 @@
             }
 
             if (!list.length) {
-                $("instanceList").innerHTML = '<div class="side-empty">暂无实例<br>点右上角新建</div>';
+                $("instanceList").innerHTML = '<div class="side-empty">' +
+                    (hostFilter === "all" ? '暂无实例<br>点右上角新建' : '该主机暂无实例') + '</div>';
             } else {
                 $("instanceList").innerHTML = list.map(i =>
                     '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
@@ -3127,6 +3207,7 @@
 
         applyScreenLock();
         monitorSids = loadMonitorSids();
+        loadHostFilter();
         initHosts().then(() => {
             if (!authRequired || apiKey) {
                 load();

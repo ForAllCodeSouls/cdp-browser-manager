@@ -521,8 +521,10 @@ class MonitorPanelJsTests(unittest.TestCase):
         self.assertIn('classList.toggle("monitor-mode", monitorViewOpen)', self.src)
         self.assertNotIn('.layout").style.display = monitorViewOpen', self.src)
 
-    def test_instances_sorted_by_created_at(self):
+    def test_instances_local_first_then_created_at(self):
         self.assertIn("Object.values(instances).sort((a, b)", self.src)
+        self.assertIn('const ha = (a.host && a.host !== "local") ? 1 : 0;', self.src)
+        self.assertIn("if (ha !== hb) return ha - hb;", self.src)
         self.assertIn("(b.created_at || 0) - (a.created_at || 0)", self.src)
 
     def test_monitor_uses_screencast_monitor_quality(self):
@@ -530,6 +532,40 @@ class MonitorPanelJsTests(unittest.TestCase):
         self.assertIn("function monitorWsUrl(inst, tid)", self.src)
         # 远端实例也走 /remote 前缀（复用 cast_ws）
         self.assertIn("inst.cast_ws", self.src)
+
+
+class HostFilterJsTests(unittest.TestCase):
+    """实例列表按主机筛选 + 远程面板跳转 + 令牌生成后立即刷新。"""
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            self.src = f.read()
+
+    def test_host_filter_ui_and_state(self):
+        self.assertIn('id="hostFilter"', self.src)
+        self.assertIn('const HOST_FILTER_KEY = "cdpManagerHostFilter"', self.src)
+        self.assertIn("function setHostFilter(id)", self.src)
+        self.assertIn("function renderHostFilter(all)", self.src)
+        self.assertIn("loadHostFilter();", self.src)
+        # 筛选标签含「全部」「本机」与远端主机
+        self.assertIn('{ id: "all", name: "全部"', self.src)
+        self.assertIn('{ id: "local", name: "本机"', self.src)
+
+    def test_filter_applies_to_list(self):
+        seg = self.src[self.src.index("const list = all.filter"):self.src.index("const list = all.filter") + 220]
+        self.assertIn('hostFilter === "all"', seg)
+        self.assertIn('i.host === hostFilter', seg)
+
+    def test_remote_address_opens_host_panel(self):
+        self.assertIn("function safeHostUrl(base)", self.src)
+        self.assertIn("target=\"_blank\" rel=\"noopener\"", self.src)
+        self.assertIn('title="在新标签页打开该主机面板"', self.src)
+
+    def test_gen_token_refreshes_immediately(self):
+        # 生成令牌后必须立即刷新列表，不能等重新打开弹窗/点刷新。
+        i = self.src.index("async function genLinkToken()")
+        seg = self.src[i:i + 900]
+        self.assertIn("await refreshRemotePanel();", seg)
 
 
 class CreatedAtTests(unittest.TestCase):
