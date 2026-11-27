@@ -90,20 +90,6 @@
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
         .btn-mini { font-size: 11px; padding: 3px 8px; }
-        /* 详情栏画面按钮组：主按钮 + 小箭头下拉，选 VNC 画面 / 抓屏画面 */
-        .view-group { position: relative; display: inline-flex; }
-        .view-group .view-menu {
-            display: none; position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
-            min-width: 148px; flex-direction: column; gap: 2px;
-            background: var(--surface); border: 1px solid var(--border);
-            border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #0006;
-        }
-        .view-group.open .view-menu { display: flex; }
-        .view-group .view-menu button {
-            text-align: left; white-space: nowrap; border: none; background: transparent;
-            font-size: 11px; padding: 6px 9px; border-radius: 5px;
-        }
-        .view-group .view-menu button:hover { background: var(--surface-2); }
         /* 地址栏左侧的后退/前进/刷新：纯图标，与浏览器地址栏一致 */
         .btn-nav {
             width: 30px; height: 28px; padding: 0;
@@ -3992,18 +3978,12 @@
                         : '') +
                     pinfo + vncInfo +
                     '<span class="spacer"></span>' +
-                    '<span class="view-group" id="viewGroup">' +
-                        '<button class="btn-mini" onclick="openDefaultView()"' +
-                            ' title="在新窗口打开画面，点右侧箭头可选 VNC / 抓屏">' +
-                            '画面 ↗</button>' +
-                        '<button class="btn-mini" title="选择画面类型"' +
-                            ' onclick="toggleViewMenu(event)">▾</button>' +
-                        '<span class="view-menu">' +
-                            (!headless && vncUrl(sel)
-                                ? '<button onclick="openVncPage()">VNC 画面 ↗</button>' : '') +
-                            '<button onclick="openCastPage()">抓屏画面 ↗</button>' +
-                        '</span>' +
-                    '</span>' +
+                    // 只留一个画面按钮：文字与点击都跟当前模式走（VNC / 抓屏），不再有下拉。
+                    (mode === "vnc" && vncUrl(sel)
+                        ? '<button class="btn-mini" onclick="openVncPage()"' +
+                            ' title="在新窗口打开该实例的 VNC 画面">VNC画面 ↗</button>'
+                        : '<button class="btn-mini" onclick="openCastPage()"' +
+                            ' title="在新窗口打开该实例的抓屏画面">抓屏画面 ↗</button>') +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
                     seg + linksHtml;
             }
@@ -4081,28 +4061,6 @@
             const url = vncUrl(sel);
             if (!url) { toast("该实例没有可用的 VNC 地址"); return; }
             window.open(url, "_blank", "noopener");
-            const g = $("viewGroup");
-            if (g) g.classList.remove("open");
-        }
-        // 详情栏画面按钮组：主按钮按实例能力打开默认画面（完整内核优先 VNC 画面，
-        // 无头实例走抓屏画面），右侧箭头展开菜单可显式选择 VNC / 抓屏。
-        function toggleViewMenu(ev) {
-            if (ev) ev.stopPropagation();
-            const g = $("viewGroup");
-            if (g) g.classList.toggle("open");
-        }
-        // 点菜单外任意处收起下拉（详情栏会随选中实例重绘，用委托绑定到 document）。
-        document.addEventListener("click", (ev) => {
-            const g = $("viewGroup");
-            if (g && g.classList.contains("open") && !g.contains(ev.target)) {
-                g.classList.remove("open");
-            }
-        });
-        function openDefaultView() {
-            const sel = currentSel();
-            if (!sel) return;
-            if (!isHeadless(sel) && vncUrl(sel)) openVncPage();
-            else openCastPage();
         }
         // 「抓屏画面」打开独立抓屏页 /cast?sid=..&tid=..（纯画面 + 简易导航条，像 vnc_lite 一样直接访问）。
         // 远端实例跳到那台主机自己的面板（跟「远程」列表的地址跳转一致，不经本机代理）。
@@ -4114,8 +4072,6 @@
                     ? "&tid=" + encodeURIComponent(castState.tid) : "");
             const base = instancePanelBase(sel) || location.origin;
             window.open(base + "/cast" + q, "_blank", "noopener");
-            const g = $("viewGroup");
-            if (g) g.classList.remove("open");
         }
 
         // 从版本信息读取浏览器级 webSocketDebuggerUrl 并复制（脚本连接常用入口）。
