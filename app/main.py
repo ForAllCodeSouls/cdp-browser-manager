@@ -566,10 +566,11 @@ SHM_SIZE = os.environ.get("BROWSER_SHM_SIZE", "512m")
 # 抓屏帧上限与 start.sh 的 1920x1080 窗口对齐，避免大帧拖慢 WS 转发。
 CAST_MAX_WIDTH = int(os.environ.get("CAST_MAX_WIDTH", "1920"))
 CAST_MAX_HEIGHT = int(os.environ.get("CAST_MAX_HEIGHT", "1080"))
-# 抓屏画质三档：省流 / 均衡 / 高清。省流缩小分辨率并隔帧推送，网络差也能看；
+# 抓屏画质三档：省流 / 均衡 / 高清。三档都不隔帧（everyNthFrame 恒为 1），
+# 帧率一致、只差清晰度与流量：省流靠缩分辨率 + 低 JPEG 质量省带宽，画面不慢半拍。
 # 高清保持原(start.sh 窗口)上限。前端按档位把参数带在 WS 查询串上。
 CAST_PROFILES = {
-    "low": {"quality": 45, "max_width": 960, "max_height": 540, "every_nth": 2},
+    "low": {"quality": 45, "max_width": 960, "max_height": 540, "every_nth": 1},
     "medium": {"quality": 65, "max_width": 1280, "max_height": 720, "every_nth": 1},
     "high": {"quality": 80, "max_width": CAST_MAX_WIDTH, "max_height": CAST_MAX_HEIGHT, "every_nth": 1},
 }

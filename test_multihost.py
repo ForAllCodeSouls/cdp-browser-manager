@@ -300,14 +300,16 @@ class CastQualityProfileTests(unittest.TestCase):
         low = main.cast_quality_profile("low")
         medium = main.cast_quality_profile("medium")
         high = main.cast_quality_profile("high")
-        # 省流档分辨率/码率最小且隔帧推送
+        # 省流档分辨率/码率最小，靠缩图省带宽，不再隔帧
         self.assertLess(low["max_width"], medium["max_width"])
         self.assertLess(medium["max_width"], high["max_width"])
         self.assertLess(low["quality"], medium["quality"])
         self.assertLessEqual(medium["quality"], high["quality"])
-        self.assertEqual(low["every_nth"], 2)
-        self.assertEqual(medium["every_nth"], 1)
-        self.assertEqual(high["every_nth"], 1)
+
+    def test_no_profile_drops_frames(self):
+        # 三档帧率必须一致：省流只降清晰度，不隔帧，避免画面慢半拍。
+        for name in ("low", "medium", "high"):
+            self.assertEqual(main.cast_quality_profile(name)["every_nth"], 1, name)
 
     def test_unknown_falls_back_to_medium(self):
         self.assertEqual(main.cast_quality_profile("bogus"), main.cast_quality_profile("medium"))
