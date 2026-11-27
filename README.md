@@ -171,7 +171,7 @@ curl http://你的IP:8000/api/instance/{sid}/diag
 
 ## 部署（推荐 Docker Compose）
 
-项目根目录已附带 `docker-compose.yml`，核心内容如下（节选，完整版还包含 `AUTO_PULL_IMAGES`、`AUTO_UPDATE_INTERVAL_HOURS`、`PUBLIC_HOST` 与健康检查，以仓库内文件为准）：
+项目根目录已附带 `docker-compose.yml`（完整版还含 `AUTO_PULL_IMAGES`、`AUTO_UPDATE_INTERVAL_HOURS`、`PUBLIC_HOST` 与健康检查，以仓库内文件为准）。**多主机部署时下面这几个远程相关配置必须带上**：
 
 ```yaml
 services:
@@ -183,9 +183,22 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # 关键：面板里添加的远程主机、本机生成的接入令牌都持久化在这里。
+      # 控制端 A 存「远程主机列表」，被控端 B 存「接入令牌」，两端都要挂这一行，
+      # 否则容器重建后远程接入关系全部丢失。
+      - ./manager-data:/app/data
     environment:
       BROWSER_IMAGE_FULL: ghcr.io/forallcodesouls/cdp-browser-full:latest
       BROWSER_IMAGE_HEADLESS: ghcr.io/forallcodesouls/cdp-browser-headless:latest
+      # 可选：本机管理 API 密钥（设置后打开面板需输入一次）
+      # API_KEY: ${API_KEY:-}
+      # 可选：环境变量方式接入远端主机。更推荐用面板「远程」按钮互连，无需改这里。
+      # REMOTE_HOSTS: '[{"id":"b","name":"主机B","base":"https://b.example.com","key":"B主机的API_KEY"}]'
+      # 也支持简易格式：b|主机B|https://b.example.com|B主机的API_KEY;c|主机C|http://10.0.0.2:8000|
+      # REMOTE_HOSTS: ${REMOTE_HOSTS:-}
+      # 可选调优：抓屏帧上限（CAST_KEEPALIVE_SEC 仅作旧客户端兜底，新面板用快/标准/省档位）
+      # CAST_MAX_WIDTH: "1920"
+      # CAST_MAX_HEIGHT: "1080"
 
   # 占位服务：让 docker compose pull 能同时更新两份 browser 大镜像
   cdp-browser-full-image:
@@ -291,7 +304,18 @@ docker run -d \
 
 **架构**：浏览器只连接面板所在主机（A）。A 根据服务端配置把请求与 WebSocket 转发到远端主机（B），并把 B 返回的实例地址改写为 A 域名下的 `/remote/<主机ID>/...`。B 的 API 密钥只写在 A 的服务端配置里，前端拿不到，也不会出现在 URL 或 localStorage 中。这样不存在跨域、混合内容（HTTPS 页面连 HTTP 主机）问题，两台主机的浏览器端口都不需要对外暴露。
 
-**配置**（在 A 的 `docker-compose.yml` 中设置）：
+**方式一：面板互连（推荐，两端都不用改服务端配置）**
+
+两台主机各自用上面的 `docker-compose.yml` 部署（**务必都带 `./manager-data:/app/data` 挂载**），然后：
+
+1. **被控主机 B**：打开自己的面板 → 顶栏「远程」→ 点「生成接入令牌」→ 填 B 的对外地址（如 `https://b.example.com`，必须能被 A 访问到）→ 复制生成的连接串 `地址|令牌`。
+2. **控制主机 A**：打开自己的面板 → 顶栏「远程」→ 粘贴连接串 → 点「添加远程主机」。后端先试连 B 的 `/api/list` 验证，通过后立即出现在「新建实例 → 目标主机」下拉里。
+3. 之后 A 面板即可创建并远控 B 的浏览器。接入关系与令牌分别持久化在 A、B 的 `./manager-data/`，容器重建不丢；可在「远程」面板随时删除（只移除关系，不影响 B 上已有实例）。
+
+> 若 B 设了 `API_KEY`，先用自己的密钥登录 B 面板才能生成令牌；令牌等同 B 的完整权限，只发给自己的其他主机。
+> B 的面板地址必须是 A **服务器**能访问到的地址（不是 A 用户浏览器的地址），因为代理请求由 A 的 manager 发出。
+
+**方式二：环境变量配置（在 A 的 `docker-compose.yml` 中设置）**
 
 ```yaml
 environment:
@@ -308,21 +332,15 @@ environment:
 REMOTE_HOSTS: "b|主机B|https://b.example.com|B主机的API_KEY;c|主机C|http://10.0.0.2:8000|"
 ```
 
+> B 端若设了 `API_KEY`，这里的 `key` 就填它；未设则留空。环境变量方式也要在 B 挂 `./manager-data:/app/data` 吗？——不需要存令牌，但**两端都挂上最省事**，日后想切换成面板互连不用改 compose。
+
 - `id` 只允许字母、数字、下划线、短横线，且不能是 `local`；不合法的条目会被忽略并写入运行日志。
 - 未设置 `API_KEY` 时完全不启用鉴权；未设置 `REMOTE_HOSTS` 时只有「本机」，界面与单主机版本一致。
 - 面板顶栏「密钥」按钮可重新输入本机密钥；远端不可达时该主机的实例会自动跳过，本机不受影响，错误记入运行日志。
 - 多主机时新建弹窗会出现「目标主机」下拉；实例列表用徽标标出所属主机。CDP、VNC、抓屏地址均由后端改写为走 A 的代理，可直接复制使用。
 - 持久目录列表、镜像更新与内置自测仍只针对**面板所在主机**；远端主机请到它自己的面板维护。实例级操作（新建 / 停止 / 标签 / 导航 / 抓屏）支持远端。
 
-**面板互连（推荐，免改服务端配置）**：不想动环境变量时，用面板顶栏「远程」按钮两台主机互相接入：
-
-1. 在**被控主机**（B）的面板「远程」里点「生成接入令牌」，填本机对外地址后复制连接串（`地址|令牌`）。令牌保存在 B 的数据目录（`/app/data/link_tokens.json`），重启不丢，可随时吊销。
-2. 在**控制主机**（A）的面板「远程」里粘贴连接串，点「添加远程主机」。后端会先试连 B 的 `/api/list` 验证地址与令牌，通过后保存（`/app/data/remote_hosts.json`）并立即出现在「目标主机」下拉里。
-3. 之后 A 面板即可创建并远控 B 上的浏览器；也可在「远程」面板删除接入关系（只移除关系，不影响 B 上已有实例）。
-
-- 接入令牌等同 B 的 `API_KEY` 访问权限（管理 API / CDP / WS 全通），只发给自己的其他主机。
-- 环境变量 `REMOTE_HOSTS` 与面板接入的主机**合并生效**；同 id 时面板配置覆盖环境变量。环境变量配置的主机在界面上没有「删除」按钮，需在服务端修改。
-- Docker 部署需把宿主机目录挂到 `/app/data`（compose 已预留 `./manager-data:/app/data`），否则容器重建后面板添加的主机与令牌会丢。
+**两种方式的关系**：环境变量 `REMOTE_HOSTS` 与面板接入的主机**合并生效**；同 id 时面板配置覆盖环境变量。环境变量配置的主机在界面上没有「删除」按钮，需在服务端修改并重建容器。令牌文件为 B 的 `/app/data/link_tokens.json`，远程主机列表为 A 的 `/app/data/remote_hosts.json`，都在 `./manager-data` 挂载下。
 
 ## 本地构建
 
