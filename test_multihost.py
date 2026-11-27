@@ -1683,6 +1683,36 @@ class PanelEcoAndShareTests(unittest.TestCase):
         ):
             self.assertIn(token, self.src)
 
+    def test_remote_profiles_listed_sorted_filtered_and_deletable(self):
+        # 左侧「持久用户目录」并入各远端主机的目录：本机在前、远端在后，
+        # 各自按 created 倒序；受顶部主机筛选器约束；可删除远端目录。
+        s = self.src
+        for token in (
+            "let remoteProfiles = []",
+            "async function loadRemoteProfiles()",
+            '"/remote/" + encodeURIComponent(h.id) + "/api/profiles"',
+            "remoteProfilesBusy",  # 防并发，低频拉取不叠请求
+            "const allProfiles = profiles.map",
+            ".concat(remoteProfiles)",
+            "hostFilter === \"all\" ?",  # 与实例同一筛选器
+            "String(b.created || \"\").localeCompare(String(a.created || \"\"))",
+            "esc(p.host_name || p.host)",  # 远端条目显示所属主机
+            "jsArg(p.host)",  # 删除带上 host，区分本机/远端
+        ):
+            self.assertIn(token, s)
+        # 删除：远端走 /remote/<host>/profile/<name> 的 DELETE 代理，本机走原路径。
+        self.assertIn("async function deleteProfile(name, host)", s)
+        self.assertIn('"/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)', s)
+        self.assertIn('await Promise.all([load(), loadRemoteProfiles()])', s)
+        # 远端目录拉取与 10 秒实例轮询解耦，另有 60 秒独立定时器。
+        self.assertIn("setInterval(() => { if (!document.hidden && !bgEcoMode) loadRemoteProfiles(); }, 60000);", s)
+        # 远端目录只进展示列表，不进本机「复用已有持久目录」下拉（卷在远端宿主机上）。
+        seg = s[s.index("const free = profiles.filter"):s.index("const free = profiles.filter") + 120]
+        self.assertIn("const free = profiles.filter(p => !p.used_by)", seg)
+        self.assertNotIn("remoteProfiles.filter", seg)
+        # 后端通用远端代理必须放行 DELETE，否则远端删除会 405。
+        self.assertIn('methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]', self.main_src)
+
     def test_viewer_page_is_readonly_with_grid_and_zoom(self):
         for token in ('id="grid"', 'id="large"', "function openLarge(sid)",
                       "function closeLarge()", 'wsUrl(inst, "monitor")',

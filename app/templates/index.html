@@ -1284,6 +1284,9 @@
         const $ = (id) => document.getElementById(id);
         let instances = {};
         let profiles = [];
+        // 远端主机的持久目录：{host, host_name, name, volume, created, used_by}，
+        // 与本机 profiles 分开存，避免把远端卷误当成可在「复用」里挂载的本机卷。
+        let remoteProfiles = [];
         let selectedSid = null;
         let frameSid = null;        // 当前 iframe 加载的实例 sid
         let frameTimer = null;
@@ -1367,7 +1370,7 @@
             try { localStorage.setItem(API_KEY_STORAGE, apiKey); } catch (e) {}
             closeKey();
             updateKeyLabel();
-            initHosts().then(() => load());
+            initHosts().then(() => { load(); loadRemoteProfiles(); });
         }
         function showKeyMask(msg) {
             $("keyHint").textContent = msg || "服务端设置了 API_KEY 时，所有管理请求都需要它。密钥只保存在当前浏览器。";
@@ -1470,6 +1473,7 @@
                 toast("已添加远程主机：" + ((data.host && (data.host.name || data.host.id)) || ""), "ok");
                 await initHosts();
                 await load();
+                await loadRemoteProfiles();
                 await refreshRemotePanel();
             } catch (e) {
                 toast("添加失败：" + e.message);
@@ -1491,6 +1495,7 @@
                 toast("已删除远程主机 " + id, "ok");
                 await initHosts();
                 await load();
+                await loadRemoteProfiles();
                 await refreshRemotePanel();
             } catch (e) {
                 toast("删除失败：" + e.message);
@@ -2501,6 +2506,33 @@
                 throw e;
             } finally {
                 clearTimeout(timer);
+            }
+        }
+
+        // 拉取各远端主机的持久目录：通过本机 /remote/<host>/api/profiles 代理，
+        // 不直连远端、复用本机密钥。单台失败只跳过它，不影响本机与其他主机；
+        // 与 load() 的 10 秒轮询解耦，独立低频刷新，避免远端离线拖慢面板。
+        let remoteProfilesBusy = false;
+        async function loadRemoteProfiles() {
+            if (remoteProfilesBusy) return;
+            const remotes = (hosts || []).filter(h => h.id !== "local");
+            if (!remotes.length) { remoteProfiles = []; render(); return; }
+            remoteProfilesBusy = true;
+            try {
+                const results = await Promise.all(remotes.map(async h => {
+                    try {
+                        const data = await api("/remote/" + encodeURIComponent(h.id) + "/api/profiles", {}, 10000);
+                        return (data.profiles || []).map(p => Object.assign({}, p, {
+                            host: h.id, host_name: h.name || h.id,
+                        }));
+                    } catch (e) {
+                        return [];   // 该主机离线/鉴权失败：跳过，不打断其他主机
+                    }
+                }));
+                remoteProfiles = [].concat(...results);
+                render();
+            } finally {
+                remoteProfilesBusy = false;
             }
         }
 
@@ -3868,16 +3900,37 @@
                     groupBtns("persist", "持久实例"),
                     hostFilter === "all" ? "暂无持久实例 · 点 + 新建" : "该主机暂无持久实例");
 
-            $("profileStat").textContent = profiles.length;
-            if (!profiles.length) {
-                $("profileList").innerHTML = '<div class="side-empty">暂无持久目录</div>';
+            // 持久目录：本机 + 各远端主机合并展示。排序与实例一致——本机在前、
+            // 远端在后，各自按创建时间倒序；同样受顶部主机筛选器约束。
+            const allProfiles = profiles.map(p => Object.assign({}, p, { host: "local" }))
+                .concat(remoteProfiles);
+            const shownProfiles = allProfiles.filter(p =>
+                hostFilter === "all" ||
+                (hostFilter === "local" ? p.host === "local" : p.host === hostFilter)
+            ).sort((a, b) => {
+                const ha = a.host === "local" ? 0 : 1;
+                const hb = b.host === "local" ? 0 : 1;
+                if (ha !== hb) return ha - hb;
+                return String(b.created || "").localeCompare(String(a.created || ""));
+            });
+            $("profileStat").textContent = hostFilter === "all"
+                ? shownProfiles.length
+                : shownProfiles.length + "/" + allProfiles.length;
+            if (!shownProfiles.length) {
+                $("profileList").innerHTML = '<div class="side-empty">' +
+                    (hostFilter === "all" ? "暂无持久目录" : "该主机暂无持久目录") + '</div>';
             } else {
-                $("profileList").innerHTML = profiles.map(p =>
+                $("profileList").innerHTML = shownProfiles.map(p =>
                     '<div class="profile-item">' +
                         '<span class="pname" title="' + esc(p.volume) + '">' + esc(p.name) + '</span>' +
+                        (p.host === "local"
+                            ? ''
+                            : '<span class="badge host" title="' + esc(p.volume) + '">' +
+                                esc(p.host_name || p.host) + '</span>') +
                         (p.used_by
-                            ? '<span class="badge running">使用中</span>'
-                            : '<button class="btn-danger btn-mini" onclick="deleteProfile(' + jsArg(p.name) + ')">删除</button>') +
+                            ? '<span class="badge running" title="实例 ' + esc(p.used_by) + '">使用中</span>'
+                            : '<button class="btn-danger btn-mini" onclick="deleteProfile(' +
+                                jsArg(p.name) + ', ' + jsArg(p.host) + ')">删除</button>') +
                     '</div>'
                 ).join("");
             }
@@ -4325,14 +4378,22 @@
             return lib ? lib.label : "脚本";
         }
 
-        async function deleteProfile(name) {
+        async function deleteProfile(name, host) {
             if (busy) return;
-            if (!confirm("确定删除持久目录「" + name + "」？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。")) return;
+            const isRemote = host && host !== "local";
+            const where = isRemote
+                ? "（远端主机 " + (remoteProfiles.find(p => p.host === host && p.name === name) || {}).host_name +
+                  " — 删除的是那台主机上的目录）"
+                : "";
+            if (!confirm("确定删除持久目录「" + name + "」" + where + "？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。")) return;
             setBusy(true);
             try {
-                await api("/profile/" + encodeURIComponent(name), { method: "DELETE" });
+                const url = isRemote
+                    ? "/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)
+                    : "/profile/" + encodeURIComponent(name);
+                await api(url, { method: "DELETE" });
                 toast("目录已删除", "ok");
-                await load();
+                await Promise.all([load(), loadRemoteProfiles()]);
             } catch (e) {
                 toast("删除失败: " + e.message, "error");
             } finally {
@@ -4705,11 +4766,14 @@
             if (!authRequired || apiKey) {
                 load();
                 loadVncRefresh();
+                loadRemoteProfiles();
             }
         });
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
         setInterval(() => { if (!document.hidden && !bgEcoMode) load(true); }, 10000);
+        // 远端持久目录独立于 10 秒实例轮询，60 秒刷新一次：远端离线时不会拖慢面板。
+        setInterval(() => { if (!document.hidden && !bgEcoMode) loadRemoteProfiles(); }, 60000);
         // 标签/地址栏轮询加速：抓屏模式已有 CDP 导航事件实时推地址栏（WS），
         // 这里是兜底 + VNC 模式（无抓屏 WS）的地址栏更新，2.5 秒能跟上自动化。
         setInterval(() => { if (!document.hidden && !bgEcoMode) pollCastTargets(); }, 2500);
