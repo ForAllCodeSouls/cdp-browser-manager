@@ -651,10 +651,12 @@ CAST_PROFILES = {
     "monitor": {"quality": 30, "max_width": 640, "max_height": 360, "every_nth": 2, "min_interval": 1.0},
 }
 # 无 screencast 帧时，每隔多久主动 captureScreenshot 补一帧（秒）。
+# 仅作旧前端/外部脚本不带 snap 参数时的兜底；新版前端按 snap 三档传间隔。
 CAST_KEEPALIVE_SEC = float(os.environ.get("CAST_KEEPALIVE_SEC", "1.5"))
-# 抓屏方式：Cast = startScreencast 变化推帧（静止时用 captureScreenshot 兜底）；
+# 抓屏方式：Cast = startScreencast 变化推帧 + captureScreenshot 定时保底；
 # Snap = 不发 startScreencast，纯 captureScreenshot 按固定间隔轮询抓图。
-# Snap 三档间隔：快 0.2s（约 5fps）/ 标准 0.5s（约 2fps）/ 省 1s（约 1fps）。
+# 两模式共用同一组定时抓帧间隔：快 0.2s（约 5fps）/ 标准 0.5s（约 2fps）/ 省 1s（约 1fps）。
+# Cast 的保底心跳就是这组间隔——变化推帧最快，静止时至少按此节奏兜底，画面不会定格。
 SNAP_INTERVALS = {"fast": 0.2, "normal": 0.5, "eco": 1.0}
 
 
@@ -2384,6 +2386,10 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
         capture_mode = "cast"
     snap_key = normalize_snap_interval(websocket.query_params.get("snap", ""))
     snap_interval = SNAP_INTERVALS[snap_key]
+    # 旧前端/外部脚本不带 snap 参数时用 CAST_KEEPALIVE_SEC 兜底，保持旧行为；
+    # 新版前端始终带档位（默认 normal 0.5s），Cast 与 Snap 都按此节奏定时抓帧。
+    if not str(websocket.query_params.get("snap", "") or "").strip():
+        snap_interval = CAST_KEEPALIVE_SEC
     await websocket.accept()
     upstream = None
     stop = threading.Event()
@@ -2461,21 +2467,19 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     pending_shots.discard(shot_id)
                     return False
 
-            # 首帧兜底：Cast 下 screencast 对静止页面可能迟迟不推帧，Snap 下也
-            # 需要立刻有画面；两种模式都先主动抓一帧。
+            # 首帧兜底：两种模式都先主动抓一帧，避免等 screencast 推帧的空窗。
             request_shot()
             last_frame = time.monotonic()
             last_sent = 0.0  # 监控档限帧：距离上次转发不足 min_interval 的帧直接丢弃
             min_interval = float(profile.get("min_interval", 0) or 0)
-            # Snap 靠定时截图推进，recv 超时必须短于抓帧间隔才能准时发下一帧；
-            # Cast 的 screencast 会主动推帧，1s 空闲超时足够唤醒检查补帧。
-            if capture_mode == "snap":
-                upstream.settimeout(max(0.05, min(snap_interval, 0.25)))
+            # 定时保底心跳靠 recv 超时唤醒检查；超时必须短于抓帧间隔才能准时
+            # 发下一帧（0.2s 档才不会卡成 1s 一帧）。两种模式统一处理。
+            upstream.settimeout(max(0.05, min(snap_interval, 0.25)))
             while not stop.is_set():
                 now = time.monotonic()
-                # Cast：静止超过 KEEPALIVE_SEC 才补帧；Snap：按自身间隔定时抓帧。
-                interval = snap_interval if capture_mode == "snap" else CAST_KEEPALIVE_SEC
-                if now - last_frame >= interval:
+                # 两模式共用定时节奏：Cast 变化推帧走 screencast（更快），
+                # 同时按此间隔兜底抓帧，静止页最长滞后 = snap_interval。
+                if now - last_frame >= snap_interval:
                     # 只有真的发出截图请求才重置计时；在途满时不重置，
                     # 这样一旦有响应腾出名额会立刻再补，不会卡住不补帧。
                     if request_shot():
@@ -2508,13 +2512,12 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     data = params.get("data", "")
                     last_frame = time.monotonic()  # 收到实帧，重置补帧计时
                 elif msg.get("id") in pending_shots and isinstance(msg.get("result"), dict):
-                    # captureScreenshot 响应：{id, result:{data}}；Snap 模式的每一帧、
-                    # Cast 模式的首帧/补帧都走这里。
+                    # captureScreenshot 响应：{id, result:{data}}；Snap 的每一帧、
+                    # Cast 的首帧/保底帧都走这里。收到实帧即重置保底计时，
+                    # screencast 帧与截图帧统一对待，避免截图在途时重复发请求。
                     pending_shots.discard(msg["id"])
                     data = msg["result"].get("data", "")
-                    if capture_mode == "snap":
-                        # Snap 的节奏由截图响应驱动：拿到一帧后重新计时下一帧。
-                        last_frame = time.monotonic()
+                    last_frame = time.monotonic()
 
                 # 导航事件实时推给前端更新地址栏：网页自动化跳转很快，靠 HTTP
                 # 轮询标签列表会滞后数秒，CDP 的 frameNavigated/站内跳转事件是

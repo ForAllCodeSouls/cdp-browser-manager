@@ -71,7 +71,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 | `MANAGER_ID` | `default` | 多个 manager 共用一台宿主机时，隔离容器标签与持久卷 |
 | `BROWSER_SHM_SIZE` | `512m` | 每个 browser 容器的 `/dev/shm`；启动参数已带 `--disable-dev-shm-usage` |
 | `CAST_MAX_WIDTH` / `CAST_MAX_HEIGHT` | `1920` / `1080` | 抓屏「高清」档的帧上限（默认与 start.sh 的 1920×1080 窗口一致），避免高分屏帧拖慢 WS 转发 |
-| `CAST_KEEPALIVE_SEC` | `1.5` | 抓屏静止补帧间隔（秒）：页面长时间无 screencast 帧时，manager 主动截图补帧，避免静态页/验证码页画面冻结 |
+| `CAST_KEEPALIVE_SEC` | `1.5` | 旧版兜底抓帧间隔（秒），仅当客户端未传 `snap` 参数时生效；新版面板始终传档位（默认 0.5 秒），此变量一般无需配置 |
 | `LOG_LEVEL` | `INFO` | manager 日志级别 |
 
 `GET /api/health` 是存活探针：同时检查面板服务与 Docker 守护进程是否可用。镜像内 `HEALTHCHECK` 和 Compose 健康检查都使用它。
@@ -81,13 +81,13 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 - **画面双模式，随时切换**：
   - **VNC**：完整桌面画面，可见地址栏/标签栏（仅完整内核）。画面上方的**导航条在 VNC 模式下同样可用**——双行布局：第一行是固定宽度的标签（每个右侧带 × 可单独关闭，标签多了横向滚动），第二行是后退/前进/地址栏（回车跳转）/刷新。底层用同一实例的 CDP 接口读写标签页，切换标签时自动激活目标标签使 VNC 画面跟随，无需再退回 VNC 窗口手动点地址栏。
   - **CDP 抓屏**：画面与自动化共用同一 CDP 端口；导航条同 VNC 模式，支持标签切换/单独关闭、地址栏（回车跳转）、前进/后退、刷新、鼠标键盘交互（三种启动方式通用，无头实例只能用它）。画面按原比例居中，两侧留白用面板色（不变形、不裁切）。刷新按钮真实下发 `Page.reload`，失败会明确提示而非假成功。
-    - **抓屏方式 Cast / Snap（全局、随时可切）**：详情栏画质按钮旁可切 Cast 或 Snap，选择保存在浏览器本地，对所有实例统一生效。
-      - **Cast**：`Page.startScreencast` 变化推帧（默认，最跟手），静止页面（验证码/挑战页）长时间不推帧时 manager 按 `CAST_KEEPALIVE_SEC` 主动截图补帧，画面不会冻结。
-      - **Snap**：不发 `startScreencast`，纯 `Page.captureScreenshot` 定时抓图，帧率固定不依赖页面变化；间隔可选 **快 0.2 秒 / 标准 0.5 秒 / 省 1 秒**（约 5 / 2 / 1 帧），切换间隔画面自动重连。适合需要稳定节奏或 screencast 推帧异常的环境。
+    - **抓屏方式 Cast / Snap（全局、随时可切）**：详情栏画质按钮旁可切 Cast 或 Snap，选择保存在浏览器本地，对所有实例统一生效；旁边的 **快 / 标准 / 省** 三档间隔两种模式共用，切换后画面自动重连。
+      - **Cast**（默认，最跟手）：`Page.startScreencast` 变化即推帧，**同时按所选间隔用 `Page.captureScreenshot` 定时保底抓帧**。两路互补——页面在变走 screencast（最快），静止或变化太细微 CDP 不推帧时走定时保底，最长滞后从旧版固定的 1.5 秒缩短到所选间隔（默认 0.5 秒），验证码/挑战页不会冻结。收到任意一路的实帧都会重置保底计时，不会重复抓图。
+      - **Snap**：不发 `startScreencast`，纯 `Page.captureScreenshot` 按所选间隔定时抓图，帧率固定不依赖页面变化；间隔可选 **快 0.2 秒 / 标准 0.5 秒 / 省 1 秒**（约 5 / 2 / 1 帧）。适合需要稳定节奏或 screencast 推帧异常的环境。
       - 监控主面板固定走 Cast 的监控档，不受此切换影响。
     - **地址栏实时跟随**：抓屏 WS 复用 CDP 的 `Page.frameNavigated` / `Page.navigatedWithinDocument` 事件，页面一导航就把新 URL 秒级推给面板更新地址栏，网页自动化快速跳转也能跟上；VNC 模式没有抓屏 WS，靠 2.5 秒轮询更新地址栏。用户正在地址栏输入时不会被推送覆盖。
 - **画质三档（省流 / 均衡 / 高清）**：在实例详情栏「VNC / 抓屏」切换旁边的快捷按钮切换，**全局统一对所有实例生效**，切换后画面自动重连。抓屏按分辨率与码率生效——省流 960×540 / 低码率、均衡 1280×720、高清保持窗口原始上限；三档都**不隔帧**，刷新速度一致，区别只在清晰度与流量（省流是缩图省带宽，不会慢半拍）；VNC 使用 noVNC 内置的 `quality` / `compression` 参数。首次打开会按浏览器报告的网络（`navigator.connection`）自动建议一档，之后以你手动保存的设置为准。网络差选省流更省流量，网络好用高清更清晰。
-    - 实现上由 manager 的 `/ws/cast/{sid}/{tid}` 把容器内的 screencast 帧（Cast）或定时 `captureScreenshot` 帧（Snap）代理到浏览器 canvas，并转发输入事件。查询参数 `mode=cast|snap`、`snap=fast|normal|eco` 指定方式与间隔，未知值后端回落默认值。不直接用 Chrome 自带的 `devtools/inspector.html`——它的 CSP 只允许 `ws://127.0.0.1`，公网访客连不上。
+    - 实现上由 manager 的 `/ws/cast/{sid}/{tid}` 把容器内的 screencast 帧与定时 `captureScreenshot` 帧代理到浏览器 canvas，并转发输入事件。查询参数 `mode=cast|snap` 指定方式，`snap=fast|normal|eco` 指定定时节奏（Cast 用作保底心跳、Snap 用作主节奏）；未知值后端回落默认值，未传 `snap` 时回落 `CAST_KEEPALIVE_SEC`。不直接用 Chrome 自带的 `devtools/inspector.html`——它的 CSP 只允许 `ws://127.0.0.1`，公网访客连不上。
     - 输入支持键盘字符、左/右/中键与滚轮；鼠标移动事件按帧合并，WS 意外断开会自动重连，切换实例或标签时会作废旧连接避免画面串台。
 - **VNC 刷新速度（全局、随时可改）**：完整内核实例详情栏里有「VNC 刷新」下拉，可选 标准 / 快速 / 极速，控制容器内 `x11vnc` 的采集节流（`-wait` 轮询间隔 / `-defer` 合并延迟）：标准 20/30ms（x11vnc 默认，约 30fps 上限）、快速 10/10ms、极速 0/0ms（画面一变就推，最跟手，连续动画时 CPU 与带宽明显上升）。**全局统一、点一下立刻对所有主机所有运行实例生效**：manager 通过 `x11vnc -R wait/defer` 热改运行中的实例，无需重建、画面不断开；档位持久化到服务端数据目录（`vnc_refresh.json`），新建实例自动沿用上次选择，manager 重启后也会重新热改到已保存档位。前端 noVNC 的 `quality` / `compression` 只影响清晰度与带宽，改不了帧率；无头实例没有 VNC，不显示该下拉。
 - **监控主面板**：顶栏「监控面板」打开独立全屏视图，网格同屏显示所有勾选实例的实时画面。在左侧实例列表点 sid 旁的「预览」即可加入/移出（勾选保存在浏览器本地）。监控走 **CDP 抓屏的专用监控档**（640×360 / 低码率 / 约 1 帧/秒限帧），多路并发也不会卡顿，完整内核与无头实例都能看；该档位不在画质三档里，避免误选。远端实例的画面同样走 `/remote/<host>` 代理接入。
@@ -357,7 +357,7 @@ curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
 | VNC 一直显示 Connecting、看不到画面 | manager 的 WS 代理把浏览器发来的 RFB 二进制帧按文本帧转发，websockify 回 `Unsupported: Text frames are not supported` 并断连 | 新版代理对二进制帧显式用 BINARY opcode 转发，直连/同源代理均已实测完成 RFB 握手；确认已重建 manager |
 | 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
-| 抓屏画面卡住/定格（静态页、验证码页） | 页面长时间无视觉变化，CDP 不推 screencast 帧 | Cast 模式按 `CAST_KEEPALIVE_SEC` 主动截图补帧，静态页也不会冻结；若 screencast 推帧异常，可切到 **Snap** 模式（定时 `captureScreenshot`，不依赖变化推帧），间隔选快/标准/省 |
+| 抓屏画面卡住/定格（静态页、验证码页） | 页面长时间无视觉变化，CDP 不推 screencast 帧 | Cast 模式按所选间隔（默认 0.5 秒）主动保底抓帧，静态页不会冻结；想更快可把间隔切到「快」0.2 秒；若 screencast 推帧异常，可切到 **Snap** 模式（纯定时截图，不依赖变化推帧） |
 | 刷新按钮点了没反应 | 当前没有选中标签，或刷新命令下发失败 | 新版刷新会真实下发 `Page.reload` 并同步地址栏，失败会明确提示；先确认已选中一个标签页 |
 | 关闭最后一个标签后画面断连（`Connection refused`） | 有头 Chrome 关掉唯一窗口会退出进程，容器随之重启，来不及补建标签 | 已改为**关闭前先补建保底空白页**，保证始终有窗口、Chrome 不退出；若仍因其他原因短暂断连，面板会自动重试最多 3 次并重连画面 |
 | 无头实例点 VNC 没反应 | 无头模式没有 Xvfb/VNC 服务 | 属正常，切到「抓屏」模式 |

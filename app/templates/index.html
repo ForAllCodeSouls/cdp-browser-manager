@@ -1566,9 +1566,12 @@
         const VNC_REFRESH_LABELS = { standard: "标准", fast: "快速", ultra: "极速" };
         // 按「画面模式 + 画质档位 + 抓屏方式」给出一句建议，帮用户快速判断当前组合是否合适。
         function qualityHint(mode, q, captureMode, snapRate) {
+            const rateText = { fast: "0.2 秒", normal: "0.5 秒", eco: "1 秒" }[snapRate] || "0.5 秒";
             if (mode === "cast" && captureMode === "snap") {
-                const rate = { fast: "0.2 秒，约 5 帧", normal: "0.5 秒，约 2 帧", eco: "1 秒，约 1 帧" }[snapRate] || "0.5 秒";
-                return "仅网页内容 · 定时抓图每 " + rate + "，不依赖变化推帧";
+                return "仅网页内容 · 定时抓图每 " + rateText + "，不依赖变化推帧";
+            }
+            if (mode === "cast" && captureMode === "cast") {
+                return "仅网页内容 · 变化推帧 + 每 " + rateText + " 保底抓帧，静止页不冻结";
             }
             const byMode = {
                 cast: {
@@ -1820,13 +1823,11 @@
             // 画质档位带在 WS 查询串上，后端按档位设置抓屏分辨率/码率。
             const q = ["low", "medium", "high"].includes(settings.quality) ? settings.quality : "medium";
             tpl += (tpl.includes("?") ? "&" : "?") + "quality=" + encodeURIComponent(q);
-            // 抓屏方式 + Snap 间隔：后端据此选 startScreencast 推帧或定时 captureScreenshot。
+            // 抓屏方式 + 定时节奏：Snap 纯定时截图；Cast 变化推帧 + 同节奏保底。
+            // 两种模式都带 snap 参数（Cast 用作保底心跳），否则后端回落旧 1.5s。
             const cm = settings.captureMode === "snap" ? "snap" : "cast";
-            tpl += "&mode=" + cm;
-            if (cm === "snap") {
-                const sr = ["fast", "normal", "eco"].includes(settings.snapRate) ? settings.snapRate : "normal";
-                tpl += "&snap=" + encodeURIComponent(sr);
-            }
+            const sr = ["fast", "normal", "eco"].includes(settings.snapRate) ? settings.snapRate : "normal";
+            tpl += "&mode=" + cm + "&snap=" + encodeURIComponent(sr);
             return proto + "//" + location.host + tpl;
         }
 
@@ -2908,18 +2909,17 @@
                     '<span class="seg qseg" title="全局抓屏方式：Cast 变化推帧，Snap 定时截图">' +
                         ['cast', 'snap'].map(k =>
                             '<button class="' + (cm === k ? "on" : "") + '"' +
-                            ' title="' + (k === "cast" ? "变化推帧，静止补帧" : "定时截图，帧率固定") + '"' +
+                            ' title="' + (k === "cast" ? "变化推帧 + 定时保底，最跟手" : "纯定时截图，帧率固定") + '"' +
                             ' onclick="setCaptureMode(\'' + k + '\')">' + CAPTURE_LABELS[k] + '</button>'
                         ).join('') +
                     '</span>' +
-                    (cm === "snap"
-                        ? '<span class="seg qseg" title="Snap 定时抓图间隔，全局生效">' +
-                            ['fast', 'normal', 'eco'].map(k =>
-                                '<button class="' + (settings.snapRate === k ? "on" : "") + '"' +
-                                ' title="每 ' + ({ fast: "0.2", normal: "0.5", eco: "1" }[k]) + ' 秒抓一帧"' +
-                                ' onclick="setSnapRate(\'' + k + '\')">' + SNAP_RATE_LABELS[k] + '</button>'
-                            ).join('') + '</span>'
-                        : '');
+                    // 两模式共用定时节奏：Snap 是抓帧间隔，Cast 是保底心跳（变化推帧更快）。
+                    '<span class="seg qseg" title="定时抓帧节奏：Snap 的抓图间隔 / Cast 的保底心跳，全局生效">' +
+                        ['fast', 'normal', 'eco'].map(k =>
+                            '<button class="' + (settings.snapRate === k ? "on" : "") + '"' +
+                            ' title="每 ' + ({ fast: "0.2", normal: "0.5", eco: "1" }[k]) + ' 秒抓一帧"' +
+                            ' onclick="setSnapRate(\'' + k + '\')">' + SNAP_RATE_LABELS[k] + '</button>'
+                        ).join('') + '</span>';
                 const seg =
                     '<span class="seg">' +
                         '<button class="' + (mode === "vnc" ? "on" : "") + '"' +

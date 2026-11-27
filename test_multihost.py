@@ -430,11 +430,19 @@ class CaptureModeTests(unittest.TestCase):
 
     def test_snap_skips_screencast_and_polls(self):
         self.assertIn('if capture_mode == "cast":\n                upstream_send({\n                    "id": ack_id,\n                    "method": "Page.startScreencast"', self.src)
-        self.assertIn('interval = snap_interval if capture_mode == "snap" else CAST_KEEPALIVE_SEC', self.src)
         self.assertIn('upstream.settimeout(max(0.05, min(snap_interval, 0.25)))', self.src)
 
-    def test_snap_response_drives_next_frame(self):
-        self.assertIn('if capture_mode == "snap":\n                        # Snap 的节奏由截图响应驱动', self.src)
+    def test_both_modes_share_snap_interval_heartbeat(self):
+        # Cast 与 Snap 共用 snap_interval 定时抓帧：Cast 作保底心跳，Snap 作主节奏。
+        self.assertIn("if now - last_frame >= snap_interval:", self.src)
+        self.assertNotIn("else CAST_KEEPALIVE_SEC", self.src)
+        self.assertIn('if not str(websocket.query_params.get("snap", "") or "").strip():', self.src)
+        self.assertIn("snap_interval = CAST_KEEPALIVE_SEC", self.src)
+
+    def test_any_frame_resets_heartbeat(self):
+        # screencast 帧与截图帧统一重置计时，避免截图在途时重复发请求。
+        self.assertIn("last_frame = time.monotonic()  # 收到实帧，重置补帧计时", self.src)
+        self.assertIn('pending_shots.discard(msg["id"])\n                    data = msg["result"].get("data", "")\n                    last_frame = time.monotonic()', self.src)
 
     def test_stop_screencast_only_in_cast(self):
         self.assertIn("if capture_mode == \"cast\":\n                try:\n                    upstream_send({\"id\": 999, \"method\": \"Page.stopScreencast\"", self.src)
@@ -463,6 +471,21 @@ class CaptureModeTests(unittest.TestCase):
         self.assertIn("onclick=\"setSnapRate(\\'' + k + '\\')\"", self.js)
         seg = self.js[self.js.index("function qualityHint"):self.js.index("function qualityHint") + 600]
         self.assertIn("定时抓图每", seg)
+        self.assertIn("变化推帧 + 每", seg)  # Cast 也说明保底节奏
+
+    def test_cast_mode_also_shows_interval_seg(self):
+        # 三档间隔按钮不再只属于 Snap：Cast 也显示作为保底心跳。
+        i = self.js.index("const capseg =")
+        seg = self.js[i:i + 1400]
+        self.assertNotIn('cm === "snap"', seg)
+        self.assertIn("Snap 的抓图间隔 / Cast 的保底心跳", seg)
+
+    def test_both_modes_send_snap_param(self):
+        # 两种模式都要带 snap 参数，否则后端回落旧 1.5s 兜底。
+        i = self.js.index("function castWsUrl(i, tid)")
+        seg = self.js[i:i + 1100]
+        self.assertNotIn("if (cm === \"snap\")", seg)
+        self.assertIn('"&mode=" + cm + "&snap=" + encodeURIComponent(sr)', seg)
 
     def test_monitor_forces_cast(self):
         i = self.js.index("function monitorWsUrl(inst, tid)")
