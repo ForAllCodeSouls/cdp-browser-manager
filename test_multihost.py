@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -1065,7 +1066,7 @@ class PanelUiStateTests(unittest.TestCase):
     def test_manual_refresh_button_removed(self):
         self.assertNotIn('<button onclick="load()">刷新</button>', self.src)
         # 10 秒自动轮询仍在，移除手动按钮不会失去状态刷新
-        self.assertIn("setInterval(() => { if (!document.hidden) load(true); }, 10000)", self.src)
+        self.assertIn("setInterval(() => { if (!document.hidden && !bgEcoMode) load(true); }, 10000)", self.src)
 
     def test_monitor_view_persisted(self):
         self.assertIn('const MONITOR_VIEW_KEY = "cdpManagerMonitorView";', self.src)
@@ -1118,6 +1119,123 @@ class PanelUiStateTests(unittest.TestCase):
         self.assertIn("i.novnc_port", seg)
         # 远端实例也要能按所属主机路由停止
         self.assertIn('"/instance/" + encodeURIComponent(sid)', self.src)
+
+
+class PanelEcoAndShareTests(unittest.TestCase):
+    """后台省流、远程自动刷新、只读分享的静态回归断言。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            cls.src = f.read()
+        with open(os.path.join(ROOT, "app", "templates", "share.html"), encoding="utf-8") as f:
+            cls.share_src = f.read()
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            cls.main_src = f.read()
+
+    def test_remote_panel_refresh_button_removed_and_auto_poll(self):
+        i = self.src.index('id="remoteMask"')
+        seg = self.src[i:i + 7000]
+        self.assertNotIn('onclick="refreshRemotePanel()">刷新', seg)
+        self.assertIn("remotePollTimer = setInterval", self.src)
+        self.assertIn("}, 3000);", self.src)
+        self.assertIn("clearInterval(remotePollTimer)", self.src)
+        self.assertIn("每 3 秒自动刷新", self.src)
+
+    def test_background_eco_disconnect_and_instant_restore(self):
+        for token in ("let bgEcoMode = false;", "function enterBgEco()", "function leaveBgEco()",
+                      'document.addEventListener("visibilitychange"',
+                      'window.addEventListener("blur", enterBgEco)',
+                      'window.addEventListener("focus"',
+                      "!document.hidden && !bgEcoMode", "state.connect = connect;"):
+            self.assertIn(token, self.src)
+        i = self.src.index("function enterBgEco()")
+        seg = self.src[i:i + 1600]
+        self.assertIn("castWs.close()", seg)
+        self.assertIn("frameHost", seg)  # iframe 也要移除，VNC 才能真正断流
+        j = self.src.index("function leaveBgEco()")
+        seg2 = self.src[j:j + 1200]
+        self.assertIn("c.connect(0)", seg2)
+        self.assertIn("mountFrame(instances[selectedSid])", seg2)
+
+    def test_share_backend_persistence_and_routes(self):
+        for token in ('SHARE_FILE = DATA_DIR / "share.json"',
+                      "SHARE_TTLS = (3600, 21600, 86400, 604800)",
+                      "def share_active(", "def share_allows(",
+                      '@app.get("/api/share")', '@app.post("/api/share")',
+                      '@app.post("/api/share/renew")', '@app.get("/api/share/view")',
+                      '@app.get("/share", response_class=HTMLResponse)',
+                      'path == "/api/share/view" and method == "GET"'):
+            self.assertIn(token, self.main_src)
+
+    def test_share_ws_is_readonly(self):
+        i = self.main_src.index("async def ws_cast(")
+        seg = self.main_src[i:i + 1600]
+        self.assertIn("readonly_share = share_allows(share_token, sid)", seg)
+        self.assertIn("not readonly_share and not key_valid", seg)
+        self.assertIn('websocket.query_params.get("readonly", "")', seg)
+        j = self.main_src.index('kind = data.get("type")', i)
+        self.assertIn('if readonly_share and kind in ("input", "viewport")',
+                      self.main_src[j:j + 400])
+        # 远端代理必须把 share 换成 readonly=1，否则远端会用 host key 认证成可操控连接
+        k = self.main_src.index("async def remote_ws_proxy(")
+        seg3 = self.main_src[k:k + 1600]
+        self.assertIn("is_share = share_active(share_token)", seg3)
+        self.assertIn('query_items.append(("readonly", "1"))', seg3)
+        self.assertIn('if k not in ("key", "share")', seg3)
+
+    def test_share_admin_ui_drag_and_reorder(self):
+        for token in ('id="btnShare"', 'id="shareMask"', 'id="shareDrop"',
+                      'id="shareList"', 'id="shareTtl"', "function renderSharePanel()",
+                      "function dropToShare(ev)", "function dropOnShareItem(ev, targetSid)",
+                      "function dropToMonitor(ev)", "function syncMonitorOrder()",
+                      '"/api/share/renew"', 'ondrop="dropToMonitor(event)"',
+                      'card.draggable = true', 'draggable="true"'):
+            self.assertIn(token, self.src)
+
+    def test_viewer_page_is_readonly_with_grid_and_zoom(self):
+        for token in ('id="grid"', 'id="large"', "function openLarge(sid)",
+                      "function closeLarge()", 'wsUrl(inst, "monitor")',
+                      'wsUrl(inst, "low")', "&mode=cast&share=",
+                      "tickExpire", "只读画面"):
+            self.assertIn(token, self.share_src)
+        # 观看端绝不绑定输入事件、导航或管理控件
+        for bad in ("dispatchMouseEvent", "dispatchKeyEvent", "Input.insertText",
+                    "castSend(", "stopAll(", "openCreate("):
+            self.assertNotIn(bad, self.share_src)
+
+
+@unittest.skipUnless(HAS_TESTCLIENT, "缺少 fastapi/httpx，跳过集成测试")
+class ShareBackendTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(main.app)
+        self.saved = dict(main.SHARE_STATE)
+        self.saved["sids"] = list(self.saved["sids"])
+
+    def tearDown(self):
+        main.SHARE_STATE.clear()
+        main.SHARE_STATE.update(self.saved)
+
+    def test_share_view_requires_valid_token(self):
+        r = self.client.get("/api/share/view")
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("过期", r.json()["detail"])
+
+    def test_share_token_expiry_and_sid_scope(self):
+        main.SHARE_STATE["token"] = "unit-token"
+        main.SHARE_STATE["expires"] = int(time.time()) + 60
+        main.SHARE_STATE["sids"] = ["abc"]
+        self.assertTrue(main.share_active("unit-token"))
+        self.assertTrue(main.share_allows("unit-token", "abc"))
+        self.assertFalse(main.share_allows("unit-token", "other"))
+        main.SHARE_STATE["expires"] = int(time.time()) - 1
+        self.assertFalse(main.share_active("unit-token"))
+
+    def test_share_admin_requires_key_when_api_key_set(self):
+        with patch.object(main, "API_KEY", "secret"):
+            self.assertEqual(self.client.get("/api/share").status_code, 401)
+            self.assertEqual(self.client.post("/api/share", json={}).status_code, 401)
+            self.assertEqual(self.client.post("/api/share/renew").status_code, 401)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浏览器只读分享</title>
+<style>
+    :root {
+        --bg: #0f1117; --surface: #171a23; --surface-2: #1f2330;
+        --border: #2a3042; --text: #e6e8ef; --muted: #9aa3b5;
+        --accent: #5b8cff; --danger: #ff6b6b; --success: #4ade80; --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 13px;
+    }
+    header {
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+    }
+    header h1 { font-size: 15px; margin: 0; }
+    header .badge {
+        font-size: 11px; padding: 3px 9px; border-radius: 999px;
+        background: #1d3b40; color: #7fdbd9; font-weight: 600;
+    }
+    header .expire { color: var(--muted); font-size: 11px; margin-left: auto; }
+    header .expire.soon { color: var(--danger); }
+    button {
+        font: inherit; cursor: pointer; padding: 5px 12px; font-size: 12px;
+        background: var(--surface-2); color: var(--text);
+        border: 1px solid var(--border); border-radius: 7px;
+    }
+    button:hover { border-color: var(--accent); }
+    .grid {
+        padding: 14px; display: grid; gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); align-content: start;
+    }
+    .card {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); overflow: hidden; cursor: zoom-in;
+    }
+    .card:hover { border-color: var(--accent); }
+    .card-head {
+        display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+        border-bottom: 1px solid var(--border); font-size: 11px;
+    }
+    .card-head .sid { font-family: ui-monospace, monospace; font-weight: 600; }
+    .card-head .host { color: var(--muted); }
+    .card-head .state { margin-left: auto; color: var(--muted); font-size: 10px; }
+    .card-head .state.live { color: var(--success); }
+    .stage {
+        position: relative; width: 100%; aspect-ratio: 16 / 9;
+        background: #0c0e14; display: flex; align-items: center; justify-content: center;
+    }
+    .stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .stage .wait {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        color: var(--muted); font-size: 11px; text-align: center; padding: 12px; pointer-events: none;
+    }
+    .empty, .error {
+        grid-column: 1 / -1; padding: 48px 20px; text-align: center;
+        color: var(--muted); line-height: 1.8;
+    }
+    .error { color: var(--danger); }
+    .large {
+        position: fixed; inset: 0; background: #000; display: none;
+        flex-direction: column; align-items: center; justify-content: center; z-index: 10;
+    }
+    .large.show { display: flex; }
+    .large canvas {
+        max-width: 100vw; max-height: calc(100vh - 56px); object-fit: contain;
+    }
+    .large .bar {
+        position: absolute; top: 0; left: 0; right: 0; height: 48px;
+        display: flex; align-items: center; gap: 12px; padding: 0 16px;
+        background: #111520e6; border-bottom: 1px solid var(--border); font-size: 12px;
+    }
+    .large .bar .sid { font-family: ui-monospace, monospace; }
+    .large .bar button { margin-left: auto; }
+    /* 只读声明：不提供任何输入转发、导航或管理控件 */
+    .readonly-tip {
+        position: fixed; bottom: 10px; right: 14px; font-size: 10px; color: var(--muted);
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 999px; padding: 4px 10px;
+    }
+</style>
+</head>
+<body>
+    <header>
+        <h1>浏览器只读分享</h1>
+        <span class="badge">仅观看 · 不可操控</span>
+        <span class="expire" id="expire">--</span>
+    </header>
+    <main class="grid" id="grid"><div class="empty">正在加载分享内容…</div></main>
+    <div class="large" id="large">
+        <div class="bar"><span class="sid" id="largeSid"></span><button onclick="closeLarge()">返回网格（Esc）</button></div>
+        <canvas id="largeCanvas"></canvas>
+    </div>
+    <div class="readonly-tip">只读画面 · 无任何操作入口</div>
+
+<script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const grid = document.getElementById("grid");
+    const large = document.getElementById("large");
+    const largeCanvas = document.getElementById("largeCanvas");
+    let shared = {};
+    let cardWs = {};
+    let largeWs = null;
+    let largeSid = "";
+    let expires = 0;
+    let expired = false;
+
+    function wsUrl(inst, quality) {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        let tpl = String(inst.cast_ws || "").replace("{tid}", encodeURIComponent(inst.tid || ""));
+        tpl += (tpl.includes("?") ? "&" : "?") +
+            "quality=" + quality + "&mode=cast&share=" + encodeURIComponent(token);
+        return proto + "//" + location.host + tpl;
+    }
+
+    function drawFrame(canvas, data, onFirst) {
+        const img = new Image();
+        img.onload = () => {
+            if (canvas.width !== img.width || canvas.height !== img.height) {
+                canvas.width = img.width; canvas.height = img.height;
+            }
+            canvas.getContext("2d").drawImage(img, 0, 0);
+            if (onFirst) onFirst();
+        };
+        img.src = "data:image/jpeg;base64," + data;
+    }
+
+    function connectCard(inst) {
+        const canvas = document.getElementById("c-" + inst.sid);
+        if (!canvas || !inst.tid) return;
+        const stateEl = document.getElementById("s-" + inst.sid);
+        const ws = new WebSocket(wsUrl(inst, "monitor"));
+        cardWs[inst.sid] = ws;
+        ws.onmessage = (ev) => {
+            let msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            if (msg.type === "error") { if (stateEl) stateEl.textContent = msg.message; return; }
+            if (msg.type === "frame" && msg.data) {
+                drawFrame(canvas, msg.data, () => {
+                    if (stateEl) { stateEl.textContent = "实时"; stateEl.className = "state live"; }
+                    const wait = canvas.parentNode.querySelector(".wait");
+                    if (wait) wait.remove();
+                });
+            }
+        };
+        ws.onerror = () => {};
+        ws.onclose = () => {
+            if (cardWs[inst.sid] === ws) delete cardWs[inst.sid];
+            if (stateEl && !expired) stateEl.textContent = "已断开";
+        };
+    }
+
+    function render() {
+        const list = Object.values(shared);
+        if (!list.length) {
+            grid.innerHTML = '<div class="empty">该分享暂未包含浏览器画面</div>';
+            return;
+        }
+        grid.innerHTML = list.map(i =>
+            '<div class="card" onclick="openLarge(\'' + i.sid + '\')">' +
+                '<div class="card-head">' +
+                    '<span class="sid">' + esc(i.sid.slice(0, 8)) + '</span>' +
+                    '<span class="host">' + esc(i.host_name) + '</span>' +
+                    '<span class="state" id="s-' + i.sid + '">连接中…</span>' +
+                '</div>' +
+                '<div class="stage"><canvas id="c-' + i.sid + '"></canvas>' +
+                    '<div class="wait">' + (i.tid ? "正在接收画面…" : "该实例暂无可观看标签页") + '</div>' +
+                '</div>' +
+            '</div>'
+        ).join("");
+        list.forEach(connectCard);
+    }
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function openLarge(sid) {
+        const inst = shared[sid];
+        if (!inst || !inst.tid || expired) return;
+        largeSid = sid;
+        document.getElementById("largeSid").textContent = inst.sid.slice(0, 8) +
+            " · " + inst.host_name + " · 点击画面无操作，仅观看";
+        large.classList.add("show");
+        if (largeWs) { try { largeWs.close(); } catch (e) {} }
+        largeWs = new WebSocket(wsUrl(inst, "low"));
+        largeWs.onmessage = (ev) => {
+            let msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            if (msg.type === "frame" && msg.data) drawFrame(largeCanvas, msg.data);
+        };
+        largeWs.onerror = () => {};
+    }
+
+    function closeLarge() {
+        large.classList.remove("show");
+        if (largeWs) { try { largeWs.close(); } catch (e) {} largeWs = null; }
+        largeSid = "";
+    }
+
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && largeSid) closeLarge(); });
+
+    function tickExpire() {
+        if (!expires) return;
+        const left = expires * 1000 - Date.now();
+        const el = document.getElementById("expire");
+        if (left <= 0) {
+            expired = true;
+            el.textContent = "分享链接已过期";
+            el.className = "expire soon";
+            for (const ws of Object.values(cardWs)) { try { ws.close(); } catch (e) {} }
+            cardWs = {};
+            closeLarge();
+            grid.innerHTML = '<div class="error">该分享链接已过期，请联系分享者重新生成。</div>';
+            return;
+        }
+        const mins = Math.floor(left / 60000);
+        const secs = Math.floor((left % 60000) / 1000);
+        el.textContent = "有效期剩余 " + mins + " 分 " + String(secs).padStart(2, "0") + " 秒";
+        el.className = "expire" + (left < 300000 ? " soon" : "");
+    }
+
+    async function load() {
+        try {
+            const res = await fetch("/api/share/view?token=" + encodeURIComponent(token));
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+            shared = data.instances || {};
+            expires = data.expires || 0;
+            render();
+            tickExpire();
+        } catch (e) {
+            grid.innerHTML = '<div class="error">无法打开分享：' + esc(e.message) +
+                '<br>请确认链接完整、未过期，且分享端 manager 仍在运行。</div>';
+        }
+    }
+    setInterval(tickExpire, 1000);
+    load();
+</script>
+</body>
+</html>

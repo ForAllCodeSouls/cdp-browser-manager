@@ -171,6 +171,39 @@
         .inst-group.collapsed .group-body { display: none; }
         .inst-group.collapsed .chev { transform: rotate(-90deg); }
 
+        /* 实例项可拖入监控面板 / 分享区 */
+        .item[draggable="true"] { cursor: grab; }
+        .item.dragging { opacity: .45; }
+        .monitor-grid.over { outline: 2px dashed var(--accent); outline-offset: -6px; }
+        .mon-card[draggable="true"] { cursor: grab; }
+        .mon-card.dragging { opacity: .4; }
+
+        /* 只读分享管理弹窗：左列全部实例，右列分享区，拖动加入/移出 */
+        .share-panel { width: 740px; }
+        .share-cols { display: flex; gap: 12px; }
+        .share-col { flex: 1; min-width: 0; }
+        .share-col .col-head { font-size: 12px; color: var(--muted); padding: 0 0 6px; }
+        .share-list, .share-drop {
+            height: 250px; overflow-y: auto; padding: 8px;
+            border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-2);
+        }
+        .share-drop.over { border-color: var(--accent); background: #1c2740; }
+        .share-item {
+            display: flex; align-items: center; gap: 8px; padding: 7px 9px; margin-bottom: 5px;
+            border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+            cursor: grab; font-size: 11px;
+        }
+        .share-item.dragging { opacity: .4; }
+        .share-item .grow { flex: 1; min-width: 0; word-break: break-all; font-family: ui-monospace, monospace; }
+        .share-item button { padding: 1px 6px; font-size: 11px; }
+        .share-drop .drop-hint { text-align: center; color: var(--muted); font-size: 11px; padding: 28px 8px; }
+        .share-link-box { margin-top: 14px; }
+        .share-url {
+            background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+            padding: 9px 10px; font-family: ui-monospace, monospace; font-size: 11px;
+            word-break: break-all; user-select: all;
+        }
+
         /* 停止实例确认弹窗：完整浏览器信息 + 默认全选的复选框 */
         .stop-panel { width: 620px; }
         .stop-all {
@@ -661,6 +694,12 @@
             <rect x="5" y="5" width="14" height="14" rx="2"/>
             <path d="M9.5 9.5h5v5h-5z" fill="currentColor" stroke="none"/>
         </symbol>
+        <symbol id="i-share" viewBox="0 0 24 24">
+            <circle cx="18" cy="5" r="2.5"/>
+            <circle cx="6" cy="12" r="2.5"/>
+            <circle cx="18" cy="19" r="2.5"/>
+            <path d="m8.3 10.8 7.4-4.3M8.3 13.2l7.4 4.3"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -677,6 +716,7 @@
             </label>
             <button id="btnKey" onclick="openKey()" class="btn-icon" style="display:none" title="设置本机 API 密钥（服务端启用 API_KEY 时才需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
             <button id="btnRemote" onclick="openRemote()" class="btn-icon" title="远程接入：添加远端主机，或生成本机接入令牌给其他主机远控"><svg class="ico"><use href="#i-link"/></svg><span>远程</span></button>
+            <button id="btnShare" onclick="openShare()" class="btn-icon" title="只读分享：拖入浏览器生成观看链接，观看端不能操控"><svg class="ico"><use href="#i-share"/></svg><span>分享</span></button>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
         </div>
@@ -732,7 +772,7 @@
                 <span class="spacer" style="flex:1"></span>
                 <button onclick="toggleMonitorView()">返回普通视图</button>
             </div>
-            <div class="monitor-grid" id="monitorGrid"></div>
+            <div class="monitor-grid" id="monitorGrid" ondragover="allowDrop(event)" ondrop="dropToMonitor(event)"></div>
         </section>
     </div>
 
@@ -748,6 +788,50 @@
             <div class="actions">
                 <button onclick="closeStopDialog()">取消</button>
                 <button class="btn-danger" id="btnConfirmStop" onclick="confirmStopSelected()">停止选中实例</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 只读分享弹窗：把实例拖进分享区，生成带有效期的观看链接 -->
+    <div class="mask" id="shareMask" onclick="if(event.target===this) closeShare()">
+        <div class="panel share-panel">
+            <h3>只读分享</h3>
+            <div class="hint">把左侧实例拖进右侧「分享区」即可加入观看列表；拖回左侧或点 × 移出，卡片可拖动排序。观看端**只能看画面，不能操控**浏览器。</div>
+            <div class="share-cols">
+                <div class="share-col">
+                    <div class="col-head">全部实例 <span id="shareAllCount"></span></div>
+                    <div class="share-list" id="shareAllList" ondragover="allowDrop(event)" ondrop="dropToShareAll(event)"></div>
+                </div>
+                <div class="share-col">
+                    <div class="col-head">分享区 <span id="shareCount"></span></div>
+                    <div class="share-drop" id="shareDrop" ondragover="allowDrop(event)" ondrop="dropToShare(event)">
+                        <div id="shareList"></div>
+                        <div class="drop-hint" id="shareDropHint">把实例拖到这里加入分享</div>
+                    </div>
+                </div>
+            </div>
+            <div class="row" style="margin-top:14px">
+                <label for="shareTtl">观看链接有效期</label>
+                <select id="shareTtl" onchange="shareDirty = true">
+                    <option value="3600">1 小时</option>
+                    <option value="21600">6 小时</option>
+                    <option value="86400" selected>24 小时</option>
+                    <option value="604800">7 天</option>
+                </select>
+            </div>
+            <div class="share-link-box" id="shareLinkBox" style="display:none">
+                <div class="hint">观看链接（发给别人即可打开，无需密钥，到期自动失效）：</div>
+                <div class="share-url" id="shareUrl"></div>
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                    <button onclick="copyShareUrl()">复制链接</button>
+                    <button onclick="openShareInNewTab()">新窗口打开</button>
+                    <button class="btn-danger" onclick="renewShareToken()">重置链接（旧链接立即失效）</button>
+                </div>
+            </div>
+            <div class="foot">一份全局分享配置，保存在服务端数据目录；改动实例列表后点保存即生效，链接地址不变、只续期。可随时重置令牌让旧链接失效。</div>
+            <div class="actions">
+                <button onclick="closeShare()">关闭</button>
+                <button class="btn-primary" id="btnSaveShare" onclick="saveShareConfig()">保存分享设置</button>
             </div>
         </div>
     </div>
@@ -890,10 +974,9 @@
                 </div>
                 <div class="hint" id="linkTokenList"></div>
             </div>
-            <div class="foot">连接串 = 地址|令牌。令牌等同本机完整管理权限，只发给自己的其他主机；保存在服务端数据目录，重启不丢；吊销后旧连接串立即失效。若本机已设置 API_KEY，令牌与它等效。</div>
+            <div class="foot">连接串 = 地址|令牌。令牌等同本机完整管理权限，只发给自己的其他主机；保存在服务端数据目录，重启不丢；吊销后旧连接串立即失效。若本机已设置 API_KEY，令牌与它等效。弹窗打开期间主机与令牌列表每 3 秒自动刷新，无需手动刷新。</div>
             <div class="actions">
                 <button onclick="closeRemote()">关闭</button>
-                <button onclick="refreshRemotePanel()">刷新</button>
             </div>
         </div>
     </div>
@@ -932,6 +1015,12 @@
         // 实例列表分组折叠状态：持久化，刷新后保持用户的展开/收起选择。
         const GROUP_STATE_KEY = "cdpManagerGroups";
         let groupsCollapsed = { temp: false, persist: false };
+        // 后台省流：标签页不可见/窗口失焦时断开画面通道，回前台立即重挂。
+        let bgEcoMode = false;
+        // 只读分享：一份全局配置；dragSid 同时用于分享区与监控面板的拖放排序。
+        let shareConfig = { sids: [], ttl: 86400, token: "", expires: 0, url: "", active: false };
+        let shareDirty = false;
+        let dragSid = "";
         let busy = false;
 
         // ---- 多主机与鉴权：浏览器只连本机面板，远端由服务端代理 ----
@@ -972,8 +1061,21 @@
         function addQuery(url, k, v) {
             return url + (url.includes("?") ? "&" : "?") + k + "=" + encodeURIComponent(v);
         }
-        function openRemote() { $("remoteMask").classList.add("open"); refreshRemotePanel(); }
-        function closeRemote() { $("remoteMask").classList.remove("open"); }
+        let remotePollTimer = null;
+        function openRemote() {
+            $("remoteMask").classList.add("open");
+            refreshRemotePanel();
+            // 弹窗打开期间定时同步主机/令牌；关闭时清掉，避免后台空转。
+            if (remotePollTimer) clearInterval(remotePollTimer);
+            remotePollTimer = setInterval(() => {
+                if ($("remoteMask").classList.contains("open")) refreshRemotePanel();
+                else { clearInterval(remotePollTimer); remotePollTimer = null; }
+            }, 3000);
+        }
+        function closeRemote() {
+            $("remoteMask").classList.remove("open");
+            if (remotePollTimer) { clearInterval(remotePollTimer); remotePollTimer = null; }
+        }
 
         async function refreshRemotePanel() {
             try {
@@ -2825,6 +2927,11 @@
         function createMonitorCard(sid, inst) {
             const card = document.createElement("div");
             card.className = "mon-card";
+            card.draggable = true;
+            card.addEventListener("dragstart", e => dragStart(e, sid));
+            card.addEventListener("dragend", dragEnd);
+            card.addEventListener("dragover", allowDrop);
+            card.addEventListener("drop", e => dropOnMonitorCard(e, sid));
             card.innerHTML =
                 '<div class="mon-card-head">' +
                     '<span class="msid">' + esc(sid.slice(0, 8)) + '</span>' +
@@ -2878,6 +2985,8 @@
                     status.className = "mstatus";
                 };
             };
+            // 保存重连入口：后台省流时只关 WS 不销毁卡片，回前台直接复用它恢复。
+            state.connect = connect;
             // 取第一个页面标签作为监控画面；无标签时提示去实例里新建。
             fetchTargets(inst).then(targets => {
                 if (monitorCards[sid] !== state) return;
@@ -2906,6 +3015,47 @@
                 card.classList.toggle("gone", inst.status !== "running");
             }
         }
+
+        // ---------------- 后台省流 ----------------
+        // 标签页切走/窗口失焦时断开所有画面通道（含 iframe 内的 VNC），回前台
+        // 立即重挂，不等待 10 秒轮询，既省流量又不牺牲切回来的第一响应。
+        function enterBgEco() {
+            if (bgEcoMode) return;
+            bgEcoMode = true;
+            document.body.classList.add("bg-eco");
+            if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
+            if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
+            // VNC 的 WebSocket 活在 iframe 里，移除 iframe 才能真正断流。
+            const host = $("frameHost");
+            if (host) while (host.firstChild) host.removeChild(host.firstChild);
+            frameSid = null;
+            for (const sid of Object.keys(monitorCards)) {
+                const c = monitorCards[sid];
+                if (c.ws) { try { c.ws.close(); } catch (e) {} c.ws = null; }
+                const st = c.el && c.el.querySelector(".mstatus");
+                if (st) { st.textContent = "后台省流"; st.className = "mstatus"; }
+            }
+        }
+        function leaveBgEco() {
+            if (!bgEcoMode) return;
+            bgEcoMode = false;
+            document.body.classList.remove("bg-eco");
+            // 监控视图：用已保存的 tid 立刻重连每张卡片。
+            for (const sid of Object.keys(monitorCards)) {
+                const c = monitorCards[sid];
+                if (!c.ws && c.tid && c.connect) c.connect(0);
+            }
+            // 普通视图：立即重挂当前实例，不等下一轮定时刷新。
+            if (!monitorViewOpen && selectedSid && instances[selectedSid]) {
+                mountFrame(instances[selectedSid]);
+            }
+            load(true);
+        }
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) enterBgEco(); else leaveBgEco();
+        });
+        window.addEventListener("blur", enterBgEco);
+        window.addEventListener("focus", () => { if (!document.hidden) leaveBgEco(); });
 
         async function pollCastTargets() {
             if (monitorViewOpen) return;  // 监控面板打开时不维护普通视图的抓屏通道
@@ -3014,7 +3164,9 @@
         }
         function renderInstGroup(key, name, items, actionBtn, emptyText) {
             const row = i =>
-                '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
+                '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" draggable="true"' +
+                    ' ondragstart="dragStart(event,' + jsArg(i.sid) + ')" ondragend="dragEnd(event)"' +
+                    ' onclick="selectSid(' + jsArg(i.sid) + ')">' +
                     '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
                         '<label class="mon-toggle switch-wrap" title="加入/移出监控主面板"' +
                             ' onclick="event.stopPropagation()">' +
@@ -3341,6 +3493,169 @@
             }
         }
 
+        // ---- 只读分享：拖动实例加入观看列表，生成带有效期的链接 ----
+        function openShare() {
+            $("shareMask").classList.add("open");
+            loadShareConfig();
+        }
+        function closeShare() { $("shareMask").classList.remove("open"); }
+        async function loadShareConfig() {
+            try {
+                const r = await api("/api/share");
+                shareConfig = r;
+                shareDirty = false;
+                $("shareTtl").value = String(r.ttl || 86400);
+                renderSharePanel();
+            } catch (e) { toast("读取分享配置失败: " + e.message, "error"); }
+        }
+        function renderSharePanel() {
+            const all = Object.values(instances).sort((a, b) => {
+                const ha = (a.host && a.host !== "local") ? 1 : 0;
+                const hb = (b.host && b.host !== "local") ? 1 : 0;
+                if (ha !== hb) return ha - hb;
+                return (b.created_at || 0) - (a.created_at || 0);
+            });
+            const chosen = Array.isArray(shareConfig.sids) ? shareConfig.sids : [];
+            $("shareAllCount").textContent = all.length;
+            $("shareAllList").innerHTML = all.length
+                ? all.map(i => shareItemHtml(i, chosen.includes(i.sid), false)).join("")
+                : '<div class="drop-hint">暂无实例</div>';
+            const selected = chosen.map(sid => instances[sid]).filter(Boolean);
+            $("shareCount").textContent = selected.length;
+            $("shareList").innerHTML = selected.map(i => shareItemHtml(i, true, true)).join("");
+            $("shareDropHint").style.display = selected.length ? "none" : "block";
+            const box = $("shareLinkBox");
+            box.style.display = shareConfig.token ? "block" : "none";
+            if (shareConfig.token) $("shareUrl").textContent = shareConfig.url || "";
+        }
+        function shareItemHtml(i, inShare, removable) {
+            return '<div class="share-item" draggable="true" data-sid="' + esc(i.sid) + '"' +
+                ' ondragstart="dragStart(event,' + jsArg(i.sid) + ')" ondragend="dragEnd(event)"' +
+                (removable
+                    ? ' ondragover="allowDrop(event)" ondrop="dropOnShareItem(event,' + jsArg(i.sid) + ')"'
+                    : '') +
+                '>' +
+                '<svg class="ico"><use href="#i-grid"/></svg>' +
+                '<span class="grow">' + esc(i.sid.slice(0, 8)) + ' · ' + esc(i.host_name || "本机") + '</span>' +
+                (inShare ? '<span class="badge host">已分享</span>' : '') +
+                (removable ? '<button title="移出分享" onclick="removeFromShare(' + jsArg(i.sid) + ')">×</button>' : '') +
+                '</div>';
+        }
+        function dragStart(ev, sid) {
+            dragSid = sid || "";
+            if (ev.dataTransfer) {
+                ev.dataTransfer.setData("text/plain", dragSid);
+                ev.dataTransfer.effectAllowed = "move";
+            }
+            if (ev.currentTarget && ev.currentTarget.classList) ev.currentTarget.classList.add("dragging");
+        }
+        function dragEnd() {
+            dragSid = "";
+            document.querySelectorAll(".dragging").forEach(el => el.classList.remove("dragging"));
+            document.querySelectorAll(".over").forEach(el => el.classList.remove("over"));
+        }
+        function allowDrop(ev) {
+            ev.preventDefault();
+            if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+            const t = ev.currentTarget;
+            if (t && t.classList) t.classList.add("over");
+        }
+        function dropToShare(ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            const sid = (ev.dataTransfer && ev.dataTransfer.getData("text/plain")) || dragSid;
+            if (!sid || !instances[sid]) return;
+            const list = Array.isArray(shareConfig.sids) ? shareConfig.sids.slice() : [];
+            if (!list.includes(sid)) list.push(sid);
+            shareConfig.sids = list;
+            shareDirty = true;
+            renderSharePanel();
+        }
+        function dropToShareAll(ev) {
+            ev.preventDefault();
+            const sid = (ev.dataTransfer && ev.dataTransfer.getData("text/plain")) || dragSid;
+            if (sid) removeFromShare(sid);
+        }
+        function removeFromShare(sid) {
+            shareConfig.sids = (shareConfig.sids || []).filter(x => x !== sid);
+            shareDirty = true;
+            renderSharePanel();
+        }
+        function dropOnShareItem(ev, targetSid) {
+            ev.preventDefault(); ev.stopPropagation();
+            const sid = (ev.dataTransfer && ev.dataTransfer.getData("text/plain")) || dragSid;
+            if (!sid || sid === targetSid) return;
+            const list = (shareConfig.sids || []).filter(x => x !== sid);
+            const at = list.indexOf(targetSid);
+            if (at < 0) return;
+            list.splice(at, 0, sid);
+            shareConfig.sids = list;
+            shareDirty = true;
+            renderSharePanel();
+        }
+        function dropToMonitor(ev) {
+            ev.preventDefault();
+            const sid = (ev.dataTransfer && ev.dataTransfer.getData("text/plain")) || dragSid;
+            if (!sid || !instances[sid] || !monitorSids.includes(sid)) toggleMonitorSid(sid, true);
+            if (ev.currentTarget) ev.currentTarget.classList.remove("over");
+        }
+        function dropOnMonitorCard(ev, targetSid) {
+            ev.preventDefault(); ev.stopPropagation();
+            const sid = (ev.dataTransfer && ev.dataTransfer.getData("text/plain")) || dragSid;
+            if (!sid || sid === targetSid) return;
+            const list = monitorSids.filter(x => x !== sid);
+            const at = list.indexOf(targetSid);
+            if (at < 0) return;
+            list.splice(at, 0, sid);
+            monitorSids = list;
+            saveMonitorSids();
+            syncMonitorOrder();
+        }
+        function syncMonitorOrder() {
+            const grid = $("monitorGrid");
+            if (!grid) return;
+            for (const sid of monitorSids) {
+                const c = monitorCards[sid];
+                if (c && c.el) grid.appendChild(c.el);
+            }
+        }
+        async function saveShareConfig() {
+            const btn = $("btnSaveShare");
+            btn.disabled = true;
+            try {
+                const r = await api("/api/share", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        sids: shareConfig.sids || [],
+                        ttl: Number($("shareTtl").value) || 86400,
+                    }),
+                });
+                shareConfig = r;
+                shareDirty = false;
+                $("shareTtl").value = String(r.ttl || 86400);
+                renderSharePanel();
+                toast("分享设置已保存，观看链接已续期", "ok");
+            } catch (e) { toast("分享保存失败: " + e.message, "error"); }
+            finally { btn.disabled = false; }
+        }
+        async function renewShareToken() {
+            if (!confirm("重置后旧链接立即失效，确定继续？")) return;
+            try {
+                shareConfig = await api("/api/share/renew", { method: "POST" });
+                renderSharePanel();
+                toast("已生成新的观看链接，旧链接已失效", "ok");
+            } catch (e) { toast("重置失败: " + e.message, "error"); }
+        }
+        async function copyShareUrl() {
+            const text = shareConfig.url || "";
+            if (!text) { toast("请先保存分享设置生成链接"); return; }
+            try { await writeClipboard(text); toast("观看链接已复制", "ok"); }
+            catch (e) { toast("复制失败，请手动选中链接复制", "error"); }
+        }
+        function openShareInNewTab() {
+            if (shareConfig.url) window.open(shareConfig.url, "_blank", "noopener");
+        }
+
         // 顶栏滑动开关：打开右侧日志抽屉 / 收起后画面占满。
         function toggleLogs(open) {
             logsOpen = !!open;
@@ -3421,10 +3736,10 @@
         });
         checkImageStatus();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
-        setInterval(() => { if (!document.hidden) load(true); }, 10000);
+        setInterval(() => { if (!document.hidden && !bgEcoMode) load(true); }, 10000);
         // 标签/地址栏轮询加速：抓屏模式已有 CDP 导航事件实时推地址栏（WS），
         // 这里是兜底 + VNC 模式（无抓屏 WS）的地址栏更新，2.5 秒能跟上自动化。
-        setInterval(() => { if (!document.hidden) pollCastTargets(); }, 2500);
+        setInterval(() => { if (!document.hidden && !bgEcoMode) pollCastTargets(); }, 2500);
         // 镜像更新检测：后端有 10 分钟缓存，这里每 5 分钟问一次即可。
         setInterval(() => { if (!document.hidden) checkImageStatus(); }, 300000);
     </script>

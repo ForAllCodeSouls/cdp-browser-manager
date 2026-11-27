@@ -249,6 +249,46 @@ def save_link_tokens() -> bool:
 load_link_tokens()
 
 
+# ---------- 只读分享：一份全局链接，令牌 + 有效期 ----------
+SHARE_FILE = DATA_DIR / "share.json"
+SHARE_TTLS = (3600, 21600, 86400, 604800)  # 1 小时 / 6 小时 / 24 小时 / 7 天
+SHARE_STATE = {"token": "", "expires": 0, "sids": [], "ttl": 86400}
+
+
+def load_share():
+    raw = _load_json(SHARE_FILE, {})
+    if not isinstance(raw, dict):
+        return
+    try:
+        ttl = int(raw.get("ttl") or 86400)
+    except Exception:
+        ttl = 86400
+    SHARE_STATE["token"] = str(raw.get("token") or "")
+    SHARE_STATE["expires"] = int(raw.get("expires") or 0)
+    SHARE_STATE["sids"] = [str(x) for x in (raw.get("sids") or []) if x]
+    SHARE_STATE["ttl"] = ttl if ttl in SHARE_TTLS else 86400
+
+
+def save_share() -> bool:
+    return _save_json(SHARE_FILE, SHARE_STATE)
+
+
+def share_active(token: str) -> bool:
+    token = str(token or "")
+    with _STORE_LOCK:
+        return bool(token) and hmac.compare_digest(token, SHARE_STATE["token"]) and SHARE_STATE["expires"] > time.time()
+
+
+def share_allows(token: str, sid: str) -> bool:
+    if not share_active(token):
+        return False
+    with _STORE_LOCK:
+        return str(sid) in SHARE_STATE["sids"]
+
+
+load_share()
+
+
 def ws_requested_subprotocols(headers) -> list:
     """读取浏览器在 WS 握手时请求的子协议列表（如 noVNC 的 binary）。
 
@@ -271,8 +311,10 @@ def auth_exempt(path: str, method: str) -> bool:
     注意 /api/hosts 只豁免 GET：POST/DELETE 是面板添加/删除远程主机的写操作，
     必须鉴权，否则设置 API_KEY 后任何人都能往本机挂载远程主机。
     """
-    if path in ("/", "/api/health"):
+    if path in ("/", "/api/health", "/share"):
         return True
+    if path == "/api/share/view" and method == "GET":
+        return True  # 观看端没有 API_KEY，由分享令牌 + 有效期单独鉴权
     if path == "/api/hosts" and method == "GET":
         return True
     m = re.match(r"^/\d+/(.+)$", path)
@@ -1978,8 +2020,8 @@ async def api_link_token_revoke(request: Request, token: str = ""):
     return {"ok": True}
 
 
-@app.get("/api/list")
-async def api_list(request: Request):
+async def build_list_payload(request: Request) -> dict:
+    """本机 + 所有远端主机的实例聚合，管理列表与分享观看页共用。"""
     await run_in_threadpool(sync_instances)
     with LOCK:
         snapshot = list(INSTANCES.items())
@@ -2010,6 +2052,128 @@ async def api_list(request: Request):
         "profiles": profiles,
         "host_errors": host_errors,
     }
+
+
+@app.get("/api/list")
+async def api_list(request: Request):
+    return await build_list_payload(request)
+
+
+# ---------- 只读分享 API ----------
+def require_manager_key(request: Request):
+    if API_KEY and not key_ok(
+        request.headers.get("x-api-key") or request.query_params.get("key", "")
+    ):
+        raise HTTPException(status_code=401, detail="API 密钥无效或缺失")
+
+
+def share_payload(request: Request) -> dict:
+    with _STORE_LOCK:
+        data = dict(SHARE_STATE)
+        data["sids"] = list(SHARE_STATE["sids"])
+    data["active"] = bool(data["token"]) and data["expires"] > time.time()
+    data["url"] = (
+        str(external_base(request)).rstrip("/") + "/share?token=" + data["token"]
+        if data["token"] else ""
+    )
+    return data
+
+
+@app.get("/api/share")
+async def api_share_get(request: Request):
+    require_manager_key(request)
+    return share_payload(request)
+
+
+@app.post("/api/share")
+async def api_share_update(request: Request):
+    """更新分享实例列表与有效期；已有链接地址不变，只续期。"""
+    require_manager_key(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+    sids = body.get("sids") or []
+    if not isinstance(sids, list):
+        raise HTTPException(status_code=400, detail="sids 必须是数组")
+    sids = [str(x) for x in sids if x][:100]
+    try:
+        ttl = int(body.get("ttl") or 86400)
+    except Exception:
+        ttl = 86400
+    if ttl not in SHARE_TTLS:
+        raise HTTPException(status_code=400, detail="有效期只能是 1 小时 / 6 小时 / 24 小时 / 7 天")
+    with _STORE_LOCK:
+        SHARE_STATE["sids"] = sids
+        SHARE_STATE["ttl"] = ttl
+        SHARE_STATE["expires"] = int(time.time()) + ttl
+        if not SHARE_STATE["token"]:
+            SHARE_STATE["token"] = secrets.token_hex(24)
+        saved = save_share()
+    if not saved:
+        raise HTTPException(status_code=500, detail="分享配置保存失败（数据目录不可写）")
+    log.info("更新分享配置：%d 个实例，有效期 %d 秒", len(sids), ttl)
+    return share_payload(request)
+
+
+@app.post("/api/share/renew")
+async def api_share_renew(request: Request):
+    """重置分享令牌：旧链接立即失效，生成新链接。"""
+    require_manager_key(request)
+    with _STORE_LOCK:
+        SHARE_STATE["token"] = secrets.token_hex(24)
+        SHARE_STATE["expires"] = int(time.time()) + SHARE_STATE["ttl"]
+        saved = save_share()
+    if not saved:
+        raise HTTPException(status_code=500, detail="分享配置保存失败（数据目录不可写）")
+    return share_payload(request)
+
+
+@app.get("/api/share/view")
+async def api_share_view(request: Request, token: str = ""):
+    """观看端：仅返回分享的实例和 tid，不暴露 CDP/VNC 管理地址。"""
+    if not share_active(token):
+        raise HTTPException(status_code=403, detail="分享链接无效或已过期")
+    payload = await build_list_payload(request)
+    with _STORE_LOCK:
+        sids = list(SHARE_STATE["sids"])
+        expires = SHARE_STATE["expires"]
+    result = {}
+    for sid in sids:
+        view = payload["instances"].get(sid)
+        if not view:
+            continue
+        tid = ""
+        try:
+            host_id = view.get("host") or "local"
+            if host_id != "local":
+                host = next((h for h in REMOTE_HOSTS if h["id"] == host_id), None)
+                if host:
+                    _, raw, _ = await run_in_threadpool(
+                        remote_request, host, f"/api/instance/{sid}/targets"
+                    )
+                    tl = json.loads(raw.decode("utf-8", "replace")).get("targets") or []
+                    tid = str(tl[0].get("id") or "") if tl else ""
+            else:
+                tl = await run_in_threadpool(cdp_http, sid, "/json/list")
+                pages = [t for t in (tl or []) if t.get("type") == "page" and t.get("id")]
+                tid = str(pages[0]["id"]) if pages else ""
+        except Exception as e:
+            log.warning("分享实例 %s 读取标签失败: %s", sid[:8], e)
+        result[sid] = {
+            "sid": sid,
+            "host_name": view.get("host_name") or "本机",
+            "browser_mode": view.get("browser_mode") or "full",
+            "status": view.get("status") or "",
+            "cast_ws": view.get("cast_ws") or "",
+            "tid": tid,
+        }
+    return {"instances": result, "expires": expires, "token": token}
+
+
+@app.get("/share", response_class=HTMLResponse)
+async def share_page(request: Request):
+    return templates.TemplateResponse(request, "share.html", {})
 
 
 @app.get("/api/health")
@@ -2379,9 +2543,23 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
     import websocket as ws_client
 
     # WS 不走 HTTP 中间件，需单独校验密钥（从查询参数取，浏览器 WS 无法自定义头）。
-    if not key_ok(websocket.query_params.get("key", "")):
-        await websocket.close(code=4401)
-        return
+    # 分享观看端用 share 令牌且只能看配置里列出的实例；即使伪造输入消息也只读。
+    share_token = str(websocket.query_params.get("share", "") or "")
+    # readonly=1 由本机远端代理转发分享流量时注入：远端自己的分享配置里没有
+    # 本机的令牌，不能靠 share_allows 判定。它必须配合合法密钥才生效，
+    # 否则任何人加个参数就能绕过 API_KEY 看画面。
+    readonly_flag = str(websocket.query_params.get("readonly", "") or "") == "1"
+    key_valid = key_ok(websocket.query_params.get("key", ""))
+    if readonly_flag:
+        if not key_valid:
+            await websocket.close(code=4401)
+            return
+        readonly_share = True
+    else:
+        readonly_share = share_allows(share_token, sid)
+        if not readonly_share and not key_valid:
+            await websocket.close(code=4401)
+            return
 
     if not valid_target_id(tid):
         await websocket.accept()
@@ -2573,6 +2751,9 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             except Exception:
                 break
             kind = data.get("type")
+            # 分享通道只读：丢弃输入与视口操控，观看端无法反向控制浏览器。
+            if readonly_share and kind in ("input", "viewport"):
+                continue
             if kind == "input":
                 method = data.get("method", "")
                 if method in (
@@ -2707,7 +2888,9 @@ async def remote_http_proxy(host_id: str, rest: str, request: Request):
 async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
     import websocket as ws_client
 
-    if not key_ok(websocket.query_params.get("key", "")):
+    share_token = str(websocket.query_params.get("share", "") or "")
+    is_share = share_active(share_token)
+    if not is_share and not key_ok(websocket.query_params.get("key", "")):
         await websocket.close(code=4401)
         return
     host = get_remote(host_id)
@@ -2717,10 +2900,15 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
         await websocket.close()
         return
 
-    # 本机鉴权用的 key 不转发；认证远端改用服务端配置的 header。
-    query = urlencode([
-        (k, v) for k, v in websocket.query_params.multi_items() if k != "key"
-    ])
+    # 本机 key 与分享令牌都不原样转发：远端 manager 的分享配置里没有本机令牌，
+    # 改传 readonly=1 让上游强制只读；远端认证仍用服务端配置的 host key。
+    query_items = [
+        (k, v) for k, v in websocket.query_params.multi_items()
+        if k not in ("key", "share")
+    ]
+    if is_share:
+        query_items.append(("readonly", "1"))
+    query = urlencode(query_items)
     parsed = urlsplit(host["base"])
     scheme = "wss" if parsed.scheme == "https" else "ws"
     url = f"{scheme}://{parsed.netloc}/{rest}" + ("?" + query if query else "")
