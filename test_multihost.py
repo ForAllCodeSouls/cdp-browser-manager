@@ -1435,16 +1435,18 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertNotIn("function openCurrentPage()", self.src)
         self.assertNotIn('">当前网页 ↗</button>', self.src)
         self.assertNotIn('>新窗口打开</a>', self.src)
-        # 详情栏独立的 VNC 画面直达按钮：非无头实例渲染、无头隐藏，打开 noVNC 地址。
+        # 详情栏独立的桌面画面直达按钮：非无头实例渲染、无头隐藏，打开 noVNC 地址。
         self.assertIn("function openVncPage()", self.src)
         self.assertIn('onclick="openVncPage()"', self.src)
-        self.assertIn("'VNC 画面 ↗</button>'", self.src)
+        self.assertIn("'桌面画面 ↗</button>'", self.src)
+        self.assertNotIn("'VNC 画面 ↗</button>'", self.src)
         self.assertIn('(!headless && vncUrl(sel)', self.src)
-        # 详情栏「抓屏画面」直达：所有实例可用（含无头），新窗口带 sid/preview=cast/tid
+        # 详情栏「网页画面」直达：所有实例可用（含无头），新窗口带 sid/preview=cast/tid
         # 定位实例并强制切到抓屏模式；启动解析参数、用完从地址栏清理且不污染本地设置。
         self.assertIn("function openCastPage()", self.src)
         self.assertIn('onclick="openCastPage()"', self.src)
-        self.assertIn("'抓屏画面 ↗</button>'", self.src)
+        self.assertIn("'网页画面 ↗</button>'", self.src)
+        self.assertNotIn("'抓屏画面 ↗</button>'", self.src)
         self.assertIn('"&preview=cast"', self.src)
         self.assertIn('new URLSearchParams(location.search)', self.src)
         self.assertIn('q.delete("sid"); q.delete("tid"); q.delete("preview")', self.src)

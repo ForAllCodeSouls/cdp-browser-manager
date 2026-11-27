@@ -1651,7 +1651,7 @@
                 restoreView = { sid: String(lv.sid || ""), tid: String(lv.tid || "") };
             }
         } catch (e) {}
-        // 抓屏画面直达：新窗口带 ?sid=..&preview=cast&tid=.. 打开时，用查询参数覆盖首屏
+        // 网页画面直达：新窗口带 ?sid=..&preview=cast&tid=.. 打开时，用查询参数覆盖首屏
         // 定位实例与画面模式。只影响本次加载，不写回 localStorage（不污染用户默认设置），
         // 读完即从地址栏移除参数，刷新后回到用户自己的常规视图。
         try {
@@ -3962,12 +3962,12 @@
                     pinfo + vncInfo +
                     '<span class="spacer"></span>' +
                     '<button class="btn-mini" onclick="openCastPage()"' +
-                        ' title="在新窗口打开该实例的 CDP 抓屏画面（自动定位并切到抓屏模式，无头实例可用）">' +
-                        '抓屏画面 ↗</button>' +
+                        ' title="在新窗口打开该实例的网页画面（自动定位并切到抓屏模式，无头实例可用）">' +
+                        '网页画面 ↗</button>' +
                     (!headless && vncUrl(sel)
                         ? '<button class="btn-mini" onclick="openVncPage()"' +
-                            ' title="在新窗口打开该实例的 noVNC 画面（跟随当前画质/缩放设置）">' +
-                            'VNC 画面 ↗</button>'
+                            ' title="在新窗口打开该实例的桌面画面（跟随当前画质/缩放设置）">' +
+                            '桌面画面 ↗</button>'
                         : '') +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
                     seg + linksHtml;
@@ -4038,7 +4038,7 @@
             }
         }
 
-        // 详情栏「VNC 画面」：在新窗口打开当前实例的 noVNC 画面地址，
+        // 详情栏「桌面画面」：在新窗口打开当前实例的 noVNC 画面地址，
         // 跟随当前画质/缩放设置；无头实例没有 VNC 服务，按钮不渲染。
         function openVncPage() {
             const sel = currentSel();
@@ -4047,7 +4047,7 @@
             if (!url) { toast("该实例没有可用的 VNC 地址"); return; }
             window.open(url, "_blank", "noopener");
         }
-        // 详情栏「抓屏画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个管理页，
+        // 详情栏「网页画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个管理页，
         // 用查询参数定位实例/标签并强制切到抓屏模式。本机实例用当前面板（密钥/设置同源继承），
         // 远端实例跳到那台主机自己的面板（跟「远程」列表的地址跳转一致，不经本机代理）。
         function castPageQuery(sel) {
