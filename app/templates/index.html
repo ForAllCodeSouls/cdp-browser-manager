@@ -150,6 +150,52 @@
         }
         .side-empty { padding: 20px 16px; text-align: center; color: var(--muted); font-size: 12px; }
 
+        /* 实例列表按「临时 / 持久」分组：标题可折叠，右侧是全局操作图标 */
+        .inst-group { border-bottom: 1px solid var(--border); }
+        .group-head {
+            display: flex; align-items: center; gap: 7px;
+            padding: 9px 12px; cursor: pointer; user-select: none;
+            font-size: 12px; color: var(--text); background: var(--surface-2);
+            position: sticky; top: 41px; z-index: 1;
+        }
+        .group-head:hover { background: var(--border); }
+        .group-head .chev { width: 10px; color: var(--muted); font-size: 11px; flex: none; }
+        .group-head .gname { font-weight: 600; }
+        .group-head .gcount { color: var(--muted); font-size: 11px; }
+        .group-head .gspacer { flex: 1; }
+        .group-head .grp-btn {
+            width: 24px; height: 24px; padding: 0; display: inline-flex;
+            align-items: center; justify-content: center; border-radius: 6px;
+        }
+        .group-head .grp-btn:disabled { opacity: .45; cursor: not-allowed; }
+        .inst-group.collapsed .group-body { display: none; }
+        .inst-group.collapsed .chev { transform: rotate(-90deg); }
+
+        /* 停止实例确认弹窗：完整浏览器信息 + 默认全选的复选框 */
+        .stop-panel { width: 620px; }
+        .stop-all {
+            display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+            margin-bottom: 8px; border: 1px solid var(--border);
+            border-radius: 8px; background: var(--surface-2); font-size: 12px; cursor: pointer;
+        }
+        .stop-list {
+            max-height: 46vh; overflow-y: auto;
+            border: 1px solid var(--border); border-radius: 8px;
+        }
+        .stop-item {
+            display: flex; gap: 10px; align-items: flex-start;
+            padding: 9px 10px; border-bottom: 1px solid var(--border); cursor: pointer;
+        }
+        .stop-item:last-child { border-bottom: none; }
+        .stop-item:hover { background: var(--surface-2); }
+        .stop-item input { margin-top: 3px; flex: none; }
+        .stop-item .sbody { flex: 1; min-width: 0; font-size: 11px; line-height: 1.65; }
+        .stop-item .sid-full { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; }
+        .stop-item .srow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 3px; }
+        .stop-item .srow span { color: var(--muted); }
+        .stop-item .srow b { color: var(--text); font-weight: 500; }
+        .stop-item .srow .url { word-break: break-all; }
+
         .viewer {
             flex: 1;
             min-width: 0;
@@ -608,6 +654,13 @@
             <rect x="3" y="14" width="7" height="7" rx="1"/>
             <rect x="14" y="14" width="7" height="7" rx="1"/>
         </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+            <path d="M12 4v16M4 12h16"/>
+        </symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24">
+            <rect x="5" y="5" width="14" height="14" rx="2"/>
+            <path d="M9.5 9.5h5v5h-5z" fill="currentColor" stroke="none"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -622,13 +675,10 @@
                 <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
                 <span class="switch"></span>
             </label>
-            <button id="btnKey" onclick="openKey()" class="btn-icon" title="设置本机 API 密钥（多主机时需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
+            <button id="btnKey" onclick="openKey()" class="btn-icon" style="display:none" title="设置本机 API 密钥（服务端启用 API_KEY 时才需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
             <button id="btnRemote" onclick="openRemote()" class="btn-icon" title="远程接入：添加远端主机，或生成本机接入令牌给其他主机远控"><svg class="ico"><use href="#i-link"/></svg><span>远程</span></button>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
-            <button onclick="load()">刷新</button>
-            <button class="btn-danger" onclick="stopAll()" id="btnStopAll">停止全部</button>
-            <button class="btn-primary" onclick="openCreate()" id="btnCreate">+ 新建实例</button>
         </div>
     </header>
 
@@ -647,7 +697,7 @@
                 <div class="stage-main">
                     <div class="empty-view" id="viewerEmpty">
                         <h2>暂无可显示的画面</h2>
-                        <div>点击左侧实例，或点右上角「新建实例」</div>
+                        <div>点击实例列表，或点「临时列表」右侧的 + 新建</div>
                     </div>
                     <div class="frame-wrap" id="frameWrap" style="display:none">
                         <div class="frame-overlay" id="frameOverlay"></div>
@@ -687,6 +737,20 @@
     </div>
 
     <div class="toast" id="toast"></div>
+
+    <!-- 停止实例弹窗：默认全选，按完整浏览器信息逐条确认 -->
+    <div class="mask" id="stopMask" onclick="if(event.target===this) closeStopDialog()">
+        <div class="panel stop-panel">
+            <h3>停止实例</h3>
+            <div class="hint">默认全选。取消勾选可只停止部分实例；持久用户目录会保留，不会删除登录态。</div>
+            <label class="stop-all"><input type="checkbox" id="stopSelectAll" checked onchange="toggleStopAll(this.checked)"><span>全选 / 取消全选</span></label>
+            <div class="stop-list" id="stopList"></div>
+            <div class="actions">
+                <button onclick="closeStopDialog()">取消</button>
+                <button class="btn-danger" id="btnConfirmStop" onclick="confirmStopSelected()">停止选中实例</button>
+            </div>
+        </div>
+    </div>
 
     <!-- 新建实例弹窗 -->
     <div class="mask" id="createMask" onclick="if(event.target===this) closeCreate()">
@@ -856,12 +920,18 @@
         // 实例列表按主机筛选：all / local / 远端 host id，持久化到 localStorage
         const HOST_FILTER_KEY = "cdpManagerHostFilter";
         let hostFilter = "all";
-        // 监控主面板：{sid: {ws, canvas, gen, tid, host}}，勾选列表持久化到 localStorage
+        // 监控主面板：{sid: {ws, canvas, gen, tid, host}}，勾选列表与面板开关都持久化
         const MONITOR_KEY = "cdpManagerMonitorSids";
+        const MONITOR_VIEW_KEY = "cdpManagerMonitorView";
         let monitorSids = [];
         let monitorCards = {};
         let monitorGen = 0;
         let monitorViewOpen = false;
+        // 页面刷新后若上次停在监控面板，等首轮实例数据到位再自动切过去。
+        let pendingMonitorRestore = false;
+        // 实例列表分组折叠状态：持久化，刷新后保持用户的展开/收起选择。
+        const GROUP_STATE_KEY = "cdpManagerGroups";
+        let groupsCollapsed = { temp: false, persist: false };
         let busy = false;
 
         // ---- 多主机与鉴权：浏览器只连本机面板，远端由服务端代理 ----
@@ -877,8 +947,11 @@
             return url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(apiKey);
         }
         function updateKeyLabel() {
+            const btn = $("btnKey");
+            // 服务端没设 API_KEY 时按钮没有任何作用，直接隐藏；401 时由 api() 强制显示。
+            if (btn) btn.style.display = authRequired ? "" : "none";
             const el = $("keyLabel");
-            if (el) el.textContent = !authRequired ? "密钥" : (apiKey ? "已设置" : "需设置");
+            if (el) el.textContent = (apiKey ? "已设置" : "需设置");
         }
         function openKey() { $("keyMask").classList.add("open"); $("keyInput").focus(); }
         function closeKey() { $("keyMask").classList.remove("open"); }
@@ -1894,8 +1967,9 @@
 
         function setBusy(v) {
             busy = v;
-            $("btnCreate").disabled = v;
-            $("btnStopAll").disabled = v;
+            // 两个按钮现在由 render() 动态生成，首轮渲染前可能还不存在。
+            const c = $("btnCreate"); if (c) c.disabled = v;
+            const s = $("btnStopAll"); if (s) s.disabled = v;
         }
 
         async function api(url, options = {}, timeoutMs = 15000) {
@@ -1909,8 +1983,14 @@
                 };
                 const res = await fetch(scopeUrl(url), opts);
                 if (res.status === 401) {
-                    if (apiKey) showKeyMask("API 密钥无效或缺失，请重新输入。");
-                    throw new Error("API 密钥无效，请重新输入");
+                    // 401 说明服务端确实需要密钥（即使 /api/hosts 探测失败过），
+                    // 这里兜底显示入口，并阻止后续轮询再次触发弹窗风暴。
+                    authRequired = true;
+                    updateKeyLabel();
+                    showKeyMask(apiKey
+                        ? "API 密钥无效或缺失，请重新输入。密钥只保存在当前浏览器。"
+                        : "服务端启用了 API_KEY，请输入后再操作。密钥只保存在当前浏览器。");
+                    throw new Error("API 密钥无效或缺失，请重新输入");
                 }
                 if (!res.ok) {
                     let detail = res.statusText;
@@ -1945,6 +2025,11 @@
                 }
                 render();
                 if (monitorViewOpen) renderMonitor();
+                // 上次停在监控面板：首轮数据到位后立刻恢复，避免刷新后掉回普通视图。
+                if (pendingMonitorRestore && !monitorViewOpen) {
+                    pendingMonitorRestore = false;
+                    toggleMonitorView(true, true);
+                }
             } catch (e) {
                 if (!quiet) toast("加载失败: " + e.message, "error");
             }
@@ -2657,8 +2742,19 @@
         function saveMonitorSids() {
             try { localStorage.setItem(MONITOR_KEY, JSON.stringify(monitorSids)); } catch (e) {}
         }
-        function toggleMonitorView() {
-            monitorViewOpen = !monitorViewOpen;
+        function loadMonitorView() {
+            try { return localStorage.getItem(MONITOR_VIEW_KEY) === "1"; } catch (e) { return false; }
+        }
+        function saveMonitorView() {
+            try { localStorage.setItem(MONITOR_VIEW_KEY, monitorViewOpen ? "1" : "0"); } catch (e) {}
+        }
+        // forceOpen 供页面刷新后恢复用（onclick 传的是 MouseEvent，不会误触发强制切换）；
+        // skipLoad 避免恢复时和首轮 load() 重复拉数据。
+        function toggleMonitorView(forceOpen, skipLoad) {
+            const wantOpen = (typeof forceOpen === "boolean") ? forceOpen : !monitorViewOpen;
+            if (wantOpen === monitorViewOpen) return;
+            monitorViewOpen = wantOpen;
+            saveMonitorView();
             $("monitorView").classList.toggle("show", monitorViewOpen);
             $("btnMonitor").classList.toggle("btn-primary", monitorViewOpen);
             // 只给 .layout 加标记隐藏普通视图（aside/viewer），监控面板本身是它的子元素，
@@ -2667,7 +2763,7 @@
             if (monitorViewOpen) {
                 // 打开时先确保实例数据已加载，再渲染卡片（首次可能在 load 完成前点了按钮）。
                 renderMonitor();
-                if (!Object.keys(monitorCards).length && !$("monitorGrid").children.length) load();
+                if (!skipLoad && !Object.keys(monitorCards).length && !$("monitorGrid").children.length) load();
                 // 面板打开时无需普通视图的画面 WS，断开省资源；关闭后由 render 重挂。
                 if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
             } else {
@@ -2900,6 +2996,56 @@
             ).join("");
         }
 
+        // 临时 / 持久分组的折叠状态：刷新后保持用户上次的展开选择。
+        function loadGroups() {
+            try {
+                const v = JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || "{}");
+                groupsCollapsed = { temp: v.temp === true, persist: v.persist === true };
+            } catch (e) { groupsCollapsed = { temp: false, persist: false }; }
+        }
+        function saveGroups() {
+            try { localStorage.setItem(GROUP_STATE_KEY, JSON.stringify(groupsCollapsed)); } catch (e) {}
+        }
+        function toggleGroup(key) {
+            groupsCollapsed[key] = !groupsCollapsed[key];
+            saveGroups();
+            const sec = $("group-" + key);
+            if (sec) sec.classList.toggle("collapsed", !!groupsCollapsed[key]);
+        }
+        function renderInstGroup(key, name, items, actionBtn, emptyText) {
+            const row = i =>
+                '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
+                    '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
+                        '<label class="mon-toggle switch-wrap" title="加入/移出监控主面板"' +
+                            ' onclick="event.stopPropagation()">' +
+                            '<span>预览</span>' +
+                            '<input type="checkbox"' + (monitorSids.includes(i.sid) ? ' checked' : '') +
+                                ' onchange="toggleMonitorSid(' + jsArg(i.sid) + ', this.checked)">' +
+                            '<span class="switch"></span>' +
+                        '</label>' +
+                    '</div>' +
+                    '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
+                        (i.host && i.host !== "local"
+                            ? '<span class="badge host">' + esc(i.host_name || i.host) + '</span>' : '') +
+                        '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
+                    '</div>' +
+                '</div>';
+            return '<section class="inst-group' + (groupsCollapsed[key] ? ' collapsed' : '') + '"' +
+                    ' id="group-' + key + '">' +
+                '<div class="group-head" onclick="toggleGroup(\'' + key + '\')" title="点击折叠/展开">' +
+                    '<span class="chev">▾</span>' +
+                    '<span class="gname">' + esc(name) + '</span>' +
+                    '<span class="gcount">' + items.length + '</span>' +
+                    '<span class="gspacer"></span>' +
+                    actionBtn +
+                '</div>' +
+                '<div class="group-body">' +
+                    (items.length ? items.map(row).join("")
+                        : '<div class="side-empty">' + esc(emptyText) + '</div>') +
+                '</div>' +
+            '</section>';
+        }
+
         function render() {
             // 排序：本机在前、远端主机在后，各自按创建时间倒序（最新在前）。
             const all = Object.values(instances).sort((a, b) => {
@@ -2925,29 +3071,21 @@
                 saveLastView();
             }
 
-            if (!list.length) {
-                $("instanceList").innerHTML = '<div class="side-empty">' +
-                    (hostFilter === "all" ? '暂无实例<br>点右上角新建' : '该主机暂无实例') + '</div>';
-            } else {
-                $("instanceList").innerHTML = list.map(i =>
-                    '<div class="item' + (i.sid === selectedSid ? ' active' : '') + '" onclick="selectSid(' + jsArg(i.sid) + ')">' +
-                        '<div class="sid-row"><div class="sid">' + esc(i.sid.slice(0, 8)) + '</div>' +
-                            '<label class="mon-toggle switch-wrap" title="加入/移出监控主面板"' +
-                                ' onclick="event.stopPropagation()">' +
-                                '<span>预览</span>' +
-                                '<input type="checkbox"' + (monitorSids.includes(i.sid) ? ' checked' : '') +
-                                    ' onchange="toggleMonitorSid(' + jsArg(i.sid) + ', this.checked)">' +
-                                '<span class="switch"></span>' +
-                            '</label>' +
-                        '</div>' +
-                        '<div class="meta">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
-                            (i.host && i.host !== "local"
-                                ? '<span class="badge host">' + esc(i.host_name || i.host) + '</span>' : '') +
-                            '<span>CDP ' + esc(i.debug_port || "-") + '</span>' +
-                        '</div>' +
-                    '</div>'
-                ).join("");
-            }
+            // 按用户目录模式分两组：临时实例 / 持久目录实例。筛选后各自独立计数。
+            const tempList = list.filter(i => i.profile_mode !== "persistent");
+            const persistList = list.filter(i => i.profile_mode === "persistent");
+            const busyAttr = busy ? ' disabled' : '';
+            $("instanceList").innerHTML =
+                renderInstGroup("temp", "临时列表", tempList,
+                    '<button class="grp-btn btn-primary" id="btnCreate"' + busyAttr +
+                        ' title="新建浏览器实例" onclick="event.stopPropagation(); openCreate()">' +
+                        '<svg class="ico"><use href="#i-plus"/></svg></button>',
+                    hostFilter === "all" ? "暂无临时实例 · 点 + 新建" : "该主机暂无临时实例") +
+                renderInstGroup("persist", "持久", persistList,
+                    '<button class="grp-btn btn-danger" id="btnStopAll"' + busyAttr +
+                        ' title="选择实例停止（默认全选，可勾选）" onclick="event.stopPropagation(); openStopDialog()">' +
+                        '<svg class="ico"><use href="#i-stop"/></svg></button>',
+                    hostFilter === "all" ? "暂无持久实例" : "该主机暂无持久实例");
 
             $("profileStat").textContent = profiles.length;
             if (!profiles.length) {
@@ -3121,18 +3259,83 @@
             }
         }
 
-        async function stopAll() {
+        // ---- 停止实例确认弹窗：默认全选，逐条展示完整浏览器信息供勾选 ----
+        function stopItemHtml(i) {
+            const isLocal = !i.host || i.host === "local";
+            const host = isLocal ? "本机" : (i.host_name || i.host);
+            const dir = i.profile_mode === "persistent"
+                ? "持久目录 " + (i.profile_name || "-") : "临时目录";
+            const created = i.created_at ? new Date(i.created_at * 1000).toLocaleString() : "-";
+            return '<label class="stop-item">' +
+                '<input type="checkbox" data-sid="' + esc(i.sid) + '" checked onchange="syncStopAllCheck()">' +
+                '<div class="sbody">' +
+                    '<div class="sid-full">' + esc(i.sid) + '</div>' +
+                    '<div class="srow">' + statusBadge(i) + kernelBadge(i) + profileBadge(i) +
+                        (isLocal
+                            ? '<span class="badge">本机</span>'
+                            : '<span class="badge host">' + esc(host) + '</span>') +
+                        '<span>CDP <b>' + esc(i.debug_port || "-") + '</b></span>' +
+                        '<span>VNC <b>' + esc(i.vnc_port || "-") + '</b></span>' +
+                        '<span>noVNC <b>' + esc(i.novnc_port || "-") + '</b></span>' +
+                    '</div>' +
+                    '<div class="srow">' +
+                        '<span>用户目录 <b>' + esc(dir) + '</b></span>' +
+                        '<span>刷新档 <b>' + esc(i.vnc_refresh || "-") + '</b></span>' +
+                        '<span>创建于 <b>' + esc(created) + '</b></span>' +
+                    '</div>' +
+                    '<div class="srow"><span class="url">CDP 地址 <b>' +
+                        esc(i.cdp_http_proxy || i.cdp_http || "-") + '</b></span></div>' +
+                    '<div class="srow"><span class="url">VNC 地址 <b>' +
+                        esc(i.vnc_url_proxy || i.vnc_url || "-") + '</b></span></div>' +
+                    '<div class="srow"><span>容器 <b>' + esc(i.container_name || "-") + '</b></span></div>' +
+                '</div>' +
+            '</label>';
+        }
+        function openStopDialog() {
+            const all = Object.values(instances).sort((a, b) => {
+                const ha = (a.host && a.host !== "local") ? 1 : 0;
+                const hb = (b.host && b.host !== "local") ? 1 : 0;
+                if (ha !== hb) return ha - hb;
+                return (b.created_at || 0) - (a.created_at || 0);
+            });
+            if (!all.length) { toast("当前没有实例可停止"); return; }
+            $("stopList").innerHTML = all.map(stopItemHtml).join("");
+            $("stopSelectAll").checked = true;
+            $("stopMask").classList.add("open");
+        }
+        function closeStopDialog() { $("stopMask").classList.remove("open"); }
+        function toggleStopAll(checked) {
+            $("stopList").querySelectorAll("input[data-sid]").forEach(el => { el.checked = !!checked; });
+        }
+        function syncStopAllCheck() {
+            const boxes = Array.from($("stopList").querySelectorAll("input[data-sid]"));
+            $("stopSelectAll").checked = boxes.length > 0 && boxes.every(el => el.checked);
+        }
+        async function confirmStopSelected() {
             if (busy) return;
-            if (!confirm("确定停止全部浏览器实例？（持久目录会保留）")) return;
+            const sids = Array.from($("stopList").querySelectorAll("input[data-sid]:checked"))
+                .map(el => el.dataset.sid);
+            if (!sids.length) { toast("请至少勾选一个实例"); return; }
+            closeStopDialog();
             setBusy(true);
             try {
-                await api("/instance/stop-all", { method: "POST" });
-                selectedSid = null;
-                resetFrameState(true);
-                toast("已停止全部实例，持久目录已保留", "ok");
+                // scopeUrl 按实例所属主机自动加 /remote/<host> 前缀，本机与远端一起停。
+                const results = await Promise.allSettled(sids.map(sid =>
+                    api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" })
+                ));
+                const failed = results.map((r, idx) => r.status === "rejected" ? sids[idx] : "")
+                    .filter(Boolean);
+                if (sids.some(sid => sid === selectedSid)) {
+                    selectedSid = null;
+                    resetFrameState(true);
+                }
+                if (failed.length) {
+                    toast("已停止 " + (sids.length - failed.length) + " 个；失败 " + failed.length +
+                        " 个（" + failed.map(s => s.slice(0, 8)).join("、") + "）", "error");
+                } else {
+                    toast("已停止 " + sids.length + " 个实例，持久目录已保留", "ok");
+                }
                 await load();
-            } catch (e) {
-                toast("操作失败: " + e.message, "error");
             } finally {
                 setBusy(false);
             }
@@ -3207,7 +3410,9 @@
 
         applyScreenLock();
         monitorSids = loadMonitorSids();
+        pendingMonitorRestore = loadMonitorView();
         loadHostFilter();
+        loadGroups();
         initHosts().then(() => {
             if (!authRequired || apiKey) {
                 load();

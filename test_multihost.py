@@ -1039,6 +1039,87 @@ class RemotePanelJsTests(unittest.TestCase):
         self.assertIn("load()", seg)
 
 
+class PanelUiStateTests(unittest.TestCase):
+    """本轮 UI 改动：密钥按需、监控记忆、实例分组、停止弹窗。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            cls.src = f.read()
+
+    def test_api_key_button_hidden_until_required(self):
+        self.assertIn('id="btnKey"', self.src)
+        # 初始隐藏，服务端确实启用 API_KEY 后才显示
+        btn = self.src[self.src.index('id="btnKey"'):self.src.index('id="btnKey"') + 260]
+        self.assertIn('style="display:none"', btn)
+        i = self.src.index("function updateKeyLabel()")
+        self.assertIn('btn.style.display = authRequired ? "" : "none"', self.src[i:i + 400])
+
+    def test_401_reveals_key_entry(self):
+        i = self.src.index("async function api(")
+        seg = self.src[i:i + 1100]
+        self.assertIn("res.status === 401", seg)
+        self.assertIn("authRequired = true", seg)
+        self.assertIn("showKeyMask(", seg)
+
+    def test_manual_refresh_button_removed(self):
+        self.assertNotIn('<button onclick="load()">刷新</button>', self.src)
+        # 10 秒自动轮询仍在，移除手动按钮不会失去状态刷新
+        self.assertIn("setInterval(() => { if (!document.hidden) load(true); }, 10000)", self.src)
+
+    def test_monitor_view_persisted(self):
+        self.assertIn('const MONITOR_VIEW_KEY = "cdpManagerMonitorView";', self.src)
+        self.assertIn("pendingMonitorRestore = loadMonitorView();", self.src)
+        i = self.src.index("function toggleMonitorView(")
+        seg = self.src[i:i + 700]
+        self.assertIn("saveMonitorView()", seg)
+        self.assertIn('localStorage.setItem(MONITOR_VIEW_KEY', self.src)
+        # 首轮数据到位后恢复，且不重复拉数据
+        self.assertIn("toggleMonitorView(true, true)", self.src)
+
+    def test_instances_split_into_temp_and_persist_groups(self):
+        self.assertIn('const GROUP_STATE_KEY = "cdpManagerGroups";', self.src)
+        self.assertIn('renderInstGroup("temp", "临时列表"', self.src)
+        self.assertIn('renderInstGroup("persist", "持久"', self.src)
+        self.assertIn("i.profile_mode !== \"persistent\"", self.src)
+        self.assertIn("i.profile_mode === \"persistent\"", self.src)
+        self.assertIn(".inst-group.collapsed .group-body", self.src)
+        self.assertIn("function toggleGroup(key)", self.src)
+        self.assertIn("localStorage.setItem(GROUP_STATE_KEY", self.src)
+
+    def test_create_and_stop_icons_moved_into_group_heads(self):
+        i = self.src.index('renderInstGroup("temp"')
+        seg = self.src[i:i + 900]
+        self.assertIn('id="btnCreate"', seg)
+        self.assertIn('openCreate()', seg)
+        self.assertIn('#i-plus', seg)
+        j = self.src.index('renderInstGroup("persist"')
+        seg2 = self.src[j:j + 900]
+        self.assertIn('id="btnStopAll"', seg2)
+        self.assertIn('openStopDialog()', seg2)
+        self.assertIn('#i-stop', seg2)
+
+    def test_stop_dialog_checks_all_with_full_browser_info(self):
+        for token in ('id="stopMask"', 'id="stopList"', 'id="stopSelectAll"',
+                      "function openStopDialog()", "function confirmStopSelected()",
+                      'input type="checkbox" data-sid=', "Promise.allSettled"):
+            self.assertIn(token, self.src)
+        i = self.src.index("function stopItemHtml(i)")
+        seg = self.src[i:i + 2200]
+        # 复选项必须展示完整信息，而不只是 sid 前缀
+        self.assertIn("esc(i.sid)", seg)
+        self.assertIn("statusBadge(i)", seg)
+        self.assertIn("kernelBadge(i)", seg)
+        self.assertIn("profileBadge(i)", seg)
+        self.assertIn("i.container_name", seg)
+        self.assertIn("i.created_at", seg)
+        self.assertIn("i.cdp_http_proxy", seg)
+        self.assertIn("i.vnc_port", seg)
+        self.assertIn("i.novnc_port", seg)
+        # 远端实例也要能按所属主机路由停止
+        self.assertIn('"/instance/" + encodeURIComponent(sid)', self.src)
+
+
 if __name__ == "__main__":
     print("集成测试:", "启用" if HAS_TESTCLIENT else "跳过（本地缺少 fastapi/httpx）")
     unittest.main(verbosity=2)
