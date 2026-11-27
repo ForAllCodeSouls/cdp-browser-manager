@@ -1527,6 +1527,14 @@ class PanelEcoAndShareTests(unittest.TestCase):
         ):
             self.assertIn(token, self.src)
 
+    def test_snippet_modal_width_overrides_base_panel(self):
+        # 脚本弹窗要宽于 .panel 基类(440px)。基类规则在文件后面定义，特异性相同会覆盖，
+        # 因此必须用 .panel.snippet-panel 提高特异性，并显式给 max-width 覆盖 92vw。
+        self.assertIn(".panel.snippet-panel { width: min(1280px, 96vw); max-width: 96vw; }", self.src)
+        self.assertNotIn("\n        .snippet-panel { width: min(1280px, 96vw); }", self.src)
+        # 窄屏断点里同样要提高特异性，否则仍被基类的 440px 压住。
+        self.assertIn(".panel.snippet-panel { width: 96vw; }", self.src)
+
     def test_detail_cdp_quick_links_and_current_page(self):
         # 原「新窗口打开」→「当前网页」已按用户要求移除：详情栏只留画面直达按钮。
         # 「CDP 信息」仍在左侧实例列表项右上角，不再把 JSON 当画面入口。

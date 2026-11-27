@@ -389,7 +389,8 @@
         .cdp-info-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
 
         /* 脚本代码生成弹窗（类 curlconverter）：顶部 WS 输入 + 左侧库列表 + 右侧代码 */
-        .snippet-panel { width: min(1280px, 96vw); }
+        /* .panel 的 width:440px 在文件后面定义且特异性相同，必须用 .panel.snippet-panel 覆盖 */
+        .panel.snippet-panel { width: min(1280px, 96vw); max-width: 96vw; }
         .snippet-ws-row { display: flex; gap: 8px; align-items: center; }
         .snippet-ws-row input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 13px; }
         .snippet-ws-row button { flex: none; white-space: nowrap; }
@@ -411,7 +412,7 @@
             white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow: auto; color: var(--text); }
         .snippet-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
         @media (max-width: 760px) {
-            .snippet-panel { width: 96vw; }
+            .panel.snippet-panel { width: 96vw; }
             .snippet-main { grid-template-columns: 1fr; }
             .snippet-libs { flex-direction: row; flex-wrap: wrap; }
         }
