@@ -1734,6 +1734,56 @@ class PanelEcoAndShareTests(unittest.TestCase):
             self.assertNotIn(bad, self.share_src)
 
 
+class WebConfirmAndRemoteUsageTests(unittest.TestCase):
+    """网页内确认弹窗替代原生 confirm；远程目录占用状态即时显示。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path(ROOT, "app", "templates", "index.html").read_text(encoding="utf-8")
+
+    def test_native_confirm_fully_replaced(self):
+        s = self.src
+        # 不允许任何浏览器原生 confirm 残留（含 window.confirm）。
+        self.assertNotIn("confirm(", s)
+        self.assertNotIn("window.confirm", s)
+        # 统一网页弹窗：ask() 返回 Promise，resolveAsk() 结算。
+        self.assertIn('id="askMask"', s)
+        self.assertIn("function ask(message, opts = {})", s)
+        self.assertIn("function resolveAsk(value)", s)
+        self.assertIn("return new Promise(resolve => { askResolver = resolve; })", s)
+        self.assertIn("onclick=\"if(event.target===this) resolveAsk(false)\"", s)
+        self.assertIn('class="ask-body"', s)
+        self.assertIn("white-space: pre-wrap", s)
+
+    def test_all_confirm_sites_use_await_ask(self):
+        s = self.src
+        # 5 处确认全部改为 await ask(...)，危险操作带 danger/okText。
+        self.assertIn('if (!await ask("删除远程主机 "', s)
+        self.assertIn('if (!await ask("吊销该令牌？', s)
+        self.assertIn('if (!await ask("确定删除持久目录「"', s)
+        self.assertIn('if (!await ask("重置后旧链接立即失效', s)
+        self.assertIn("proceed = await ask(", s)
+        self.assertIn('title: "删除持久目录"', s)
+
+    def test_remote_used_by_backfilled_from_instances(self):
+        s = self.src
+        seg = s[s.index("async function loadRemoteProfiles(force = false)"):s.index("async function load(")]
+        self.assertIn("const busyNames = {}", seg)
+        self.assertIn("ins.profile_mode === \"persistent\" && ins.profile_name", seg)
+        self.assertIn("used_by: p.used_by || busyNames[p.name] || null", seg)
+
+    def test_remote_profiles_refreshed_on_create_and_stop(self):
+        s = self.src
+        # 创建远端实例后主动刷新，否则「使用中」要等 60 秒轮询。
+        create_seg = s[s.index("closeCreate();"):s.index("async function loadRemoteProfiles") ]
+        self.assertIn('if (createHost !== "local") await loadRemoteProfiles(true)', create_seg)
+        stop_seg = s[s.index("async function stop(sid)"):s.index("async function confirmStopSelected()")]
+        self.assertIn("const stoppedHost = (instances[sid] || {}).host || \"local\"", stop_seg)
+        self.assertIn('if (stoppedHost !== "local") await loadRemoteProfiles(true)', stop_seg)
+        bulk_seg = s[s.index("async function confirmStopSelected()"):s.index("// ---- 只读分享")]
+        self.assertIn("sids.some(sid => ((instances[sid] || {}).host || \"local\") !== \"local\")", bulk_seg)
+
+
 class ProfileSafetyAndMigrationTests(unittest.TestCase):
     """持久目录：创建/删除占用检查、离线提示、导入迁移、徽标跳转。"""
 

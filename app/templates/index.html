@@ -830,6 +830,9 @@
         }
         .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
         .hint.error { color: var(--danger); }
+        .ask-panel { width: 460px; }
+        .ask-body { font-size: 13px; line-height: 1.7; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+        .ask-body .warn { color: var(--danger); font-weight: 600; }
         .badge-jump { cursor: pointer; }
         .badge-jump:hover { filter: brightness(1.25); }
         .profile-offline { color: var(--danger); }
@@ -1130,6 +1133,18 @@
             <div class="actions">
                 <button onclick="closeCreate()">取消</button>
                 <button class="btn-primary" onclick="confirmCreate()" id="btnConfirmCreate">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通用确认弹窗（替代浏览器原生 confirm） -->
+    <div class="mask" id="askMask" onclick="if(event.target===this) resolveAsk(false)">
+        <div class="panel ask-panel">
+            <h3 id="askTitle">请确认</h3>
+            <div class="ask-body" id="askBody"></div>
+            <div class="actions">
+                <button onclick="resolveAsk(false)" id="askCancel">取消</button>
+                <button class="btn-primary" onclick="resolveAsk(true)" id="askOk">确定</button>
             </div>
         </div>
     </div>
@@ -1512,7 +1527,7 @@
         }
 
         async function delRemoteHost(id) {
-            if (!confirm("删除远程主机 " + id + "？只移除接入关系，远端实例不受影响。")) return;
+            if (!await ask("删除远程主机 " + id + "？只移除接入关系，远端实例不受影响。", { title: "删除远程主机", danger: true })) return;
             try {
                 const res = await fetch("/api/hosts/" + encodeURIComponent(id), {
                     method: "DELETE", headers: authHeaders()
@@ -1578,7 +1593,7 @@
         }
 
         async function revokeLinkToken(token) {
-            if (!confirm("吊销该令牌？使用它的连接串会立即失效。")) return;
+            if (!await ask("吊销该令牌？使用它的连接串会立即失效。", { title: "吊销令牌", danger: true })) return;
             try {
                 const res = await fetch(addQuery("/api/link/token", "token", token), {
                     method: "DELETE", headers: authHeaders()
@@ -1975,11 +1990,12 @@
             try {
                 const d = await api("/api/instances/count", {}, 10000);
                 if (d && d.running > 0) {
-                    proceed = window.confirm(
+                    proceed = await ask(
                         "检测到 " + d.running + " 个浏览器实例正在运行。\n\n" +
                         "更新镜像不会自动应用到已运行的实例，且可能影响当前画面。\n" +
                         "建议先在首页点「停止全部」关闭实例后再更新。\n\n" +
-                        "仍要继续更新镜像吗？"
+                        "仍要继续更新镜像吗？",
+                        { title: "更新镜像", okText: "继续更新" }
                     );
                 }
             } catch (e) {}
@@ -2400,6 +2416,9 @@
                 closeCreate();
                 // 先刷新让用户立刻看到新实例（状态为「启动中…」），不阻塞等待画面。
                 await load();
+                // 远端实例刚创建会占用那台主机上的持久目录，立刻刷新远端目录，
+                // 否则「使用中 ↗」要等 60 秒轮询才出现（看起来像没生效）。
+                if (createHost !== "local") await loadRemoteProfiles(true);
                 toast("实例已创建，画面正在后台连接，稍候自动显示", "ok");
                 // CDP 就绪后再重绘一次状态徽标（后台监控每 8 秒更新 cdp_ready）。
                 let tries = 0;
@@ -2426,6 +2445,34 @@
             clearTimeout(t._timer);
             t._timer = setTimeout(() => t.className = "toast", 3200);
         }
+
+        // 网页内确认弹窗：替代浏览器原生 confirm，风格与面板一致、支持多行文本。
+        // 用法：if (!await ask("确定删除？", { title: "删除", danger: true })) return;
+        let askResolver = null;
+        function ask(message, opts = {}) {
+            if (askResolver) resolveAsk(false);  // 理论上不会并发，保险起见先结算旧的
+            $("askTitle").textContent = opts.title || "请确认";
+            $("askBody").textContent = message;
+            const ok = $("askOk");
+            ok.textContent = opts.okText || "确定";
+            ok.className = opts.danger ? "btn-danger" : "btn-primary";
+            $("askCancel").textContent = opts.cancelText || "取消";
+            $("askMask").classList.add("open");
+            ok.focus();
+            return new Promise(resolve => { askResolver = resolve; });
+        }
+        function resolveAsk(value) {
+            $("askMask").classList.remove("open");
+            const r = askResolver;
+            askResolver = null;
+            if (r) r(!!value);
+        }
+        // 键盘操作对齐原生 confirm：Esc 取消、Enter 确定（仅弹窗打开时生效）。
+        document.addEventListener("keydown", e => {
+            if (!askResolver || !$("askMask").classList.contains("open")) return;
+            if (e.key === "Escape") { e.preventDefault(); resolveAsk(false); }
+            else if (e.key === "Enter") { e.preventDefault(); resolveAsk(true); }
+        });
 
         function esc(s) {
             return String(s).replace(/[&<>"']/g, c => ({
@@ -2601,8 +2648,18 @@
                     try {
                         const data = await api("/remote/" + encodeURIComponent(h.id) + "/api/profiles", {}, 10000);
                         remoteProfileFail[h.id] = false;
+                        // 双保险：远端 /api/profiles 的 used_by 偶尔缺失或滞后时，
+                        // 用本机已加载的远端实例表反查补全，确保「使用中」不漏显示。
+                        const busyNames = {};
+                        for (const ins of Object.values(instances || {})) {
+                            if ((ins.host || "local") === h.id &&
+                                ins.profile_mode === "persistent" && ins.profile_name) {
+                                busyNames[ins.profile_name] = busyNames[ins.profile_name] || ins.sid;
+                            }
+                        }
                         return (data.profiles || []).map(p => Object.assign({}, p, {
                             host: h.id, host_name: h.name || h.id,
+                            used_by: p.used_by || busyNames[p.name] || null,
                         }));
                     } catch (e) {
                         remoteProfileFail[h.id] = true;  // 离线/鉴权失败：标记，不打断其他主机
@@ -4524,7 +4581,9 @@
             const where = isRemote
                 ? "（远端主机 " + hostName + " — 删除的是那台主机上的目录）"
                 : "";
-            if (!confirm("确定删除持久目录「" + name + "」" + where + "？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。")) return;
+            if (!await ask("确定删除持久目录「" + name + "」" + where + "？\n其中的登录态、Cookie、浏览数据将永久丢失，无法恢复。", {
+                title: "删除持久目录", danger: true, okText: "删除",
+            })) return;
             setBusy(true);
             try {
                 // 删除前实时复核 used_by：列表里的占用状态是 60 秒前的缓存，远端可能
@@ -4625,10 +4684,13 @@
             if (busy) return;
             setBusy(true);
             try {
+                const stoppedHost = (instances[sid] || {}).host || "local";
                 await api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" });
                 if (selectedSid === sid) { selectedSid = null; resetFrameState(true); }
                 toast("实例已停止", "ok");
                 await load();
+                // 停止远端实例后，它占用的持久目录应立即从「使用中」变回可删除。
+                if (stoppedHost !== "local") await loadRemoteProfiles(true);
             } catch (e) {
                 toast("停止失败: " + e.message, "error");
             } finally {
@@ -4724,6 +4786,10 @@
                         (hasPersist ? "，持久目录已保留" : ""), "ok");
                 }
                 await load();
+                // 批量停止可能涉及多台远端主机：只要有一台，就刷新远端目录占用状态。
+                if (sids.some(sid => ((instances[sid] || {}).host || "local") !== "local")) {
+                    await loadRemoteProfiles(true);
+                }
             } finally {
                 setBusy(false);
             }
@@ -4890,7 +4956,7 @@
             finally { btn.disabled = false; }
         }
         async function renewShareToken() {
-            if (!confirm("重置后旧链接立即失效，确定继续？")) return;
+            if (!await ask("重置后旧链接立即失效，确定继续？", { title: "重置分享链接", danger: true, okText: "重置" })) return;
             try {
                 shareConfig = await api("/api/share/renew", { method: "POST" });
                 renderSharePanel();
