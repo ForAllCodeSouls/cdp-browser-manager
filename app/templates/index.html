@@ -1299,6 +1299,7 @@
         let closedTabs = {};        // sid -> [{url, title}, ...]，末尾为最近关闭
         let castWs = null;          // 抓屏 WebSocket（manager 代理）
         let castGen = 0;            // 抓屏连接代数，切换实例/标签时作废旧连接
+        let castDocMouseup = null;  // bindCastInput 挂在 document 上的 mouseup，重挂载前先解绑，避免累积
         let logsOpen = false;       // 右侧日志抽屉是否打开（顶栏滑动开关控制）
         let logsLoadedAt = 0;       // 日志拉取节流时间戳
         let screenLocked = false;   // 屏幕锁：拦截画面输入，防止脚本执行时误点击
@@ -1387,14 +1388,14 @@
 
         async function refreshRemotePanel() {
             try {
-                const res = await fetch(keyQuery("/api/hosts"), { headers: authHeaders() });
+                const res = await fetch("/api/hosts", { headers: authHeaders() });
                 const data = await res.json();
                 renderRemoteHosts((data && data.hosts) || []);
             } catch (e) {
                 $("remoteHostList").textContent = "主机列表加载失败：" + e.message;
             }
             try {
-                const res = await fetch(keyQuery("/api/link/token"), { headers: authHeaders() });
+                const res = await fetch("/api/link/token", { headers: authHeaders() });
                 if (res.status === 401) {
                     $("linkTokenList").textContent = "本机启用了密钥，请先在「密钥」里输入后再管理令牌。";
                     return;
@@ -1449,7 +1450,7 @@
             const btn = $("btnAddRemote");
             btn.disabled = true; btn.textContent = "正在连接…";
             try {
-                const res = await fetch(keyQuery("/api/hosts"), {
+                const res = await fetch("/api/hosts", {
                     method: "POST",
                     headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
                     body: JSON.stringify({ link: link })
@@ -1471,7 +1472,7 @@
         async function delRemoteHost(id) {
             if (!confirm("删除远程主机 " + id + "？只移除接入关系，远端实例不受影响。")) return;
             try {
-                const res = await fetch(keyQuery("/api/hosts/" + encodeURIComponent(id)), {
+                const res = await fetch("/api/hosts/" + encodeURIComponent(id), {
                     method: "DELETE", headers: authHeaders()
                 });
                 if (!res.ok) {
@@ -1491,7 +1492,7 @@
             const btn = $("btnGenToken");
             btn.disabled = true;
             try {
-                const res = await fetch(keyQuery("/api/link/token"), {
+                const res = await fetch("/api/link/token", {
                     method: "POST", headers: authHeaders()
                 });
                 const data = await res.json().catch(() => ({}));
@@ -1536,7 +1537,7 @@
         async function revokeLinkToken(token) {
             if (!confirm("吊销该令牌？使用它的连接串会立即失效。")) return;
             try {
-                const res = await fetch(addQuery(keyQuery("/api/link/token"), "token", token), {
+                const res = await fetch(addQuery("/api/link/token", "token", token), {
                     method: "DELETE", headers: authHeaders()
                 });
                 if (!res.ok) {
@@ -1582,7 +1583,7 @@
         }
         async function initHosts() {
             try {
-                const res = await fetch(keyQuery("/api/hosts"), {
+                const res = await fetch("/api/hosts", {
                     headers: authHeaders(), signal: AbortSignal.timeout(10000)
                 });
                 const data = await res.json();
@@ -2708,6 +2709,11 @@
             // 旧 canvas 被移除、旧 WS 被关闭（其回调也会因 castGen 变化而失效）。
             if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; }
             if (castWs) { try { castWs.close(); } catch (e) {} castWs = null; }
+            // 先解绑上一次挂载的 document mouseup，否则每次切换实例都会累积一个监听器。
+            if (castDocMouseup) {
+                document.removeEventListener("mouseup", castDocMouseup);
+                castDocMouseup = null;
+            }
             const host = $("frameHost");
             while (host.firstChild) host.removeChild(host.firstChild);
             const canvas = document.createElement("canvas");
@@ -2899,7 +2905,8 @@
                 });
             });
             // 在画面外松开：补发一次释放，避免远程拖拽卡在按下状态。
-            document.addEventListener("mouseup", (e) => {
+            // 保存引用，下次挂载时解绑（见 mountCastCanvas）。
+            castDocMouseup = (e) => {
                 if (e.__castHandled || !pressed) return;
                 pressed = false;
                 if (locked() || frameSid !== sel.sid) return;
@@ -2910,7 +2917,8 @@
                     button: buttonName(e.button), clickCount: 1,
                     buttons: e.buttons, modifiers: mods(e),
                 });
-            });
+            };
+            document.addEventListener("mouseup", castDocMouseup);
             canvas.addEventListener("wheel", (e) => {
                 if (locked()) return;
                 e.preventDefault(); // 阻止页面自身滚动；Ctrl+滚轮交给远程做缩放

@@ -262,7 +262,8 @@ class BinaryFrameForwardingTests(unittest.TestCase):
         with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
             src = f.read()
         i = src.index("async def remote_ws_proxy")
-        seg = src[i:i + 3200]
+        # 注释扩展后函数变长，截取到下一个路由定义，避免 opcode 代码被截出窗口。
+        seg = src[i:src.index("@app.api_route(\"/{port:int}/json/", i)]
         self.assertIn("ws_client.ABNF.OPCODE_BINARY", seg)
 
     def test_cdp_devtools_ws_forwards_by_frame_type(self):
@@ -1247,7 +1248,10 @@ class PanelEcoAndShareTests(unittest.TestCase):
         seg3 = self.main_src[k:k + 1600]
         self.assertIn("is_share = share_active(share_token)", seg3)
         self.assertIn('query_items.append(("readonly", "1"))', seg3)
-        self.assertIn('if k not in ("key", "share")', seg3)
+        self.assertIn('if k not in ("key", "share", "readonly")', seg3)
+        # 远端 WS 端点只从 query 读 key（不读 X-API-Key 头），host key 必须进 query，
+        # 否则远端设了 API_KEY 时抓屏/devtools/noVNC 一律 4401。
+        self.assertIn('query_items.append(("key", host["key"]))', seg3)
 
     def test_cast_mouse_coords_map_to_real_viewport(self):
         # 画质档会缩小图片；点击必须经「图片像素 -> 真实视口」两步换算，
@@ -1483,6 +1487,45 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("frameSeq: 0, drawnSeq: 0", self.src)
         self.assertIn("++state.frameSeq", self.src)
         self.assertIn("seq <= state.drawnSeq", self.src)
+
+    def test_audit_fixes_cast_auth_remote_key_and_lifecycle(self):
+        # 1) /cast 页面与首页/分享页一样免鉴权打开：路由注释、鉴权白名单必须一致。
+        #    数据层（/api/list、/api/instance/*/cmd、/ws/cast）仍各自鉴权。
+        self.assertIn('if path in ("/", "/api/health", "/share", "/cast"):', self.main_src)
+
+        # 2) 后台 CDP 监控线程整轮 try/except：Docker 偶发异常不能让线程永久死亡。
+        i = self.main_src.index("def cdp_monitor_loop():")
+        seg = self.main_src[i:i + 2600]
+        self.assertIn("while True:", seg)
+        self.assertIn("try:", seg)
+        self.assertIn("[CDP 监控] 本轮探测异常，8 秒后重试: %s", seg)
+        self.assertIn("time.sleep(8)", seg)
+
+        # 3) 独立抓屏页：地址栏是静态 DOM，轮询只改值不重建；输入中不被冲掉。
+        c = self.cast_src
+        self.assertIn('<input class="url" id="castUrl"', c)
+        self.assertIn('if (document.activeElement !== urlBox) urlBox.value = cur.url || "";', c)
+        self.assertNotIn('$("navRow").innerHTML', c)
+        # 断线自动重试 2 次（600ms/1200ms），与管理页一致。
+        self.assertIn("function connect(attempt)", c)
+        self.assertIn("if (attempt < 2)", c)
+        self.assertIn("600 * (attempt + 1)", c)
+        self.assertIn("setTimeout(() => { if (myGen === gen) connect(attempt + 1);", c)
+
+        # 4) 管理页 document mouseup 监听可解绑：重挂载前移除，避免切换实例累积。
+        self.assertIn("let castDocMouseup = null;", self.src)
+        self.assertIn('document.removeEventListener("mouseup", castDocMouseup)', self.src)
+        self.assertIn('document.addEventListener("mouseup", castDocMouseup)', self.src)
+
+        # 5) HTTP fetch 只带 X-API-Key 头，不再把密钥拼进 URL（WS/脚本展示除外）。
+        self.assertNotIn('fetch(keyQuery("/api/hosts")', self.src)
+        self.assertNotIn('fetch(keyQuery("/api/link/token")', self.src)
+        for token in (
+            'fetch("/api/hosts", { headers: authHeaders() })',
+            'fetch("/api/link/token", { headers: authHeaders() })',
+            'fetch(scopeUrl(url), opts)',
+        ):
+            self.assertIn(token, self.src)
 
     def test_detail_cdp_quick_links_and_current_page(self):
         # 原「新窗口打开」→「当前网页」已按用户要求移除：详情栏只留画面直达按钮。

@@ -311,7 +311,9 @@ def auth_exempt(path: str, method: str) -> bool:
     注意 /api/hosts 只豁免 GET：POST/DELETE 是面板添加/删除远程主机的写操作，
     必须鉴权，否则设置 API_KEY 后任何人都能往本机挂载远程主机。
     """
-    if path in ("/", "/api/health", "/share"):
+    # /cast 与 /share 一样是纯页面壳：页面本身不含数据，实例列表 / CDP 命令 /
+    # 抓屏 WS 各自按 API_KEY 或分享令牌鉴权，所以页面本身免鉴权打开。
+    if path in ("/", "/api/health", "/share", "/cast"):
         return True
     if path == "/api/share/view" and method == "GET":
         return True  # 观看端没有 API_KEY，由分享令牌 + 有效期单独鉴权
@@ -1480,36 +1482,41 @@ def cdp_monitor_loop():
     import urllib.request
 
     while True:
-        # 每轮先自愈网络归属，再探测 CDP；已同网时这里只是几次本地查询。
-        ensure_instances_on_manager_network()
-        with LOCK:
-            targets = [
-                (sid, item) for sid, item in INSTANCES.items()
-                if item.get("status") == "running"
-            ]
-        for sid, item in targets:
-            ip = container_ip_by_id(item.get("container_id"))
-            ready = False
-            if ip:
-                try:
-                    with urllib.request.urlopen(
-                        f"http://{ip}:9222/json/version", timeout=1
-                    ) as resp:
-                        ready = resp.status == 200
-                except Exception:
-                    ready = False
+        # 整轮包 try：Docker SDK 偶发抛错（守护进程瞬时不可用、容器刚好被删）
+        # 不能让线程直接退出，否则所有实例的 cdp_ready 从此永不更新。
+        try:
+            # 每轮先自愈网络归属，再探测 CDP；已同网时这里只是几次本地查询。
+            ensure_instances_on_manager_network()
             with LOCK:
-                if sid in INSTANCES:
-                    prev = INSTANCES[sid].get("cdp_ready")
-                    INSTANCES[sid]["cdp_ready"] = ready
-                    if prev is True and ready is False:
-                        log.warning("实例 %s 的 CDP 失联", sid[:8])
-                    elif prev is False and ready is True:
-                        log.info("实例 %s 的 CDP 恢复", sid[:8])
-            # 两种无头都挂身份伪装守护（实测 Chrome 158 的 --headless=new 仍报
-            # HeadlessChrome，并非天然干净）。放在锁外避免阻塞列表接口；幂等。
-            if ready and item.get("browser_mode") in HEADLESS_MODES:
-                start_stealth_guard(sid, ip)
+                targets = [
+                    (sid, item) for sid, item in INSTANCES.items()
+                    if item.get("status") == "running"
+                ]
+            for sid, item in targets:
+                ip = container_ip_by_id(item.get("container_id"))
+                ready = False
+                if ip:
+                    try:
+                        with urllib.request.urlopen(
+                            f"http://{ip}:9222/json/version", timeout=1
+                        ) as resp:
+                            ready = resp.status == 200
+                    except Exception:
+                        ready = False
+                with LOCK:
+                    if sid in INSTANCES:
+                        prev = INSTANCES[sid].get("cdp_ready")
+                        INSTANCES[sid]["cdp_ready"] = ready
+                        if prev is True and ready is False:
+                            log.warning("实例 %s 的 CDP 失联", sid[:8])
+                        elif prev is False and ready is True:
+                            log.info("实例 %s 的 CDP 恢复", sid[:8])
+                # 两种无头都挂身份伪装守护（实测 Chrome 158 的 --headless=new 仍报
+                # HeadlessChrome，并非天然干净）。放在锁外避免阻塞列表接口；幂等。
+                if ready and item.get("browser_mode") in HEADLESS_MODES:
+                    start_stealth_guard(sid, ip)
+        except Exception as e:
+            log.error("[CDP 监控] 本轮探测异常，8 秒后重试: %s", e)
         time.sleep(8)
 
 
@@ -2989,18 +2996,24 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
         await websocket.close()
         return
 
-    # 本机 key 与分享令牌都不原样转发：远端 manager 的分享配置里没有本机令牌，
-    # 改传 readonly=1 让上游强制只读；远端认证仍用服务端配置的 host key。
+    # 本机 key 与分享令牌都不原样转发：远端 manager 的分享配置里没有本机令牌。
+    # 远端 WS 端点（/ws/cast、/{port}/devtools、/{port}/websockify）不走 HTTP
+    # 中间件，只从 query 的 key 取密钥、不读 X-API-Key 头。服务端配置的 host key
+    # 必须放进 query，否则远端设了 API_KEY 时一律 4401。服务端到服务端，浏览器看不到。
     query_items = [
         (k, v) for k, v in websocket.query_params.multi_items()
-        if k not in ("key", "share")
+        if k not in ("key", "share", "readonly")
     ]
+    if host.get("key"):
+        query_items.append(("key", host["key"]))
+    # 分享流量改传 readonly=1 让上游强制只读（上游 readonly 必须有合法 key）。
     if is_share:
         query_items.append(("readonly", "1"))
     query = urlencode(query_items)
     parsed = urlsplit(host["base"])
     scheme = "wss" if parsed.scheme == "https" else "ws"
     url = f"{scheme}://{parsed.netloc}/{rest}" + ("?" + query if query else "")
+    # 头也保留：兼容未来改为读头部的上游，且与 HTTP 代理行为一致。
     headers = []
     if host.get("key"):
         headers.append(f"X-API-Key: {host['key']}")

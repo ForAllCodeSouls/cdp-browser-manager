@@ -87,7 +87,14 @@
     </header>
     <div class="castbar" id="castBar">
         <div class="tabrow" id="tabRow"></div>
-        <div class="navrow" id="navRow"></div>
+        <!-- 导航条做成静态 DOM：轮询刷新只更新按钮状态和输入框值，不重建输入框，
+             否则用户正在输入网址时会被 2.5s 一次的 refreshTargets 冲掉。 -->
+        <div class="navrow" id="navRow">
+            <button class="icon" id="castBack" title="后退" onclick="historyStep(-1)">‹</button>
+            <button class="icon" id="castFwd" title="前进" onclick="historyStep(1)">›</button>
+            <button class="icon" title="刷新" onclick="reloadPage()">⟳</button>
+            <input class="url" id="castUrl" placeholder="输入网址后按回车跳转" autocomplete="off">
+        </div>
     </div>
     <div class="stage" id="stage">
         <canvas id="screen" tabindex="0"></canvas>
@@ -202,11 +209,12 @@
         img.src = "data:image/jpeg;base64," + data;
     }
 
-    function connect() {
+    function connect(attempt) {
+        attempt = Number(attempt) || 0;
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
         const myGen = ++gen;
         let received = false;
-        setState("连接中…");
+        setState(attempt ? "重连中…" : "连接中…");
         const socket = new WebSocket(wsUrl());
         ws = socket;
         wsRef.ws = socket;
@@ -239,6 +247,12 @@
         socket.onclose = () => {
             if (ws === socket) ws = null;
             if (myGen !== gen) return;
+            // 瞬时断连（容器重启/网络抖动）自动重试 2 次，与管理页一致；
+            // 重试耗尽才提示手动重试。换标签/卸载触发的重连由 gen 隔离，不会叠加。
+            if (attempt < 2) {
+                setTimeout(() => { if (myGen === gen) connect(attempt + 1); }, 600 * (attempt + 1));
+                return;
+            }
             setState("已断开", "err");
             if (!received) showOverlay('抓屏连接失败。<br><button onclick="connect()">重试</button>');
         };
@@ -397,6 +411,15 @@
         cmd("Page.navigateToHistoryEntry", { entryId: entryId })
             .then(() => updateHistory()).catch(() => {});
     }
+    // 地址栏事件只绑定一次（静态 DOM），轮询不重建输入框，输入中的网址不会被冲掉。
+    const urlBox = $("castUrl");
+    urlBox.onkeydown = (e) => {
+        if (e.key !== "Enter" || e.isComposing) return;
+        e.preventDefault();
+        navigate((e.target && e.target.value) || "");
+    };
+    urlBox.onclick = () => { try { urlBox.select(); } catch (e) {} };
+
     function renderBar() {
         const chips = targets.map(t =>
             '<span class="chip ' + (t.id === tid ? "on" : "") + '" title="' + esc(t.url) +
@@ -405,23 +428,15 @@
             '<span class="x" title="关闭此标签" onclick="event.stopPropagation(); closeTarget(' +
             JSON.stringify(t.id).replace(/"/g, "&quot;") + ')">×</span></span>'
         ).join("");
-        const cur = targets.find(t => t.id === tid) || {};
-        const canBack = !!history && history.index > 0;
-        const canForward = !!history && history.index < history.ids.length - 1;
         $("tabRow").innerHTML = chips +
             '<button onclick="newTarget()">+ 新标签</button>';
-        $("navRow").innerHTML =
-            '<button class="icon" title="后退" onclick="historyStep(-1)"' + (canBack ? "" : " disabled") + '>‹</button>' +
-            '<button class="icon" title="前进" onclick="historyStep(1)"' + (canForward ? "" : " disabled") + '>›</button>' +
-            '<button class="icon" title="刷新" onclick="reloadPage()">⟳</button>' +
-            '<input class="url" id="castUrl" value="' + esc(cur.url || "") + '" placeholder="输入网址后按回车跳转">';
-        const input = $("castUrl");
-        input.onkeydown = (e) => {
-            if (e.key !== "Enter" || e.isComposing) return;
-            e.preventDefault();
-            navigate((e.target && e.target.value) || "");
-        };
-        input.onclick = () => { try { input.select(); } catch (e) {} };
+        // 按钮状态随历史栈更新；输入框只在用户没在输入时同步 URL，避免打断输入。
+        const canBack = !!history && history.index > 0;
+        const canForward = !!history && history.index < history.ids.length - 1;
+        $("castBack").disabled = !canBack;
+        $("castFwd").disabled = !canForward;
+        const cur = targets.find(t => t.id === tid) || {};
+        if (document.activeElement !== urlBox) urlBox.value = cur.url || "";
     }
 
     function switchTarget(id) {
