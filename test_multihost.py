@@ -504,7 +504,8 @@ class MonitorPanelJsTests(unittest.TestCase):
     def test_view_and_toggle_button(self):
         self.assertIn('id="monitorView"', self.src)
         self.assertIn('id="monitorGrid"', self.src)
-        self.assertIn("function toggleMonitorView()", self.src)
+        # 监控开关支持 forceOpen/skipLoad（刷新后恢复监控视图时避免重复拉数据）。
+        self.assertIn("function toggleMonitorView(forceOpen, skipLoad)", self.src)
         self.assertIn("function toggleMonitorSid(sid, forceOn)", self.src)
         self.assertIn('id="btnMonitor"', self.src)
 
