@@ -2418,7 +2418,7 @@
                 await load();
                 // 远端实例刚创建会占用那台主机上的持久目录，立刻刷新远端目录，
                 // 否则「使用中 ↗」要等 60 秒轮询才出现（看起来像没生效）。
-                if (createHost !== "local") await loadRemoteProfiles(true);
+                if (createHost !== "local") await loadRemoteProfiles(true, createHost);
                 toast("实例已创建，画面正在后台连接，稍候自动显示", "ok");
                 // CDP 就绪后再重绘一次状态徽标（后台监控每 8 秒更新 cdp_ready）。
                 let tries = 0;
@@ -2630,18 +2630,25 @@
         // 不直连远端、复用本机密钥。单台失败只跳过它，不影响本机与其他主机；
         // 与 load() 的 10 秒轮询解耦，独立低频刷新，避免远端离线拖慢面板。
         // remoteProfileFail: host id -> true，记录哪台拉取失败，避免把「离线」误显示成
-        // 「暂无持久目录」。force=true 表示删除等写操作后的主动刷新：若当前正有一轮在跑，
-        // 排队等它结束后再跑一遍，不能像以前那样直接 return 丢掉（否则列表残留已删目录）。
+        // 「暂无持久目录」。force=true 表示写操作/实例变化后的主动刷新：若当前正有一轮在跑，
+        // 排队等它结束后再刷，不能像以前那样直接 return 丢掉（否则列表残留已删目录）。
+        // onlyHost 指定时只拉那一台，且只替换该主机条目、保留其余主机——实例变化只影响
+        // 对应主机，无需全量重拉（也避免离线主机拖慢这次刷新）。
         let remoteProfilesBusy = false;
-        let remoteProfilesQueued = false;
+        let remoteProfilesQueued = new Set();  // 待刷新主机集合，"all" 表示全量
         let remoteProfileFail = {};
-        async function loadRemoteProfiles(force = false) {
+        async function loadRemoteProfiles(force = false, onlyHost = null) {
             if (remoteProfilesBusy) {
-                if (force) remoteProfilesQueued = true;
+                if (force) remoteProfilesQueued.add(onlyHost || "all");
                 return;
             }
-            const remotes = (hosts || []).filter(h => h.id !== "local");
-            if (!remotes.length) { remoteProfiles = []; remoteProfileFail = {}; render(); return; }
+            let remotes = (hosts || []).filter(h => h.id !== "local");
+            if (onlyHost) remotes = remotes.filter(h => h.id === onlyHost);
+            if (!remotes.length) {
+                if (!onlyHost) { remoteProfiles = []; remoteProfileFail = {}; }
+                render();
+                return;
+            }
             remoteProfilesBusy = true;
             try {
                 const results = await Promise.all(remotes.map(async h => {
@@ -2666,16 +2673,54 @@
                         return [];
                     }
                 }));
-                remoteProfiles = [].concat(...results);
+                if (onlyHost) {
+                    // 只替换该主机条目，保留其他主机已加载的数据。
+                    remoteProfiles = remoteProfiles.filter(p => p.host !== onlyHost).concat(...results);
+                } else {
+                    remoteProfiles = [].concat(...results);
+                }
                 render();
             } finally {
                 remoteProfilesBusy = false;
-                // 排队中的主动刷新：等这一轮落地后再跑，确保写操作后的列表是最新的。
-                if (remoteProfilesQueued) {
-                    remoteProfilesQueued = false;
-                    loadRemoteProfiles();
+                // 排队中的主动刷新：等这一轮落地后再刷。多台/全量合并成一次全量刷，
+                // 避免连续 loadRemoteProfiles 互相被 busy 挡掉。
+                if (remoteProfilesQueued.size) {
+                    const queued = Array.from(remoteProfilesQueued);
+                    remoteProfilesQueued.clear();
+                    if (queued.length === 1 && queued[0] !== "all") {
+                        loadRemoteProfiles(false, queued[0]);
+                    } else {
+                        loadRemoteProfiles();
+                    }
                 }
             }
+        }
+
+        // 实例占用快照：按主机记录「持久目录名 -> sid」。load() 每次拉到实例后对比，
+        // 变化的主机才刷新对应目录——覆盖所有实例变化来源（面板操作、远端自己操作、
+        // 定时轮询发现的外部变化），而不只在几个写操作函数里打补丁。
+        let lastProfileUsage = null;
+        function profileUsageSnapshot() {
+            const snap = {};
+            for (const ins of Object.values(instances || {})) {
+                if (ins.profile_mode !== "persistent" || !ins.profile_name) continue;
+                const h = ins.host || "local";
+                (snap[h] = snap[h] || {})[ins.profile_name] = ins.sid;
+            }
+            return snap;
+        }
+        function hostsWithUsageChange(prev, cur) {
+            if (prev === null) return [];  // 首轮：初始化流程已有全量拉取，避免重复
+            const changed = new Set();
+            const allHosts = new Set([...Object.keys(prev), ...Object.keys(cur)]);
+            for (const h of allHosts) {
+                const a = prev[h] || {}, b = cur[h] || {};
+                const names = new Set([...Object.keys(a), ...Object.keys(b)]);
+                for (const n of names) {
+                    if (a[n] !== b[n]) { changed.add(h); break; }
+                }
+            }
+            return Array.from(changed);
         }
 
         async function load(quiet = false) {
@@ -2684,6 +2729,16 @@
                 const data = await api("/api/list");
                 instances = data.instances || {};
                 profiles = data.profiles || [];
+                // 实例占用变化 → 只刷新对应主机的持久目录。覆盖所有变化来源，
+                // 不再依赖各写操作函数末尾的手动刷新（那些保留为即时兜底）。
+                const usageSnap = profileUsageSnapshot();
+                const changedHosts = hostsWithUsageChange(lastProfileUsage, usageSnap);
+                lastProfileUsage = usageSnap;
+                if (changedHosts.length) {
+                    for (const h of changedHosts) {
+                        if (h !== "local") loadRemoteProfiles(true, h);
+                    }
+                }
                 if (restoreView) {
                     // 只在首次加载恢复一次；实例已不存在时回落到 render() 的自动选择。
                     const rv = restoreView;
@@ -4614,8 +4669,8 @@
                     : "目录「" + name + "」已删除", "ok");
                 await load();
                 // force：若此刻 60 秒定时器那轮正在跑，排队等它落地后再刷一遍，
-                // 避免刚删的目录残留在列表里直到下个刷新周期。
-                await loadRemoteProfiles(true);
+                // 避免刚删的目录残留在列表里直到下个刷新周期。只刷对应主机。
+                await loadRemoteProfiles(true, isRemote ? host : null);
             } catch (e) {
                 toast("删除失败: " + e.message, "error");
             } finally {
@@ -4690,7 +4745,7 @@
                 toast("实例已停止", "ok");
                 await load();
                 // 停止远端实例后，它占用的持久目录应立即从「使用中」变回可删除。
-                if (stoppedHost !== "local") await loadRemoteProfiles(true);
+                if (stoppedHost !== "local") await loadRemoteProfiles(true, stoppedHost);
             } catch (e) {
                 toast("停止失败: " + e.message, "error");
             } finally {
@@ -4766,6 +4821,11 @@
             closeStopDialog();
             setBusy(true);
             try {
+                // 停止前先记下涉及的远端主机：load() 后实例会被移除，到时候再取 host 就是 local。
+                const remoteHosts = new Set(
+                    sids.map(sid => (instances[sid] || {}).host || "local")
+                        .filter(h => h !== "local")
+                );
                 // scopeUrl 按实例所属主机自动加 /remote/<host> 前缀，本机与远端一起停。
                 const results = await Promise.allSettled(sids.map(sid =>
                     api("/instance/" + encodeURIComponent(sid) + "/stop", { method: "POST" })
@@ -4786,10 +4846,8 @@
                         (hasPersist ? "，持久目录已保留" : ""), "ok");
                 }
                 await load();
-                // 批量停止可能涉及多台远端主机：只要有一台，就刷新远端目录占用状态。
-                if (sids.some(sid => ((instances[sid] || {}).host || "local") !== "local")) {
-                    await loadRemoteProfiles(true);
-                }
+                // 批量停止可能涉及多台远端主机：用停止前记下的主机集合，逐台精确刷新。
+                for (const h of remoteHosts) await loadRemoteProfiles(true, h);
             } finally {
                 setBusy(false);
             }

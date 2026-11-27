@@ -1689,7 +1689,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
         s = self.src
         for token in (
             "let remoteProfiles = []",
-            "async function loadRemoteProfiles(force = false)",
+            "async function loadRemoteProfiles(force = false, onlyHost = null)",
             '"/remote/" + encodeURIComponent(h.id) + "/api/profiles"',
             "remoteProfilesBusy",  # 防并发，低频拉取不叠请求
             "const allProfiles = profiles.map",
@@ -1703,7 +1703,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
         # 删除：远端走 /remote/<host>/profile/<name> 的 DELETE 代理，本机走原路径。
         self.assertIn("async function deleteProfile(name, host)", s)
         self.assertIn('"/remote/" + encodeURIComponent(host) + "/profile/" + encodeURIComponent(name)', s)
-        self.assertIn('await loadRemoteProfiles(true)', s)  # force：删除后主动刷新不被 busy 丢掉
+        self.assertIn('await loadRemoteProfiles(true, isRemote ? host : null)', s)  # force：删除后按主机主动刷新
         # 删除前实时复核远端实例的 used_by：远端走 /remote/<host>/api/profiles
         # 读那台主机自己的实例表，占用则拦截、不发 DELETE；后端 409 兜底。
         self.assertIn('const listUrl = isRemote', s)
@@ -1767,7 +1767,7 @@ class WebConfirmAndRemoteUsageTests(unittest.TestCase):
 
     def test_remote_used_by_backfilled_from_instances(self):
         s = self.src
-        seg = s[s.index("async function loadRemoteProfiles(force = false)"):s.index("async function load(")]
+        seg = s[s.index("async function loadRemoteProfiles(force = false, onlyHost = null)"):s.index("async function load(")]
         self.assertIn("const busyNames = {}", seg)
         self.assertIn("ins.profile_mode === \"persistent\" && ins.profile_name", seg)
         self.assertIn("used_by: p.used_by || busyNames[p.name] || null", seg)
@@ -1776,12 +1776,13 @@ class WebConfirmAndRemoteUsageTests(unittest.TestCase):
         s = self.src
         # 创建远端实例后主动刷新，否则「使用中」要等 60 秒轮询。
         create_seg = s[s.index("closeCreate();"):s.index("async function loadRemoteProfiles") ]
-        self.assertIn('if (createHost !== "local") await loadRemoteProfiles(true)', create_seg)
+        self.assertIn('if (createHost !== "local") await loadRemoteProfiles(true, createHost)', create_seg)
         stop_seg = s[s.index("async function stop(sid)"):s.index("async function confirmStopSelected()")]
         self.assertIn("const stoppedHost = (instances[sid] || {}).host || \"local\"", stop_seg)
-        self.assertIn('if (stoppedHost !== "local") await loadRemoteProfiles(true)', stop_seg)
+        self.assertIn('if (stoppedHost !== "local") await loadRemoteProfiles(true, stoppedHost)', stop_seg)
         bulk_seg = s[s.index("async function confirmStopSelected()"):s.index("// ---- 只读分享")]
-        self.assertIn("sids.some(sid => ((instances[sid] || {}).host || \"local\") !== \"local\")", bulk_seg)
+        self.assertIn("const remoteHosts = new Set(", bulk_seg)
+        self.assertIn("for (const h of remoteHosts) await loadRemoteProfiles(true, h);", bulk_seg)
 
 
 class ProfileSafetyAndMigrationTests(unittest.TestCase):
@@ -1823,11 +1824,11 @@ class ProfileSafetyAndMigrationTests(unittest.TestCase):
 
     def test_forced_remote_refresh_queues_when_busy(self):
         s = self.src
-        self.assertIn("let remoteProfilesQueued = false", s)
-        self.assertIn("if (force) remoteProfilesQueued = true", s)
-        self.assertIn("if (remoteProfilesQueued)", s)
-        # 删除与导入后的主动刷新都走 force。
-        self.assertIn("await loadRemoteProfiles(true)", s)
+        self.assertIn("let remoteProfilesQueued = new Set();", s)
+        self.assertIn("remoteProfilesQueued.add(onlyHost || \"all\");", s)
+        self.assertIn("if (remoteProfilesQueued.size)", s)
+        # 删除与导入后的主动刷新都走 force（按主机精确）。
+        self.assertIn("await loadRemoteProfiles(true, isRemote ? host : null)", s)
 
     def test_delete_toast_names_remote_host(self):
         s = self.src
@@ -1902,6 +1903,46 @@ class ProfileSafetyAndMigrationTests(unittest.TestCase):
         self.assertIn("scrollIntoView", s)
         self.assertIn("groupsCollapsed[gkey] = false", s)
         self.assertIn("hostFilter = owner", s)
+
+    def test_instance_usage_change_refreshes_only_that_host(self):
+        """实例占用变化 → load() 自动只刷新对应主机的持久目录。"""
+        s = self.src
+        # 快照按主机记录 目录名->sid，只有持久实例计入。
+        self.assertIn("let lastProfileUsage = null;", s)
+        self.assertIn("function profileUsageSnapshot()", s)
+        self.assertIn('if (ins.profile_mode !== "persistent" || !ins.profile_name) continue;', s)
+        self.assertIn("function hostsWithUsageChange(prev, cur)", s)
+        # 首轮跳过，避免与初始化全量拉取重复。
+        self.assertIn("if (prev === null) return [];", s)
+        # load() 拉到实例后对比快照，变化的主机触发按主机刷新。
+        seg = s[s.index("const usageSnap = profileUsageSnapshot()"):
+                s.index("const usageSnap = profileUsageSnapshot()") + 500]
+        self.assertIn("hostsWithUsageChange(lastProfileUsage, usageSnap)", seg)
+        self.assertIn("lastProfileUsage = usageSnap", seg)
+        self.assertIn("loadRemoteProfiles(true, h)", seg)
+
+    def test_remote_profile_refresh_supports_single_host_and_queue(self):
+        """远端目录刷新支持只刷一台、按主机排队、保留其他主机数据。"""
+        s = self.src
+        self.assertIn("async function loadRemoteProfiles(force = false, onlyHost = null)", s)
+        # 排队按主机集合，不是单个布尔。
+        self.assertIn("let remoteProfilesQueued = new Set();", s)
+        self.assertIn("remoteProfilesQueued.add(onlyHost || \"all\");", s)
+        # onlyHost 时只替换该主机条目、保留其余主机。
+        self.assertIn("remoteProfiles = remoteProfiles.filter(p => p.host !== onlyHost).concat(...results);", s)
+        # 写操作后按主机精确刷新（不再全量）。
+        self.assertIn("loadRemoteProfiles(true, stoppedHost)", s)
+        self.assertIn("loadRemoteProfiles(true, createHost)", s)
+        self.assertIn("loadRemoteProfiles(true, isRemote ? host : null)", s)
+
+    def test_batch_stop_collects_remote_hosts_before_load(self):
+        """批量停止在 load() 移除实例前先记下远端主机，避免 host 取成 local。"""
+        s = self.src
+        seg = s[s.index("async function confirmStopSelected()"):
+                s.index("// ---- 只读分享")]
+        self.assertIn("const remoteHosts = new Set(", seg)
+        self.assertIn(".filter(h => h !== \"local\")", seg)
+        self.assertIn("for (const h of remoteHosts) await loadRemoteProfiles(true, h);", seg)
 
 
 class TabOrderTests(unittest.TestCase):
