@@ -539,6 +539,19 @@ class MonitorPanelJsTests(unittest.TestCase):
                       'id="i-sidebar"'):
             self.assertIn(token, self.src)
 
+    def test_sidebar_handle_on_aside_edge_not_topbar(self):
+        # 侧栏折叠按钮放在侧栏右边缘中部的把手上，顶栏不再放「侧栏」按钮。
+        self.assertIn('class="sidebar-handle"', self.src)
+        self.assertIn('.sidebar-handle {', self.src)
+        self.assertIn('position: absolute; left: 288px; top: 50%', self.src)
+        self.assertIn('.layout.sidebar-hidden .sidebar-handle { left: 0', self.src)
+        # 按钮在 layout 内、aside 之前，而非 header 的 toolbar 内。
+        i = self.src.index('id="btnSidebar"')
+        self.assertIn('<div class="layout">', self.src[max(0, i - 120):i])
+        self.assertNotIn('class="btn-icon" title="隐藏/显示左侧实例列表', self.src)
+        # 把手图标随状态切换方向，隐藏侧栏后把手仍可见可点回来。
+        self.assertIn('setAttribute("href", sidebarHidden ? "#i-forward" : "#i-back")', self.src)
+
     def test_instances_local_first_then_created_at(self):
         self.assertIn("Object.values(instances).sort((a, b)", self.src)
         self.assertIn('const ha = (a.host && a.host !== "local") ? 1 : 0;', self.src)

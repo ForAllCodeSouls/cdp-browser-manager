@@ -100,13 +100,24 @@
         .btn-locked { color: var(--warn); border-color: #6b5426; background: #3a2f1a; }
         .btn-locked:hover:not(:disabled) { background: #4a3b20; }
 
-        .layout { flex: 1; display: flex; min-height: 0; }
+        .layout { flex: 1; display: flex; min-height: 0; position: relative; }
         /* 监控主面板打开时只隐藏普通画面区，侧栏保留（可在监控模式下继续切换预览开关、
            拖实例进网格、切换主机筛选）；不能隐藏 .layout 本身——监控面板是它的子元素，
            整体 display:none 会把它一起藏掉（曾导致「点了没反应」）。 */
         .layout.monitor-mode > .viewer { display: none; }
-        /* 全局侧栏显隐：顶栏按钮切换 .sidebar-hidden，监控视图与普通视图都生效。 */
+        /* 全局侧栏显隐：.sidebar-hidden 隐藏侧栏，监控视图与普通视图都生效。
+           把手放在 .layout 上（不在 aside 内），所以侧栏隐藏后仍可见、可点回来。 */
         .layout.sidebar-hidden > aside { display: none; }
+        .sidebar-handle {
+            position: absolute; left: 288px; top: 50%; transform: translateY(-50%);
+            width: 22px; height: 56px; padding: 0; z-index: 6;
+            display: flex; align-items: center; justify-content: center;
+            border: 1px solid var(--border); border-left: none;
+            border-radius: 0 8px 8px 0; background: var(--surface-2); color: var(--muted);
+        }
+        .sidebar-handle:hover { color: var(--text); background: var(--surface-3); }
+        .sidebar-handle .ico { width: 15px; height: 15px; }
+        .layout.sidebar-hidden .sidebar-handle { left: 0; border-left: 1px solid var(--border); }
         aside {
             width: 288px;
             flex: 0 0 288px;
@@ -709,6 +720,12 @@
             .layout { flex-direction: column; }
             aside { width: 100%; flex: 0 0 auto; max-height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
             .side-head.second { top: 49px; }
+            /* 窄屏侧栏在上方，把手改为横条贴在侧栏下边缘中部 */
+            .sidebar-handle { left: 50%; top: auto; bottom: 0; transform: translateX(-50%);
+                width: 56px; height: 20px; border: 1px solid var(--border); border-bottom: none;
+                border-radius: 8px 8px 0 0; }
+            .layout.sidebar-hidden .sidebar-handle { left: 50%; top: 0; bottom: auto;
+                border-bottom: 1px solid var(--border); border-radius: 0 0 8px 8px; }
         }
 
         /* 统一线性图标：跟随 currentColor，尺寸随所在元素 */
@@ -797,7 +814,6 @@
             <div class="disclaimer-note"><svg class="ico" style="margin-right:4px"><use href="#i-warn"/></svg><span>仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途</span></div>
         </div>
         <div class="toolbar">
-            <button id="btnSidebar" onclick="toggleSidebar()" class="btn-icon" title="隐藏/显示左侧实例列表（普通视图与监控面板都生效）"><svg class="ico"><use href="#i-sidebar"/></svg><span>侧栏</span></button>
             <label class="switch-wrap" title="打开/收起右侧运行日志">
                 <span>运行日志</span>
                 <input type="checkbox" id="logToggle" onchange="toggleLogs(this.checked)">
@@ -812,6 +828,7 @@
     </header>
 
     <div class="layout">
+        <button id="btnSidebar" class="sidebar-handle" onclick="toggleSidebar()" title="收起左侧实例列表"><svg class="ico"><use href="#i-back"/></svg></button>
         <aside>
             <div class="side-head">
                 <span>实例列表（点击切换画面）</span>
@@ -3028,8 +3045,10 @@
             document.querySelector(".layout").classList.toggle("sidebar-hidden", sidebarHidden);
             const btn = $("btnSidebar");
             if (btn) {
-                btn.classList.toggle("btn-primary", sidebarHidden);
-                btn.title = sidebarHidden ? "显示左侧实例列表" : "隐藏左侧实例列表（画面占满）";
+                // 把手在侧栏右边缘：侧栏可见时显示「收起」箭头，隐藏时显示「展开」箭头。
+                btn.title = sidebarHidden ? "展开左侧实例列表" : "收起左侧实例列表（画面占满）";
+                const use = btn.querySelector("use");
+                if (use) use.setAttribute("href", sidebarHidden ? "#i-forward" : "#i-back");
             }
         }
         // 供页面初始化恢复与顶栏按钮点击共用；force 为布尔时强制设为该值。
