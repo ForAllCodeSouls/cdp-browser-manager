@@ -543,7 +543,13 @@ class MonitorPanelJsTests(unittest.TestCase):
         # 侧栏折叠按钮放在侧栏右边缘中部的把手上，顶栏不再放「侧栏」按钮。
         self.assertIn('class="sidebar-handle"', self.src)
         self.assertIn('.sidebar-handle {', self.src)
-        self.assertIn('position: absolute; left: 288px; top: 50%', self.src)
+        # VSCode 风格 sash：全高细线 + hover 高亮加粗 + 浮出箭头。
+        self.assertIn('.sidebar-handle::before {', self.src)
+        self.assertIn('width: 2px; background: var(--border);', self.src)
+        self.assertIn('.sidebar-handle:hover::before, .sidebar-handle:focus-visible::before {', self.src)
+        self.assertIn('background: var(--accent); width: 3px;', self.src)
+        self.assertIn('opacity: 0; transform: scale(.8);', self.src)
+        self.assertIn('.sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { opacity: 1;', self.src)
         self.assertIn('.layout.sidebar-hidden .sidebar-handle { left: 0', self.src)
         # 按钮在 layout 内、aside 之前，而非 header 的 toolbar 内。
         i = self.src.index('id="btnSidebar"')
@@ -1433,19 +1439,40 @@ class PanelEcoAndShareTests(unittest.TestCase):
         ):
             self.assertIn(token, self.src)
 
-        # 当前页 WS 与脚本连接代码：代理重写后的 WS + 自动附加 API_KEY。
+        # 当前页 WS：代理重写后的 WS + 自动附加 API_KEY。
         for token in (
             "function cdpRootOf(i)",
             "async function copyTextValue(text, label)",
             "async function copyCurrentPageWs()",
             '"/json/list"',
             "t.webSocketDebuggerUrl || t.wssUrl || t.wsUrl",
-            "async function copyScriptSnippet(kind)",
-            "ws = withKey(ws)",
-            "browserWSEndpoint:",
-            "websocket.create_connection(",
-            "copyScriptSnippet(\\'node\\')",
-            "copyScriptSnippet(\\'python\\')",
+        ):
+            self.assertIn(token, self.src)
+        self.assertNotIn("withKey(", self.src)  # 曾经的 bug：未定义的 withKey
+
+    def test_script_snippet_panel_curlconverter_style(self):
+        # 脚本代码生成弹窗：类 curlconverter，选库实时生成连接代码，自动附 API_KEY。
+        for token in (
+            'id="snippetMask"', 'id="snippetWs"', 'id="snippetLibs"',
+            'id="snippetCode"', 'id="snippetNote"', 'id="snippetSid"',
+            "function openSnippet()", "function closeSnippet()",
+            "async function loadSnippetWs()", "async function copySnippetWs()",
+            "function renderSnippetLibs()", "function selectSnippetLib(key)",
+            "function renderSnippetCode()", "async function copySnippetCode()",
+            "const SNIPPET_LIBS = [",
+            # 五个库都在列表里
+            'key: "pydoll"', 'key: "websocket"', 'key: "playwright"',
+            'key: "nodriver"', 'key: "drission"',
+            # 各库的关键 API 片段
+            "from pydoll.sync import Chrome", "browser.connect(WS)",
+            "import json, websocket", "websocket.create_connection(WS)",
+            "from playwright.sync_api import sync_playwright",
+            "p.chromium.connect_over_cdp(WS)",
+            "import nodriver as uc", "await uc.connect(WS)",
+            "from DrissionPage import Chromium",
+            # WS 自动附 key：修复用现成的 keyQuery，不再有未定义的 withKey
+            "$(\"snippetWs\").value = keyQuery(ws)",
+            "onclick=\"openSnippet()\"", "oninput=\"renderSnippetCode()\"",
         ):
             self.assertIn(token, self.src)
 

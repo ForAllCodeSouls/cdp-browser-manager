@@ -108,16 +108,32 @@
         /* 全局侧栏显隐：.sidebar-hidden 隐藏侧栏，监控视图与普通视图都生效。
            把手放在 .layout 上（不在 aside 内），所以侧栏隐藏后仍可见、可点回来。 */
         .layout.sidebar-hidden > aside { display: none; }
+        /* VSCode 风格 sash：平时只是一条融入边框的细线，hover 时高亮加粗并浮出箭头。
+           命中区给 12px 宽便于点击，视觉上仍只有 2px 的线。 */
         .sidebar-handle {
-            position: absolute; left: 288px; top: 50%; transform: translateY(-50%);
-            width: 22px; height: 56px; padding: 0; z-index: 6;
+            position: absolute; left: 282px; top: 0; bottom: 0;
+            width: 12px; padding: 0; margin: 0; z-index: 6;
             display: flex; align-items: center; justify-content: center;
-            border: 1px solid var(--border); border-left: none;
-            border-radius: 0 8px 8px 0; background: var(--surface-2); color: var(--muted);
+            background: transparent; border: 0; color: var(--muted); cursor: pointer;
         }
-        .sidebar-handle:hover { color: var(--text); background: var(--surface-3); }
-        .sidebar-handle .ico { width: 15px; height: 15px; }
-        .layout.sidebar-hidden .sidebar-handle { left: 0; border-left: 1px solid var(--border); }
+        .sidebar-handle::before {
+            content: ""; position: absolute; left: 5px; top: 0; bottom: 0;
+            width: 2px; background: var(--border);
+            transition: background .15s ease, width .15s ease, left .15s ease;
+        }
+        .sidebar-handle:hover::before, .sidebar-handle:focus-visible::before {
+            background: var(--accent); width: 3px; left: 4.5px;
+        }
+        .sidebar-handle .ico {
+            position: relative; z-index: 1; width: 14px; height: 14px;
+            padding: 4px; box-sizing: content-box; border-radius: 6px;
+            background: var(--surface-3); border: 1px solid var(--accent); color: var(--accent);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+            opacity: 0; transform: scale(.8);
+            transition: opacity .15s ease, transform .15s ease;
+        }
+        .sidebar-handle:hover .ico, .sidebar-handle:focus-visible .ico { opacity: 1; transform: scale(1); }
+        .layout.sidebar-hidden .sidebar-handle { left: 0; }
         aside {
             width: 288px;
             flex: 0 0 288px;
@@ -359,6 +375,30 @@
         .cdp-info-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
         .cdp-info-row .k { flex: 0 0 104px; color: var(--muted); }
         .cdp-info-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+
+        /* 脚本代码生成弹窗（类 curlconverter）：顶部 WS 输入 + 左侧库列表 + 右侧代码 */
+        .snippet-panel { width: 940px; max-width: 96vw; }
+        .snippet-ws-row { display: flex; gap: 8px; align-items: center; }
+        .snippet-ws-row input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+        .snippet-main { display: grid; grid-template-columns: 168px 1fr; gap: 12px; margin-top: 14px; }
+        .snippet-libs { display: flex; flex-direction: column; gap: 6px; }
+        .snippet-lib { text-align: left; padding: 9px 11px; border: 1px solid var(--border);
+            border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 12px; cursor: pointer; }
+        .snippet-lib:hover { border-color: var(--accent); }
+        .snippet-lib.on { background: var(--accent-soft); border-color: var(--accent); }
+        .snippet-lib small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+        .snippet-code-wrap { min-width: 0; background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 8px; overflow: hidden; }
+        .snippet-code-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+            border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+        .snippet-code-head .spacer { flex: 1; }
+        .snippet-code { margin: 0; padding: 12px 14px; font: 12px/1.6 ui-monospace, monospace;
+            white-space: pre-wrap; word-break: break-all; max-height: 46vh; overflow: auto; color: var(--text); }
+        .snippet-note { margin: 8px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
+        @media (max-width: 760px) {
+            .snippet-main { grid-template-columns: 1fr; }
+            .snippet-libs { flex-direction: row; flex-wrap: wrap; }
+        }
 
         .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
         .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
@@ -767,12 +807,14 @@
             .layout { flex-direction: column; }
             aside { width: 100%; flex: 0 0 auto; max-height: 220px; border-right: none; border-bottom: 1px solid var(--border); }
             .side-head.second { top: 49px; }
-            /* 窄屏侧栏在上方，把手改为横条贴在侧栏下边缘中部 */
-            .sidebar-handle { left: 50%; top: auto; bottom: 0; transform: translateX(-50%);
-                width: 56px; height: 20px; border: 1px solid var(--border); border-bottom: none;
-                border-radius: 8px 8px 0 0; }
-            .layout.sidebar-hidden .sidebar-handle { left: 50%; top: 0; bottom: auto;
-                border-bottom: 1px solid var(--border); border-radius: 0 0 8px 8px; }
+            /* 窄屏侧栏在上方：sash 转为横向细线贴在侧栏下边缘，命中区 12px 高 */
+            .sidebar-handle { left: 0; right: 0; top: auto; bottom: 0; transform: none;
+                width: auto; height: 12px; }
+            .sidebar-handle::before { left: 0; right: 0; top: 5px; bottom: auto;
+                width: auto; height: 2px; }
+            .sidebar-handle:hover::before, .sidebar-handle:focus-visible::before {
+                top: 4.5px; width: auto; height: 3px; }
+            .layout.sidebar-hidden .sidebar-handle { left: 0; right: 0; top: 0; bottom: auto; }
         }
 
         /* 统一线性图标：跟随 currentColor，尺寸随所在元素 */
@@ -1132,6 +1174,39 @@
             <div class="actions">
                 <button onclick="refreshCdpInfo()">刷新</button>
                 <button class="btn-primary" onclick="closeCdpInfo()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 脚本代码生成弹窗：类 curlconverter，选库实时生成连接代码 -->
+    <div class="mask" id="snippetMask" onclick="if(event.target===this) closeSnippet()">
+        <div class="panel snippet-panel">
+            <h3>生成脚本代码 <span id="snippetSid" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+            <div class="row" style="margin-bottom:8px">
+                <label>CDP WebSocket 地址（自动附带已保存的 API_KEY，可手动改）</label>
+                <div class="snippet-ws-row">
+                    <input id="snippetWs" spellcheck="false" oninput="renderSnippetCode()" placeholder="点「读取 WS」或手动粘贴 webSocketDebuggerUrl">
+                    <button onclick="loadSnippetWs()" title="从当前实例的版本信息读取浏览器级 WS">读取 WS</button>
+                    <button onclick="copySnippetWs()" title="复制当前输入框里的 WS 地址">复制</button>
+                </div>
+                <div class="hint" id="snippetWsHint">WS 地址是脚本连接的入口；带 key 才能通过鉴权。远端实例走面板代理，不会暴露容器内网地址。</div>
+            </div>
+            <div class="snippet-main">
+                <div class="snippet-libs" id="snippetLibs"></div>
+                <div>
+                    <div class="snippet-code-wrap">
+                        <div class="snippet-code-head">
+                            <span id="snippetLibName">—</span>
+                            <span class="spacer"></span>
+                            <button class="btn-mini" onclick="copySnippetCode()">复制代码</button>
+                        </div>
+                        <pre class="snippet-code" id="snippetCode">选择左侧库以生成代码</pre>
+                    </div>
+                    <p class="snippet-note" id="snippetNote"></p>
+                </div>
+            </div>
+            <div class="actions">
+                <button class="btn-primary" onclick="closeSnippet()">关闭</button>
             </div>
         </div>
     </div>
@@ -3805,11 +3880,8 @@
                     '<button class="lk" onclick="copyCurrentPageWs()"' +
                     ' title="复制当前选中标签的页面级 webSocketDebuggerUrl，操作具体页面用">' +
                     '复制当前页 WS</button>' +
-                    '<button class="lk" onclick="copyScriptSnippet(\'node\')"' +
-                    ' title="生成 Puppeteer connect 代码（自动附带已保存的 API_KEY）">' +
-                    'Puppeteer 代码</button>' +
-                    '<button class="lk" onclick="copyScriptSnippet(\'python\')"' +
-                    ' title="生成 Python websocket 连接代码（自动附带已保存的 API_KEY）">' +
+                    '<button class="lk" onclick="openSnippet()"' +
+                    ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
                     '</div>';
                 $("detail").innerHTML =
@@ -3997,9 +4069,70 @@
             }
         }
 
-        // 脚本连接片段：用代理重写后的 WS，并自动附上面板保存的 API_KEY。
-        async function copyScriptSnippet(kind) {
+        // ---- 脚本代码生成弹窗（类 curlconverter）：选库实时生成连接代码 ----
+        // 各库的 code(ws) 都基于「浏览器级 WS + 已附 API_KEY」，粘贴即可连当前实例。
+        const SNIPPET_LIBS = [
+            {
+                key: "pydoll", label: "pydoll", sub: "纯 Python · 无 Node",
+                install: "pip install pydoll-python",
+                note: "✅ 已验证：connect(ws) 直接吃带 key 的完整 WS 地址，无需 WebDriver/Node。close() 只断开连接、不关浏览器（别用 stop()）。它的 Playwright 兼容层支持改一行 import 复用你现有的 Playwright 脚本。",
+                code: function (ws) {
+                    return '# ' + this.install + '\nfrom pydoll.sync import Chrome\n\nWS = ' + JSON.stringify(ws) + '\n\nbrowser = Chrome()\ntab = browser.connect(WS)   # 返回第一个已打开的标签\nprint(tab.title)\ntab.go_to("https://example.com")\nbrowser.close()   # 只断开连接，不要 stop()\n';
+                }
+            },
+            {
+                key: "websocket", label: "websocket-client", sub: "零依赖 · 裸 CDP",
+                install: "pip install websocket-client",
+                note: "✅ 零依赖、最稳：裸 WebSocket + 手写 CDP，唯一确定能直接连带 key 的地址。命令 id / 事件队列要自己管理。",
+                code: function (ws) {
+                    return '# ' + this.install + '\nimport json, websocket\n\nWS = ' + JSON.stringify(ws) + '\n\nws = websocket.create_connection(WS)\nws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))\nprint(ws.recv())\nws.close()\n';
+                }
+            },
+            {
+                key: "playwright", label: "Playwright Python", sub: "主流 · 跨平台",
+                install: "pip install playwright",
+                note: "⚠️ 需实测：官方 connect_over_cdp 通常吃 http://host:port（它会自己去拉 /json/version）。这里喂的是带 key 的路径式 wss，可能要改成 CDP(域名) 根地址再试；CDP 附加模式的部分 API（如 console、pdf）保真度低于原生连接。",
+                code: function (ws) {
+                    return '# ' + this.install + '\nfrom playwright.sync_api import sync_playwright\n\nWS = ' + JSON.stringify(ws) + '\n\nwith sync_playwright() as p:\n    browser = p.chromium.connect_over_cdp(WS)\n    ctx = browser.contexts[0]\n    page = ctx.pages[0]\n    print(page.title())\n    page.goto("https://example.com")\n    browser.close()   # 只断开连接，不关浏览器\n';
+                }
+            },
+            {
+                key: "nodriver", label: "nodriver", sub: "异步 · 反检测",
+                install: "pip install nodriver",
+                note: "⚠️ 需实测：nodriver 主要设计给自己启动浏览器，也能连已有调试会话，但连「带 key 的路径式 wss」没有可靠先例。若 connect 不支持该地址，需改用 SSH 隧道把远端 9222 转到本地再连。",
+                code: function (ws) {
+                    return '# ' + this.install + '\nimport nodriver as uc\n\nWS = ' + JSON.stringify(ws) + '\n\nasync def main():\n    browser = await uc.connect(WS)   # ⚠️ 若报错，改用本地端口转发后的地址\n    page = await browser.get("https://example.com")\n    print(await page.get_content())\n    browser.stop()\n\nuc.loop().run_until_complete(main())\n';
+                }
+            },
+            {
+                key: "drission", label: "DrissionPage", sub: "国产 · 语法极简",
+                install: "pip install DrissionPage",
+                note: "⚠️ 需实测：DrissionPage 用 addr=host:port 连浏览器，不认带 key 的路径式 wss，也没有 key 参数。要连本面板的实例，需先把 CDP 端口通过 SSH 隧道转到本地（且不启用 API_KEY）。商用需作者授权。",
+                code: function (ws) {
+                    return '# ' + this.install + '\nfrom DrissionPage import Chromium\n\n# ⚠️ DrissionPage 只认 host:port，不认带 key 的 wss；\n# 请先做端口转发：ssh -L 9222:127.0.0.1:9222 user@host\nbrowser = Chromium(addr="127.0.0.1:9222")\ntab = browser.latest_tab\nprint(tab.title)\n';
+                }
+            }
+        ];
+        let snippetLibKey = "pydoll";
+        let snippetSid = "";
+
+        function openSnippet() {
             const sel = currentSel();
+            if (!sel) { toast("请先选中一个实例"); return; }
+            snippetSid = sel.sid;
+            const host = sel.host && sel.host !== "local" ? " · " + (sel.host_name || sel.host) : "";
+            $("snippetSid").textContent = sel.sid.slice(0, 8) + host;
+            $("snippetMask").classList.add("open");
+            $("snippetWs").value = "读取中…";
+            renderSnippetLibs();
+            selectSnippetLib(snippetLibKey);
+            loadSnippetWs();
+        }
+        function closeSnippet() { $("snippetMask").classList.remove("open"); }
+
+        // 读取当前实例浏览器级 WS，并附上面板保存的 API_KEY。
+        async function loadSnippetWs() {
+            const sel = instances[snippetSid];
             if (!sel) return;
             try {
                 const res = await fetch(cdpRootOf(sel) + "/json/version");
@@ -4007,14 +4140,50 @@
                 const d = await res.json();
                 let ws = d.webSocketDebuggerUrl || "";
                 if (!ws) throw new Error("版本信息里没有 webSocketDebuggerUrl");
-                ws = withKey(ws);
-                const snippet = kind === "node"
-                    ? 'const puppeteer = require("puppeteer-core");\n\nconst browser = await puppeteer.connect({\n  browserWSEndpoint: ' + JSON.stringify(ws) + ',\n});\n'
-                    : 'import json, websocket\n\nws = websocket.create_connection(' + JSON.stringify(ws) + ')\nws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))\n';
-                await copyTextValue(snippet, kind === "node" ? "Puppeteer 连接代码" : "Python 连接代码");
+                $("snippetWs").value = keyQuery(ws);
+                renderSnippetCode();
             } catch (e) {
-                toast("生成失败（" + e.message + "）", "error");
+                $("snippetWs").value = "";
+                $("snippetWsHint").textContent = "读取失败：" + e.message +
+                    "。可到「版本信息」页手动复制 webSocketDebuggerUrl 粘贴到上方。";
+                renderSnippetCode();
             }
+        }
+        async function copySnippetWs() {
+            const ws = $("snippetWs").value.trim();
+            if (!ws || ws === "读取中…") { toast("WS 地址还没准备好"); return; }
+            await copyTextValue(ws, "WS 地址");
+        }
+        function renderSnippetLibs() {
+            $("snippetLibs").innerHTML = SNIPPET_LIBS.map(l =>
+                '<button class="snippet-lib' + (l.key === snippetLibKey ? ' on' : '') + '"' +
+                ' onclick="selectSnippetLib(' + jsArg(l.key) + ')">' +
+                esc(l.label) + '<small>' + esc(l.sub) + '</small></button>'
+            ).join("");
+        }
+        function selectSnippetLib(key) {
+            snippetLibKey = key;
+            const lib = SNIPPET_LIBS.find(l => l.key === key) || SNIPPET_LIBS[0];
+            $("snippetLibName").textContent = lib.label + " · " + lib.install;
+            $("snippetNote").textContent = lib.note;
+            renderSnippetLibs();
+            renderSnippetCode();
+        }
+        function renderSnippetCode() {
+            const lib = SNIPPET_LIBS.find(l => l.key === snippetLibKey) || SNIPPET_LIBS[0];
+            const ws = $("snippetWs").value.trim();
+            $("snippetCode").textContent = (ws && ws !== "读取中…")
+                ? lib.code(ws)
+                : "# 正在读取 WS 地址，或读取失败——可手动粘贴 webSocketDebuggerUrl 到上方";
+        }
+        async function copySnippetCode() {
+            const code = $("snippetCode").textContent || "";
+            if (!code || code.startsWith("# ")) { toast("代码还没生成，请先看 WS 地址是否读取成功"); return; }
+            await copyTextValue(code, libLabel() + " 连接代码");
+        }
+        function libLabel() {
+            const lib = SNIPPET_LIBS.find(l => l.key === snippetLibKey);
+            return lib ? lib.label : "脚本";
         }
 
         async function deleteProfile(name) {
