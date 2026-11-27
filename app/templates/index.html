@@ -375,25 +375,29 @@
         .cdp-info-row .v { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
 
         /* 脚本代码生成弹窗（类 curlconverter）：顶部 WS 输入 + 左侧库列表 + 右侧代码 */
-        .snippet-panel { width: 940px; max-width: 96vw; }
+        .snippet-panel { width: min(1280px, 96vw); }
         .snippet-ws-row { display: flex; gap: 8px; align-items: center; }
-        .snippet-ws-row input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
-        .snippet-main { display: grid; grid-template-columns: 168px 1fr; gap: 12px; margin-top: 14px; }
+        .snippet-ws-row input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 13px; }
+        .snippet-ws-row button { flex: none; white-space: nowrap; }
+        .snippet-main { display: grid; grid-template-columns: 218px 1fr; gap: 16px; margin-top: 14px; }
         .snippet-libs { display: flex; flex-direction: column; gap: 6px; }
-        .snippet-lib { text-align: left; padding: 9px 11px; border: 1px solid var(--border);
-            border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 12px; cursor: pointer; }
+        .snippet-lib { text-align: left; padding: 11px 13px; border: 1px solid var(--border);
+            border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 13px; cursor: pointer; }
         .snippet-lib:hover { border-color: var(--accent); }
         .snippet-lib.on { background: var(--accent-soft); border-color: var(--accent); }
-        .snippet-lib small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+        .snippet-lib small { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
         .snippet-code-wrap { min-width: 0; background: var(--surface-2); border: 1px solid var(--border);
             border-radius: 8px; overflow: hidden; }
-        .snippet-code-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+        .snippet-code-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
             border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
-        .snippet-code-head .spacer { flex: 1; }
-        .snippet-code { margin: 0; padding: 12px 14px; font: 12px/1.6 ui-monospace, monospace;
-            white-space: pre-wrap; word-break: break-all; max-height: 46vh; overflow: auto; color: var(--text); }
-        .snippet-note { margin: 8px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
+        .snippet-code-head #snippetLibName { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+        .snippet-code-head .spacer { display: none; }
+        .snippet-code-head .btn-mini { flex: none; white-space: nowrap; }
+        .snippet-code { margin: 0; padding: 14px 16px; font: 13px/1.7 ui-monospace, monospace;
+            white-space: pre-wrap; word-break: break-all; max-height: 52vh; overflow: auto; color: var(--text); }
+        .snippet-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
         @media (max-width: 760px) {
+            .snippet-panel { width: 96vw; }
             .snippet-main { grid-template-columns: 1fr; }
             .snippet-libs { flex-direction: row; flex-wrap: wrap; }
         }
@@ -507,7 +511,7 @@
             /* 留白透明，透出 frame-wrap 的面板色；不要给 canvas 自己上色，
                替换元素的背景在部分浏览器里不按预期填充留白区域 */
             background: transparent;
-            cursor: crosshair;
+            cursor: default;
             outline: none;
         }
         .frame-overlay {
@@ -1620,6 +1624,21 @@
             const lv = JSON.parse(localStorage.getItem(LAST_VIEW_KEY) || "null");
             if (lv && typeof lv === "object") {
                 restoreView = { sid: String(lv.sid || ""), tid: String(lv.tid || "") };
+            }
+        } catch (e) {}
+        // 抓屏画面直达：新窗口带 ?sid=..&preview=cast&tid=.. 打开时，用查询参数覆盖首屏
+        // 定位实例与画面模式。只影响本次加载，不写回 localStorage（不污染用户默认设置），
+        // 读完即从地址栏移除参数，刷新后回到用户自己的常规视图。
+        try {
+            const q = new URLSearchParams(location.search);
+            const sidParam = q.get("sid");
+            const tidParam = q.get("tid");
+            if (sidParam) restoreView = { sid: sidParam, tid: tidParam || "" };
+            if (q.get("preview") === "cast") settings.preview = "cast";
+            if (sidParam || tidParam || q.has("preview")) {
+                q.delete("sid"); q.delete("tid"); q.delete("preview");
+                const rest = q.toString();
+                history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
             }
         } catch (e) {}
         function saveLastView() {
@@ -2864,18 +2883,26 @@
             canvas.addEventListener("wheel", (e) => {
                 if (locked()) return;
                 e.preventDefault(); // 阻止页面自身滚动；Ctrl+滚轮交给远程做缩放
-                const p = point(e);
-                if (!p) return; // 留白区不产生输入
+                const p = point(e, true); // 留白边缘也钳到画面，保证贴边滚动生效
+                if (!p) return;
                 // deltaMode: 0=像素, 1=行, 2=页；CDP 只认像素，统一换算。
-                const unit = e.deltaMode === 1 ? 16
+                const unit = e.deltaMode === 1 ? 40
                     : e.deltaMode === 2 ? (viewport && viewport.h > 0 ? viewport.h : 720) : 1;
-                castSend(wsRef.ws, "Input.dispatchWheelEvent", {
-                    // CDP 要求 type 固定为 mouseWheel；漏传会被 Chrome 直接忽略，
-                    // 表现就是键盘/点击都正常、唯独滚轮没反应。
+                let dx = e.deltaX * unit, dy = e.deltaY * unit;
+                // 触控板高精度滚动的 delta 常小于 20px，直接转发几乎看不到效果。
+                // 保留方向，只给过小的步长兜一个最小幅度，不影响普通鼠标手感。
+                const MIN_STEP = 20;
+                if (dx !== 0 && Math.abs(dx) < MIN_STEP) dx = Math.sign(dx) * MIN_STEP;
+                if (dy !== 0 && Math.abs(dy) < MIN_STEP) dy = Math.sign(dy) * MIN_STEP;
+                // 滚轮走 CDP 的 dispatchMouseEvent + type:mouseWheel（Puppeteer/Playwright
+                // 都用这条路径）。dispatchWheelEvent 在抓屏链路里不会生效，已弃用。
+                castSend(wsRef.ws, "Input.dispatchMouseEvent", {
                     type: "mouseWheel",
                     x: p.x, y: p.y,
-                    deltaX: e.deltaX * unit, deltaY: e.deltaY * unit,
+                    deltaX: dx, deltaY: dy,
+                    buttons: e.buttons,
                     modifiers: mods(e),
+                    pointerType: "mouse",
                 });
             }, { passive: false });
             // 中键点击会触发浏览器的自动滚动，侧键会触发前进/后退；本地一律拦掉。
@@ -3900,8 +3927,14 @@
                         : '') +
                     pinfo + vncInfo +
                     '<span class="spacer"></span>' +
-                    '<button class="btn-mini" onclick="openCurrentPage()"' +
-                        ' title="在新窗口打开浏览器当前标签的网页">当前网页 ↗</button>' +
+                    '<button class="btn-mini" onclick="openCastPage()"' +
+                        ' title="在新窗口打开该实例的 CDP 抓屏画面（自动定位并切到抓屏模式，无头实例可用）">' +
+                        '抓屏画面 ↗</button>' +
+                    (!headless && vncUrl(sel)
+                        ? '<button class="btn-mini" onclick="openVncPage()"' +
+                            ' title="在新窗口打开该实例的 noVNC 画面（跟随当前画质/缩放设置）">' +
+                            'VNC 画面 ↗</button>'
+                        : '') +
                     '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
                     seg + linksHtml;
             }
@@ -3971,21 +4004,24 @@
             }
         }
 
-        // 详情栏「当前网页」：打开导航条当前选中标签的网页地址。
-        // 抓屏模式没有独立画面 URL，原「新窗口打开」给的是 /json/version（JSON 文本），
-        // 按钮名与结果不符；现在拆成「当前网页」与「CDP 信息」两个明确入口。
-        function currentPageUrl() {
+        // 详情栏「VNC 画面」：在新窗口打开当前实例的 noVNC 画面地址，
+        // 跟随当前画质/缩放设置；无头实例没有 VNC 服务，按钮不渲染。
+        function openVncPage() {
             const sel = currentSel();
-            if (!sel || !castState || castState.sid !== sel.sid) return "";
-            const t = (castState.targets || []).find(x => x.id === castState.tid);
-            return t ? (t.url || "") : "";
-        }
-        function openCurrentPage() {
-            const url = currentPageUrl();
-            if (!url || url === "about:blank" || /^(devtools|chrome):/.test(url)) {
-                toast("当前标签没有可用的网页地址"); return;
-            }
+            if (!sel || isHeadless(sel)) return;
+            const url = vncUrl(sel);
+            if (!url) { toast("该实例没有可用的 VNC 地址"); return; }
             window.open(url, "_blank", "noopener");
+        }
+        // 详情栏「抓屏画面」：抓屏没有独立 URL（WS 实时绘制），改为开一个新的管理页，
+        // 用查询参数定位实例/标签并强制切到抓屏模式。新窗口同源，密钥与设置自动继承。
+        function openCastPage() {
+            const sel = currentSel();
+            if (!sel) return;
+            const q = "?sid=" + encodeURIComponent(sel.sid) + "&preview=cast" +
+                (castState && castState.sid === sel.sid && castState.tid
+                    ? "&tid=" + encodeURIComponent(castState.tid) : "");
+            window.open(location.pathname + q, "_blank", "noopener");
         }
 
         // 从版本信息读取浏览器级 webSocketDebuggerUrl 并复制（脚本连接常用入口）。
@@ -4039,7 +4075,7 @@
                     ["协议版本", d["Protocol-Version"]],
                     ["User-Agent", d["User-Agent"]],
                     ["V8 版本", d["V8-Version"]],
-                    ["Blink", d["webkit-version"]],
+                    ["Blink", d["WebKit-Version"]],
                     ["浏览器 WS", d.webSocketDebuggerUrl],
                 ];
                 body.innerHTML = rows.map(([k, v]) =>

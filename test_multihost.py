@@ -1279,8 +1279,9 @@ class PanelEcoAndShareTests(unittest.TestCase):
             'buttons: e.buttons, modifiers: mods(e)',  # 释放也带修饰键
             'type: "mousePressed"', 'type: "mouseReleased"', 'type: "mouseMoved"',
             'clickCount: e.detail || 1',  # 单击/双击/三击
-            'e.deltaMode === 1 ? 16',  # 行/页滚动量归一
-            'deltaX: e.deltaX * unit, deltaY: e.deltaY * unit',
+            'e.deltaMode === 1 ? 40',  # 行/页滚动量归一
+            'deltaX: dx, deltaY: dy',  # 滚轮走 dispatchMouseEvent + 小步长放大
+            'pointerType: "mouse"',
             'modifiers: mods(e),\n                });',  # Ctrl+滚轮缩放
             'canvas.addEventListener("auxclick"',  # 中键自动滚动本地拦截
             'canvas.addEventListener("contextmenu"',  # 右键菜单本地拦截
@@ -1330,12 +1331,19 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("::-webkit-scrollbar-corner", self.share_src)
 
     def test_cast_wheel_event_has_required_type(self):
-        # CDP Input.dispatchWheelEvent 必须带 type:mouseWheel，否则 Chrome 忽略命令。
-        i = self.src.index('"Input.dispatchWheelEvent"')
-        seg = self.src[i:i + 380]
+        # 滚轮必须走 dispatchMouseEvent + type:mouseWheel（Puppeteer/Playwright 同款路径），
+        # 旧的 dispatchWheelEvent 在抓屏链路里不生效，已弃用。
+        i = self.src.index('// 滚轮走 CDP 的 dispatchMouseEvent')
+        seg = self.src[i:i + 520]
+        self.assertIn('"Input.dispatchMouseEvent"', seg)
         self.assertIn('type: "mouseWheel"', seg)
-        self.assertIn("deltaX: e.deltaX * unit", seg)
-        self.assertIn("deltaY: e.deltaY * unit", seg)
+        self.assertIn('pointerType: "mouse"', seg)
+        self.assertIn("deltaX: dx, deltaY: dy", seg)
+        self.assertIn("MIN_STEP = 20", self.src)
+        self.assertIn("point(e, true)", self.src)
+        # 画面光标用普通箭头，不再是 crosshair。
+        self.assertIn("cursor: default;", self.src)
+        self.assertNotIn("cursor: crosshair;", self.src)
 
     def test_tabs_sorted_by_open_order_backend(self):
         # 后端按打开顺序返回标签：新标签追加末尾、切换不改变顺序、关闭后相对顺序不变。
@@ -1406,12 +1414,26 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertIn("if (changed && !screenLocked)", seg3)
 
     def test_detail_cdp_quick_links_and_current_page(self):
-        # 「新窗口打开」拆成「当前网页」+「CDP 信息」：抓屏模式不再把 JSON 当画面入口。
-        self.assertIn("function currentPageUrl()", self.src)
-        self.assertIn("function openCurrentPage()", self.src)
-        self.assertIn('window.open(url, "_blank", "noopener")', self.src)
-        self.assertIn('">当前网页 ↗</button>', self.src)
+        # 原「新窗口打开」→「当前网页」已按用户要求移除：详情栏只留画面直达按钮。
+        # 「CDP 信息」仍在左侧实例列表项右上角，不再把 JSON 当画面入口。
+        self.assertNotIn("function currentPageUrl()", self.src)
+        self.assertNotIn("function openCurrentPage()", self.src)
+        self.assertNotIn('">当前网页 ↗</button>', self.src)
         self.assertNotIn('>新窗口打开</a>', self.src)
+        # 详情栏独立的 VNC 画面直达按钮：非无头实例渲染、无头隐藏，打开 noVNC 地址。
+        self.assertIn("function openVncPage()", self.src)
+        self.assertIn('onclick="openVncPage()"', self.src)
+        self.assertIn("'VNC 画面 ↗</button>'", self.src)
+        self.assertIn('(!headless && vncUrl(sel)', self.src)
+        # 详情栏「抓屏画面」直达：所有实例可用（含无头），新窗口带 sid/preview=cast/tid
+        # 定位实例并强制切到抓屏模式；启动解析参数、用完从地址栏清理且不污染本地设置。
+        self.assertIn("function openCastPage()", self.src)
+        self.assertIn('onclick="openCastPage()"', self.src)
+        self.assertIn("'抓屏画面 ↗</button>'", self.src)
+        self.assertIn('"&preview=cast"', self.src)
+        self.assertIn('new URLSearchParams(location.search)', self.src)
+        self.assertIn('q.delete("sid"); q.delete("tid"); q.delete("preview")', self.src)
+        self.assertIn('if (q.get("preview") === "cast") settings.preview = "cast"', self.src)
         # CDP 信息移到左侧实例列表项右上角（红框位置），点它不切换当前实例。
         self.assertIn("function cdpVersionUrl(i)", self.src)
         self.assertIn('class="inst-cdp-link"', self.src)
@@ -1440,7 +1462,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
             "async function openCdpInfo(sid)", "async function refreshCdpInfo()",
             "function closeCdpInfo()", "cdp-info-row",
             'd["Protocol-Version"]', 'd["User-Agent"]', 'd["V8-Version"]',
-            'd["webkit-version"]', "d.webSocketDebuggerUrl", "copyTextValue(",
+            'd["WebKit-Version"]', "d.webSocketDebuggerUrl", "copyTextValue(",
         ):
             self.assertIn(token, self.src)
 
