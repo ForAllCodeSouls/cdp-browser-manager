@@ -90,7 +90,7 @@
         .btn-danger { color: var(--danger); border-color: #5a3038; }
         .btn-danger:hover:not(:disabled) { background: #3a2026; }
         .btn-mini { font-size: 11px; padding: 3px 8px; }
-        /* 详情栏画面按钮组：主按钮 + 小箭头下拉，选桌面画面 / 抓屏画面 */
+        /* 详情栏画面按钮组：主按钮 + 小箭头下拉，选 VNC 画面 / 抓屏画面 */
         .view-group { position: relative; display: inline-flex; }
         .view-group .view-menu {
             display: none; position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
@@ -3994,13 +3994,13 @@
                     '<span class="spacer"></span>' +
                     '<span class="view-group" id="viewGroup">' +
                         '<button class="btn-mini" onclick="openDefaultView()"' +
-                            ' title="在新窗口打开画面，点右侧箭头可选桌面 / 抓屏">' +
+                            ' title="在新窗口打开画面，点右侧箭头可选 VNC / 抓屏">' +
                             '画面 ↗</button>' +
                         '<button class="btn-mini" title="选择画面类型"' +
                             ' onclick="toggleViewMenu(event)">▾</button>' +
                         '<span class="view-menu">' +
                             (!headless && vncUrl(sel)
-                                ? '<button onclick="openVncPage()">桌面画面 ↗</button>' : '') +
+                                ? '<button onclick="openVncPage()">VNC 画面 ↗</button>' : '') +
                             '<button onclick="openCastPage()">抓屏画面 ↗</button>' +
                         '</span>' +
                     '</span>' +
@@ -4073,7 +4073,7 @@
             }
         }
 
-        // 详情栏「桌面画面」：在新窗口打开当前实例的 noVNC 画面地址，
+        // 详情栏「VNC 画面」：在新窗口打开当前实例的 noVNC 画面地址，
         // 跟随当前画质/缩放设置；无头实例没有 VNC 服务，按钮不渲染。
         function openVncPage() {
             const sel = currentSel();
@@ -4084,8 +4084,8 @@
             const g = $("viewGroup");
             if (g) g.classList.remove("open");
         }
-        // 详情栏画面按钮组：主按钮按实例能力打开默认画面（完整内核优先桌面画面，
-        // 无头实例走抓屏画面），右侧箭头展开菜单可显式选择桌面 / 抓屏。
+        // 详情栏画面按钮组：主按钮按实例能力打开默认画面（完整内核优先 VNC 画面，
+        // 无头实例走抓屏画面），右侧箭头展开菜单可显式选择 VNC / 抓屏。
         function toggleViewMenu(ev) {
             if (ev) ev.stopPropagation();
             const g = $("viewGroup");

@@ -1548,18 +1548,18 @@ class PanelEcoAndShareTests(unittest.TestCase):
         self.assertNotIn("function openCurrentPage()", self.src)
         self.assertNotIn('">当前网页 ↗</button>', self.src)
         self.assertNotIn('>新窗口打开</a>', self.src)
-        # 详情栏画面按钮组：主按钮 + 箭头下拉，菜单里选「桌面画面 / 抓屏画面」。
+        # 详情栏画面按钮组：主按钮 + 箭头下拉，菜单里选「VNC 画面 / 抓屏画面」。
         self.assertIn('class="view-group" id="viewGroup"', self.src)
         self.assertIn("function toggleViewMenu(ev)", self.src)
         self.assertIn("function openDefaultView()", self.src)
         self.assertIn('onclick="toggleViewMenu(event)"', self.src)
         self.assertIn("'画面 ↗</button>'", self.src)
-        self.assertIn(">桌面画面 ↗</button>", self.src)
+        self.assertIn(">VNC 画面 ↗</button>", self.src)
         self.assertIn(">抓屏画面 ↗</button>", self.src)
-        self.assertNotIn(">VNC 画面 ↗</button>", self.src)
+        self.assertNotIn(">桌面画面 ↗</button>", self.src)
         self.assertNotIn(">网页画面 ↗</button>", self.src)
         self.assertIn('(!headless && vncUrl(sel)', self.src)
-        # 桌面画面：非无头才在菜单项渲染，打开 noVNC 地址。
+        # VNC 画面：非无头才在菜单项渲染，打开 noVNC 地址。
         self.assertIn("function openVncPage()", self.src)
         self.assertIn('onclick="openVncPage()"', self.src)
         # 抓屏画面：打开独立 /cast?sid=..&tid=.. 页面，不再走管理页 ?preview=cast 直达。
