@@ -652,6 +652,15 @@ CAST_PROFILES = {
 }
 # 无 screencast 帧时，每隔多久主动 captureScreenshot 补一帧（秒）。
 CAST_KEEPALIVE_SEC = float(os.environ.get("CAST_KEEPALIVE_SEC", "1.5"))
+# 抓屏方式：Cast = startScreencast 变化推帧（静止时用 captureScreenshot 兜底）；
+# Snap = 不发 startScreencast，纯 captureScreenshot 按固定间隔轮询抓图。
+# Snap 三档间隔：快 0.2s（约 5fps）/ 标准 0.5s（约 2fps）/ 省 1s（约 1fps）。
+SNAP_INTERVALS = {"fast": 0.2, "normal": 0.5, "eco": 1.0}
+
+
+def normalize_snap_interval(name: str) -> str:
+    key = str(name or "").strip().lower()
+    return key if key in SNAP_INTERVALS else "normal"
 
 
 def cast_quality_profile(name: str) -> dict:
@@ -2368,6 +2377,13 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
 
     # 画质档位从 WS 查询串读取，未知档位后端回落均衡，前端无需信任用户输入。
     profile = cast_quality_profile(websocket.query_params.get("quality", ""))
+    # 抓屏方式：cast（startScreencast 变化推帧，静止补帧）或 snap（纯定时截图）。
+    # 监控档必须走 cast：它靠 screencast + min_interval 限帧，snap 会退化为定时抓图。
+    capture_mode = str(websocket.query_params.get("mode", "cast") or "").strip().lower()
+    if capture_mode not in ("cast", "snap") or profile.get("min_interval"):
+        capture_mode = "cast"
+    snap_key = normalize_snap_interval(websocket.query_params.get("snap", ""))
+    snap_interval = SNAP_INTERVALS[snap_key]
     await websocket.accept()
     upstream = None
     stop = threading.Event()
@@ -2409,17 +2425,18 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
             main_frame = {}  # 记住主 frame id，用于过滤 iframe 的导航事件
             q = profile["quality"]
             upstream_send({"id": call_id, "method": "Page.enable", "params": {}})
-            upstream_send({
-                "id": ack_id,
-                "method": "Page.startScreencast",
-                "params": {
-                    "format": "jpeg",
-                    "quality": q,
-                    "everyNthFrame": profile["every_nth"],
-                    "maxWidth": profile["max_width"],
-                    "maxHeight": profile["max_height"],
-                },
-            })
+            if capture_mode == "cast":
+                upstream_send({
+                    "id": ack_id,
+                    "method": "Page.startScreencast",
+                    "params": {
+                        "format": "jpeg",
+                        "quality": q,
+                        "everyNthFrame": profile["every_nth"],
+                        "maxWidth": profile["max_width"],
+                        "maxHeight": profile["max_height"],
+                    },
+                })
 
             def request_shot() -> bool:
                 nonlocal shot_id
@@ -2444,15 +2461,21 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     pending_shots.discard(shot_id)
                     return False
 
-            # 首帧兜底：startScreencast 对静止页面可能迟迟不推帧，主动抓当前画面。
+            # 首帧兜底：Cast 下 screencast 对静止页面可能迟迟不推帧，Snap 下也
+            # 需要立刻有画面；两种模式都先主动抓一帧。
             request_shot()
             last_frame = time.monotonic()
             last_sent = 0.0  # 监控档限帧：距离上次转发不足 min_interval 的帧直接丢弃
             min_interval = float(profile.get("min_interval", 0) or 0)
+            # Snap 靠定时截图推进，recv 超时必须短于抓帧间隔才能准时发下一帧；
+            # Cast 的 screencast 会主动推帧，1s 空闲超时足够唤醒检查补帧。
+            if capture_mode == "snap":
+                upstream.settimeout(max(0.05, min(snap_interval, 0.25)))
             while not stop.is_set():
                 now = time.monotonic()
-                # 静止超时 → 主动补帧（截图请求发出后，响应在下面按 id 匹配转发）。
-                if now - last_frame >= CAST_KEEPALIVE_SEC:
+                # Cast：静止超过 KEEPALIVE_SEC 才补帧；Snap：按自身间隔定时抓帧。
+                interval = snap_interval if capture_mode == "snap" else CAST_KEEPALIVE_SEC
+                if now - last_frame >= interval:
                     # 只有真的发出截图请求才重置计时；在途满时不重置，
                     # 这样一旦有响应腾出名额会立刻再补，不会卡住不补帧。
                     if request_shot():
@@ -2485,9 +2508,13 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
                     data = params.get("data", "")
                     last_frame = time.monotonic()  # 收到实帧，重置补帧计时
                 elif msg.get("id") in pending_shots and isinstance(msg.get("result"), dict):
-                    # captureScreenshot 响应：{id, result:{data}}；可能是首帧或任一次补帧。
+                    # captureScreenshot 响应：{id, result:{data}}；Snap 模式的每一帧、
+                    # Cast 模式的首帧/补帧都走这里。
                     pending_shots.discard(msg["id"])
                     data = msg["result"].get("data", "")
+                    if capture_mode == "snap":
+                        # Snap 的节奏由截图响应驱动：拿到一帧后重新计时下一帧。
+                        last_frame = time.monotonic()
 
                 # 导航事件实时推给前端更新地址栏：网页自动化跳转很快，靠 HTTP
                 # 轮询标签列表会滞后数秒，CDP 的 frameNavigated/站内跳转事件是
@@ -2567,10 +2594,11 @@ async def ws_cast(websocket: WebSocket, sid: str, tid: str):
     finally:
         stop.set()
         if upstream is not None:
-            try:
-                upstream_send({"id": 999, "method": "Page.stopScreencast", "params": {}})
-            except Exception:
-                pass
+            if capture_mode == "cast":
+                try:
+                    upstream_send({"id": 999, "method": "Page.stopScreencast", "params": {}})
+                except Exception:
+                    pass
             try:
                 upstream.close()
             except Exception:

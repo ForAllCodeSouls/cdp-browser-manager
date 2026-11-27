@@ -1118,9 +1118,12 @@
                     scale: s.scale === "0" ? "0" : "1",
                     screenLocked: s.screenLocked === true,
                     quality: q,
+                    captureMode: s.captureMode === "snap" ? "snap" : "cast",
+                    snapRate: ["fast", "normal", "eco"].includes(s.snapRate) ? s.snapRate : "normal",
                 };
             } catch (e) {
-                return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false, quality: suggestQuality() };
+                return { preview: "vnc", page: "vnc_lite.html", scale: "1", screenLocked: false,
+                    quality: suggestQuality(), captureMode: "cast", snapRate: "normal" };
             }
         }
         let settings = loadSettings();
@@ -1554,15 +1557,23 @@
 
         // 全局画质档位切换：对所有实例生效，切换后重连画面让 VNC/抓屏都按新档位生效。
         const QUALITY_LABELS = { low: "省流", medium: "均衡", high: "高清" };
+        // 抓屏方式：Cast = startScreencast 变化推帧（静止补帧）；Snap = 定时 captureScreenshot。
+        const CAPTURE_LABELS = { cast: "Cast", snap: "Snap" };
+        // Snap 定时抓图间隔三档：快 0.2s / 标准 0.5s / 省 1s。
+        const SNAP_RATE_LABELS = { fast: "快", normal: "标准", eco: "省" };
         // VNC 刷新档（容器内 x11vnc 采集节流，仅完整内核）。全局统一、随时可改：
         // 切换时对所有主机所有运行实例热改，并持久化到服务端，新建实例也沿用。
         const VNC_REFRESH_LABELS = { standard: "标准", fast: "快速", ultra: "极速" };
-        // 按「画面模式 + 画质档位」给出一句建议，帮用户快速判断当前组合是否合适。
-        function qualityHint(mode, q) {
+        // 按「画面模式 + 画质档位 + 抓屏方式」给出一句建议，帮用户快速判断当前组合是否合适。
+        function qualityHint(mode, q, captureMode, snapRate) {
+            if (mode === "cast" && captureMode === "snap") {
+                const rate = { fast: "0.2 秒，约 5 帧", normal: "0.5 秒，约 2 帧", eco: "1 秒，约 1 帧" }[snapRate] || "0.5 秒";
+                return "仅网页内容 · 定时抓图每 " + rate + "，不依赖变化推帧";
+            }
             const byMode = {
                 cast: {
                     low: "仅网页内容 · 低清省流量，帧率与其它档一致",
-                    medium: "仅网页内容 · 流畅清晰均衡（推荐）",
+                    medium: "仅网页内容 · 变化推帧，流畅清晰均衡（推荐）",
                     high: "仅网页内容 · 最清晰但流量大，网络好时用",
                 },
                 vnc: {
@@ -1581,6 +1592,26 @@
             resetFrameState();
             render();
             toast("画质已切换为" + (QUALITY_LABELS[q] || q) + "，画面重新连接", "ok");
+        }
+        // 抓屏方式切换：全局保存，切换后重连画面。Cast 变化推帧；Snap 定时截图。
+        function setCaptureMode(m) {
+            if (!(m in CAPTURE_LABELS)) return;
+            if (settings.captureMode === m) return;
+            settings.captureMode = m;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            resetFrameState();
+            render();
+            toast("抓屏方式已切到 " + m.toUpperCase() + "，画面重新连接", "ok");
+        }
+        // Snap 间隔档：只在 Snap 模式下有意义，同样全局保存并重连。
+        function setSnapRate(r) {
+            if (!(r in SNAP_RATE_LABELS)) return;
+            if (settings.snapRate === r) return;
+            settings.snapRate = r;
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+            resetFrameState();
+            render();
+            toast("Snap 抓图间隔已切到「" + SNAP_RATE_LABELS[r] + "」，画面重新连接", "ok");
         }
 
         // 全局 VNC 刷新档：本机 + 所有已接入远端主机一起切换，服务端持久化。
@@ -1789,6 +1820,13 @@
             // 画质档位带在 WS 查询串上，后端按档位设置抓屏分辨率/码率。
             const q = ["low", "medium", "high"].includes(settings.quality) ? settings.quality : "medium";
             tpl += (tpl.includes("?") ? "&" : "?") + "quality=" + encodeURIComponent(q);
+            // 抓屏方式 + Snap 间隔：后端据此选 startScreencast 推帧或定时 captureScreenshot。
+            const cm = settings.captureMode === "snap" ? "snap" : "cast";
+            tpl += "&mode=" + cm;
+            if (cm === "snap") {
+                const sr = ["fast", "normal", "eco"].includes(settings.snapRate) ? settings.snapRate : "normal";
+                tpl += "&snap=" + encodeURIComponent(sr);
+            }
             return proto + "//" + location.host + tpl;
         }
 
@@ -2612,7 +2650,7 @@
             let tpl = inst.cast_ws || ("/ws/cast/" + inst.sid + "/{tid}");
             const proto = location.protocol === "https:" ? "wss:" : "ws:";
             tpl = keyQuery(tpl.replace("{tid}", encodeURIComponent(tid)));
-            tpl += (tpl.includes("?") ? "&" : "?") + "quality=monitor";
+            tpl += (tpl.includes("?") ? "&" : "?") + "quality=monitor&mode=cast";
             return proto + "//" + location.host + tpl;
         }
         function destroyMonitorCard(sid) {
@@ -2864,6 +2902,24 @@
                             ' onclick="setQuality(\'' + k + '\')">' + QUALITY_LABELS[k] + '</button>'
                         ).join('') +
                     '</span>';
+                // 抓屏方式只在「抓屏」模式下有意义：Cast 变化推帧 / Snap 定时截图。
+                const cm = settings.captureMode === "snap" ? "snap" : "cast";
+                const capseg = mode !== "cast" ? '' :
+                    '<span class="seg qseg" title="全局抓屏方式：Cast 变化推帧，Snap 定时截图">' +
+                        ['cast', 'snap'].map(k =>
+                            '<button class="' + (cm === k ? "on" : "") + '"' +
+                            ' title="' + (k === "cast" ? "变化推帧，静止补帧" : "定时截图，帧率固定") + '"' +
+                            ' onclick="setCaptureMode(\'' + k + '\')">' + CAPTURE_LABELS[k] + '</button>'
+                        ).join('') +
+                    '</span>' +
+                    (cm === "snap"
+                        ? '<span class="seg qseg" title="Snap 定时抓图间隔，全局生效">' +
+                            ['fast', 'normal', 'eco'].map(k =>
+                                '<button class="' + (settings.snapRate === k ? "on" : "") + '"' +
+                                ' title="每 ' + ({ fast: "0.2", normal: "0.5", eco: "1" }[k]) + ' 秒抓一帧"' +
+                                ' onclick="setSnapRate(\'' + k + '\')">' + SNAP_RATE_LABELS[k] + '</button>'
+                            ).join('') + '</span>'
+                        : '');
                 const seg =
                     '<span class="seg">' +
                         '<button class="' + (mode === "vnc" ? "on" : "") + '"' +
@@ -2871,8 +2927,8 @@
                             ' onclick="setPreview(\'vnc\')">VNC</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
-                    '</span>' + qseg +
-                    '<span class="qhint">' + esc(qualityHint(mode, settings.quality)) + '</span>';
+                    '</span>' + qseg + capseg +
+                    '<span class="qhint">' + esc(qualityHint(mode, settings.quality, cm, settings.snapRate)) + '</span>';
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
                     statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +

@@ -178,8 +178,8 @@ class QualityToggleJsTests(unittest.TestCase):
         self.assertIn("render()", seg)
 
     def test_quality_hint_rendered_after_seg(self):
-        # 详情栏在切换按钮后有按「模式+画质」给出的建议文字。
-        self.assertIn("qualityHint(mode, settings.quality)", self.src)
+        # 详情栏在切换按钮后有按「模式+画质+抓屏方式」给出的建议文字。
+        self.assertIn("qualityHint(mode, settings.quality, cm, settings.snapRate)", self.src)
         self.assertIn('class="qhint"', self.src)
         i = self.src.index("function qualityHint")
         seg = self.src[i:i + 700]
@@ -400,6 +400,74 @@ class CastQualityProfileTests(unittest.TestCase):
             src = f.read()
         self.assertIn('min_interval = float(profile.get("min_interval", 0) or 0)', src)
         self.assertIn("now_send - last_sent < min_interval", src)
+
+
+class CaptureModeTests(unittest.TestCase):
+    """抓屏方式：Cast 变化推帧 / Snap 定时截图，模式与间隔参数后端兜底。"""
+
+    def setUp(self):
+        with open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8") as f:
+            self.src = f.read()
+        with open(os.path.join(ROOT, "app", "templates", "index.html"), encoding="utf-8") as f:
+            self.js = f.read()
+
+    def test_snap_interval_profiles(self):
+        self.assertAlmostEqual(main.SNAP_INTERVALS["fast"], 0.2)
+        self.assertAlmostEqual(main.SNAP_INTERVALS["normal"], 0.5)
+        self.assertAlmostEqual(main.SNAP_INTERVALS["eco"], 1.0)
+
+    def test_normalize_snap_interval_falls_back(self):
+        self.assertEqual(main.normalize_snap_interval("FAST"), "fast")
+        self.assertEqual(main.normalize_snap_interval("eco"), "eco")
+        self.assertEqual(main.normalize_snap_interval(""), "normal")
+        self.assertEqual(main.normalize_snap_interval("bogus"), "normal")
+        self.assertEqual(main.normalize_snap_interval(None), "normal")
+
+    def test_backend_accepts_mode_and_snap_params(self):
+        self.assertIn('websocket.query_params.get("mode", "cast")', self.src)
+        self.assertIn('websocket.query_params.get("snap", "")', self.src)
+        self.assertIn('if capture_mode not in ("cast", "snap") or profile.get("min_interval"):', self.src)
+
+    def test_snap_skips_screencast_and_polls(self):
+        self.assertIn('if capture_mode == "cast":\n                upstream_send({\n                    "id": ack_id,\n                    "method": "Page.startScreencast"', self.src)
+        self.assertIn('interval = snap_interval if capture_mode == "snap" else CAST_KEEPALIVE_SEC', self.src)
+        self.assertIn('upstream.settimeout(max(0.05, min(snap_interval, 0.25)))', self.src)
+
+    def test_snap_response_drives_next_frame(self):
+        self.assertIn('if capture_mode == "snap":\n                        # Snap 的节奏由截图响应驱动', self.src)
+
+    def test_stop_screencast_only_in_cast(self):
+        self.assertIn("if capture_mode == \"cast\":\n                try:\n                    upstream_send({\"id\": 999, \"method\": \"Page.stopScreencast\"", self.src)
+
+    def test_js_mode_switch_persists_and_reconnects(self):
+        self.assertIn("function setCaptureMode(m)", self.js)
+        self.assertIn("function setSnapRate(r)", self.js)
+        self.assertIn("captureMode: s.captureMode === \"snap\" ? \"snap\" : \"cast\"", self.js)
+        self.assertIn("snapRate: [\"fast\", \"normal\", \"eco\"].includes(s.snapRate)", self.js)
+        # 切换模式/间隔都要重连画面
+        i = self.js.index("function setCaptureMode(m)")
+        seg = self.js[i:i + 500]
+        self.assertIn("resetFrameState()", seg)
+        self.assertIn("render()", seg)
+
+    def test_js_ws_url_carries_mode_and_interval(self):
+        i = self.js.index("function castWsUrl(i, tid)")
+        seg = self.js[i:i + 1100]
+        self.assertIn("&mode=", seg)
+        self.assertIn('"&snap=" + encodeURIComponent(sr)', seg)
+
+    def test_js_detail_has_mode_seg_and_hint(self):
+        self.assertIn("const CAPTURE_LABELS = { cast: \"Cast\", snap: \"Snap\" }", self.js)
+        self.assertIn("const SNAP_RATE_LABELS", self.js)
+        self.assertIn("onclick=\"setCaptureMode(\\'' + k + '\\')\"", self.js)
+        self.assertIn("onclick=\"setSnapRate(\\'' + k + '\\')\"", self.js)
+        seg = self.js[self.js.index("function qualityHint"):self.js.index("function qualityHint") + 600]
+        self.assertIn("定时抓图每", seg)
+
+    def test_monitor_forces_cast(self):
+        i = self.js.index("function monitorWsUrl(inst, tid)")
+        seg = self.js[i:i + 400]
+        self.assertIn("quality=monitor&mode=cast", seg)
 
 
 class MonitorPanelJsTests(unittest.TestCase):
