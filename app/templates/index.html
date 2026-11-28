@@ -936,6 +936,52 @@
         .ico-sm { width: 11px; height: 11px; vertical-align: -1px; }
         .btn-icon { display: inline-flex; align-items: center; gap: 6px; }
         .st-m { display: inline-flex; align-items: center; }
+
+        /* CDP 脚本注入面板 */
+        .panel.inject-panel { width: 940px; max-width: 96vw; padding: 18px 20px; }
+        .inject-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+        .inject-cats { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+        .inject-cats button { font-size: 11px; padding: 3px 9px; }
+        .inject-cats button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .inject-search {
+            width: 100%; padding: 7px 9px; font: inherit; font-size: 12px; margin-bottom: 8px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+        }
+        .inject-list {
+            max-height: 430px; overflow-y: auto;
+            border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+        }
+        .inject-item { padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12px; }
+        .inject-item:hover { background: var(--surface); }
+        .inject-item.active { background: var(--surface); box-shadow: inset 3px 0 0 var(--accent); }
+        .inject-item .n { font-weight: 600; }
+        .inject-item .c { font-size: 10px; color: var(--muted); margin-left: 6px; }
+        .inject-item .d { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+        .inject-code {
+            width: 100%; height: 200px; resize: vertical;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px;
+            line-height: 1.5; padding: 9px 10px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+        }
+        .inject-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .inject-row { margin-bottom: 12px; }
+        .inject-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+        .inject-row select, .inject-row input {
+            width: 100%; padding: 7px 9px; font: inherit; font-size: 12px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+        }
+        .inject-log {
+            max-height: 96px; overflow-y: auto; font-size: 11px; line-height: 1.6;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 10px; margin-top: 6px;
+        }
+        .inject-log .ok { color: var(--success); }
+        .inject-log .err { color: var(--danger); }
+        .inject-rec { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+        .inject-rec .spacer { flex: 1; }
     </style>
 </head>
 <body>
@@ -1039,6 +1085,7 @@
                 <button class="btn-icon" onclick="toggleToolMenu()" title="更多工具：批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 资源监控"><svg class="ico"><use href="#i-settings"/></svg><span>工具</span></button>
                 <div class="tool-menu" id="toolMenu">
                     <button onclick="openBatch()">批量执行</button>
+                    <button onclick="openInject()">CDP 脚本注入</button>
                     <button onclick="openSnipLib()">脚本片段库</button>
                     <button onclick="openTpl()">实例模板</button>
                     <button onclick="openSched()">定时任务</button>
@@ -1526,6 +1573,91 @@
             <div class="foot">连接串 = 地址|令牌。令牌等同本机完整管理权限，只发给自己的其他主机；保存在服务端数据目录，重启不丢；吊销后旧连接串立即失效。若本机已设置 API_KEY，令牌与它等效。弹窗打开期间主机与令牌列表每 3 秒自动刷新，无需手动刷新。</div>
             <div class="actions">
                 <button onclick="closeRemote()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CDP 脚本注入弹窗 -->
+    <div class="mask" id="injectMask" onclick="if(event.target===this) closeInject()">
+        <div class="panel inject-panel">
+            <h3>CDP 脚本注入 <span style="font-size:11px;color:var(--muted);font-weight:400">页面 JS 可见层 · 指纹 / 反调试 / 环境模拟</span></h3>
+            <div class="inject-grid">
+                <div>
+                    <div class="inject-cats" id="injectCats"></div>
+                    <input class="inject-search" id="injectSearch" placeholder="搜索脚本名称或说明" oninput="renderInjectList()">
+                    <div class="inject-list" id="injectList"></div>
+                    <div class="hint">内置脚本只读；自定义脚本保存在<b>目标实例所在主机</b>的服务端 DATA_DIR，切换目标实例会重新加载对应主机的脚本库。</div>
+                </div>
+                <div>
+                    <div class="inject-row">
+                        <label id="injectCodeLabel">脚本内容（JavaScript）</label>
+                        <textarea class="inject-code" id="injectCode" spellcheck="false"></textarea>
+                    </div>
+                    <div class="inject-row" id="injectParamsRow" style="display:none">
+                        <label>CDP 参数（JSON）</label>
+                        <textarea class="inject-code" id="injectParams" style="height:70px" spellcheck="false">{}</textarea>
+                    </div>
+                    <div class="inject-row inject-two">
+                        <div>
+                            <label>目标实例</label>
+                            <select id="injectSid" onchange="onInjectSidChange()"></select>
+                        </div>
+                        <div>
+                            <label>目标标签</label>
+                            <select id="injectTid"></select>
+                        </div>
+                    </div>
+                    <div class="inject-row inject-two">
+                        <div>
+                            <label>注入方式</label>
+                            <select id="injectMode">
+                                <option value="new_document">新文档自动注入（推荐，刷新后仍生效）</option>
+                                <option value="immediate">当前页面立即执行（刷新后失效）</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label>标签范围</label>
+                            <select id="injectScope">
+                                <option value="one">仅选中的标签</option>
+                                <option value="all">实例内全部页面标签</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="inject-row">
+                        <label>实例范围</label>
+                        <select id="injectHostScope">
+                            <option value="one">仅选中的实例</option>
+                            <option value="all">所有运行中的实例（批量）</option>
+                        </select>
+                    </div>
+                    <div class="actions" style="margin-top:4px">
+                        <button onclick="closeInject()">关闭</button>
+                        <button class="btn-primary" onclick="doInject()">注入</button>
+                    </div>
+                    <div class="inject-log" id="injectLog">选择脚本后点「注入」。</div>
+                </div>
+            </div>
+            <div class="foot">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <b style="color:var(--text)">自动跟随新标签</b>
+                    <span id="watchState">未开启</span>
+                    <button class="btn-mini" onclick="toggleInjectWatch()">开启 / 关闭</button>
+                    <span style="color:var(--muted)">开启后选中的脚本会自动注入此后新开的标签；<b>已打开的标签需手动刷新或单独注入</b>。与「身份伪装守护」并行工作，互不覆盖。</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <b style="color:var(--text)">已注入记录</b>
+                    <button class="btn-mini" onclick="loadInjections()">刷新</button>
+                    <div id="injectRecords" style="width:100%"></div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <b style="color:var(--text)">保存自定义</b>
+                    <input id="customId" placeholder="脚本 ID" style="width:130px">
+                    <input id="customName" placeholder="名称" style="width:150px">
+                    <input id="customCategory" placeholder="分类" value="自定义" style="width:100px">
+                    <button class="btn-mini" onclick="saveCustomScript()">保存上方脚本</button>
+                    <button class="btn-mini btn-danger" onclick="deleteCustomScript()">删除该自定义</button>
+                </div>
+                <div class="hint">能力边界：TLS/JA3 与 HTTP/2 指纹由浏览器网络栈决定，JS 注入无法覆盖；本面板只处理页面 JS 可见层。反调试脚本可能干扰目标站点自身逻辑，请按需选择。</div>
             </div>
         </div>
     </div>
@@ -5830,6 +5962,276 @@
         function deleteRecording(id) {
             api("/api/recordings/" + encodeURIComponent(id), { method: "DELETE" })
                 .then(() => loadRecordings()).catch(e => toast("删除失败: " + e.message, "error"));
+        }
+
+        // ---- CDP 脚本注入 --------------------------------------------------
+        let injectScripts = [];
+        let injectSelected = null;
+        let injectCategory = "全部";
+
+        function injectLog(msg, err) {
+            const box = $("injectLog");
+            const line = document.createElement("div");
+            line.className = err ? "err" : "ok";
+            line.textContent = (err ? "✗ " : "• ") + msg;
+            box.appendChild(line);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        // 脚本库跟随目标实例所在主机：远端走 /remote/<host>/api/scripts，
+        // 通用代理会注入远端 API_KEY；本机则直接读 /api/scripts。
+        function injectScriptsUrl() {
+            const sid = $("injectSid").value;
+            const inst = instances[sid];
+            if (inst && inst.host && inst.host !== "local") {
+                return "/remote/" + encodeURIComponent(inst.host) + "/api/scripts";
+            }
+            return "/api/scripts";
+        }
+
+        async function loadInjectScripts() {
+            const data = await api(injectScriptsUrl());
+            const prevId = injectSelected && injectSelected.id;
+            injectScripts = data.items || [];
+            injectSelected = injectScripts.find(s => s.id === prevId) || null;
+            renderInjectCats();
+            renderInjectList();
+            if (injectSelected) selectInjectScript(injectSelected.id);
+            return injectScripts.length;
+        }
+
+        async function openInject() {
+            $("toolMenu").classList.remove("open");
+            $("injectMask").classList.add("open");
+            $("injectLog").innerHTML = "";
+            try {
+                await refreshInjectSids();
+                const n = await loadInjectScripts();
+                await loadInjections();
+                await loadInjectWatchState();
+                const sid = $("injectSid").value;
+                const inst = instances[sid];
+                const host = inst && inst.host && inst.host !== "local" ? inst.host : "本机";
+                injectLog("已加载 " + n + " 个脚本（来源：" + host + "）");
+            } catch (e) {
+                injectLog("加载脚本库失败: " + e.message, true);
+            }
+        }
+
+        function closeInject() { $("injectMask").classList.remove("open"); }
+
+        function renderInjectCats() {
+            const cats = ["全部"];
+            injectScripts.forEach(s => { if (cats.indexOf(s.category) < 0) cats.push(s.category); });
+            $("injectCats").innerHTML = cats.map(c =>
+                '<button class="' + (c === injectCategory ? "on" : "") + '" onclick="setInjectCat(' + jsArg(c) + ')">' + esc(c) + '</button>'
+            ).join("");
+        }
+
+        function setInjectCat(c) { injectCategory = c; renderInjectCats(); renderInjectList(); }
+
+        function renderInjectList() {
+            const q = ($("injectSearch").value || "").toLowerCase();
+            const items = injectScripts.filter(s =>
+                (injectCategory === "全部" || s.category === injectCategory) &&
+                (!q || (s.name + " " + (s.description || "")).toLowerCase().indexOf(q) >= 0)
+            );
+            $("injectList").innerHTML = items.map(s =>
+                '<div class="inject-item' + (injectSelected && injectSelected.id === s.id ? " active" : "") +
+                '" onclick="selectInjectScript(' + jsArg(s.id) + ')">' +
+                '<span class="n">' + esc(s.name) + '</span><span class="c">' + esc(s.category) +
+                (s.origin === "custom" ? " · 自定义" : "") + '</span>' +
+                '<div class="d">' + esc(s.description || "") + '</div></div>'
+            ).join("") || '<div class="inject-item" style="cursor:default">无匹配脚本</div>';
+        }
+
+        function selectInjectScript(id) {
+            injectSelected = injectScripts.find(s => s.id === id) || null;
+            if (!injectSelected) return;
+            renderInjectList();
+            const s = injectSelected;
+            const isCdp = s.kind === "cdp";
+            $("injectCodeLabel").textContent = isCdp ? "CDP 命令（只读）" : "脚本内容（JavaScript）";
+            $("injectCode").value = isCdp ? (s.method || "") : (s.code || "");
+            $("injectCode").readOnly = isCdp;
+            $("injectParamsRow").style.display = isCdp ? "block" : "none";
+            if (isCdp) $("injectParams").value = JSON.stringify(s.params || {}, null, 2);
+            $("customId").value = s.origin === "custom" ? s.id : "";
+            $("customName").value = s.origin === "custom" ? s.name : "";
+            $("customCategory").value = s.category || "自定义";
+        }
+
+        async function refreshInjectSids() {
+            const running = Object.values(instances).filter(i => i.status === "running");
+            $("injectSid").innerHTML = running.map(i =>
+                '<option value="' + esc(i.sid) + '">' + esc(i.sid.slice(0, 8)) +
+                (i.profile_name ? " · " + esc(i.profile_name) : "") + '</option>'
+            ).join("");
+            if (selectedSid && running.some(i => i.sid === selectedSid)) $("injectSid").value = selectedSid;
+            if (!running.length) injectLog("暂无运行中的实例，请先创建实例", true);
+            await refreshInjectTids();
+        }
+
+        async function refreshInjectTids() {
+            const sid = $("injectSid").value;
+            if (!sid) { $("injectTid").innerHTML = ""; return; }
+            try {
+                const data = await api("/api/instance/" + encodeURIComponent(sid) + "/targets");
+                $("injectTid").innerHTML = (data.targets || []).map(t =>
+                    '<option value="' + esc(t.id) + '">' + esc(t.title || t.url || t.id.slice(0, 8)) + '</option>'
+                ).join("");
+            } catch (e) { injectLog("读取标签失败: " + e.message, true); }
+        }
+
+        function onInjectSidChange() {
+            refreshInjectTids();
+            loadInjectScripts().then(n => injectLog("已切换脚本库：" + n + " 个脚本")).catch(e => injectLog("切换脚本库失败: " + e.message, true));
+            loadInjections();
+            loadInjectWatchState();
+        }
+
+        async function doInject() {
+            if (!injectSelected) { injectLog("请先选择一个脚本", true); return; }
+            const currentSid = $("injectSid").value;
+            if (!currentSid) { injectLog("没有运行中的实例", true); return; }
+            const batch = $("injectHostScope").value === "all";
+            const running = Object.values(instances).filter(i => i.status === "running");
+            const sids = batch ? running.map(i => i.sid) : [currentSid];
+            if (!sids.length) { injectLog("没有运行中的实例", true); return; }
+            const payload = {
+                script_id: injectSelected.id,
+                name: injectSelected.name,
+                kind: injectSelected.kind,
+                mode: $("injectMode").value
+            };
+            // 批量跨实例时目标标签 ID 不通用，逐个实例注入其全部标签。
+            if ($("injectScope").value === "all" || batch) payload.all_targets = true;
+            else payload.target_id = $("injectTid").value;
+            if (injectSelected.kind === "js") payload.code = $("injectCode").value;
+            else {
+                payload.method = $("injectCode").value.trim() || injectSelected.method;
+                try { payload.params = JSON.parse($("injectParams").value); }
+                catch (e) { injectLog("CDP 参数不是合法 JSON", true); return; }
+            }
+            let okCount = 0, failCount = 0;
+            for (const sid of sids) {
+                const inst = instances[sid];
+                const label = (inst && inst.host && inst.host !== "local" ? inst.host + "/" : "") + sid.slice(0, 8);
+                try {
+                    const res = await api("/api/instance/" + encodeURIComponent(sid) + "/inject", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+                    (res.results || []).forEach(r => {
+                        injectLog(label + " " + (r.ok ? "注入成功 " : "注入失败 ") + r.tid.slice(0, 8) + (r.error ? ": " + r.error : ""), !r.ok);
+                        if (r.ok) okCount++; else failCount++;
+                    });
+                } catch (e) {
+                    injectLog(label + " 注入失败: " + e.message, true);
+                    failCount++;
+                }
+            }
+            injectLog((batch ? "批量完成：" : "") + okCount + " 成功，" + failCount + " 失败");
+            await loadInjections();
+        }
+
+        async function loadInjections() {
+            const sid = $("injectSid").value;
+            if (!sid) { $("injectRecords").innerHTML = ""; return; }
+            try {
+                const data = await api("/api/instance/" + encodeURIComponent(sid) + "/injections");
+                $("injectRecords").innerHTML = (data.items || []).map(r =>
+                    '<div class="inject-rec"><span>' + esc(r.name || r.script_id) + '</span>' +
+                    '<span>' + esc((r.tid || "").slice(0, 8)) + '</span><span>' + esc(r.mode) + '</span>' +
+                    '<span class="spacer"></span><button class="btn-mini btn-danger" onclick="removeInjection(' +
+                    jsArg(r.id) + ')">撤销</button></div>'
+                ).join("") || '<div class="hint">暂无注入记录</div>';
+            } catch (e) { injectLog("读取注入记录失败: " + e.message, true); }
+        }
+
+        async function removeInjection(id) {
+            const sid = $("injectSid").value;
+            try {
+                await api("/api/instance/" + encodeURIComponent(sid) + "/injections/" + encodeURIComponent(id), { method: "DELETE" });
+                injectLog("已撤销注入 " + id);
+                await loadInjections();
+            } catch (e) { injectLog("撤销失败: " + e.message, true); }
+        }
+
+        async function loadInjectWatchState() {
+            const sid = $("injectSid").value;
+            if (!sid) return;
+            try {
+                const d = await api("/api/instance/" + encodeURIComponent(sid) + "/watch");
+                $("watchState").textContent = d.running ? ("运行中：" + (d.scripts || []).join(", ")) : "未开启";
+            } catch (e) { $("watchState").textContent = "读取失败"; }
+        }
+
+        async function toggleInjectWatch() {
+            const sid = $("injectSid").value;
+            if (!sid) { injectLog("没有运行中的实例", true); return; }
+            const url = "/api/instance/" + encodeURIComponent(sid) + "/watch";
+            try {
+                const d = await api(url);
+                if (d.running) {
+                    await api(url, { method: "DELETE" });
+                    injectLog("已关闭自动跟随");
+                } else {
+                    if (!injectSelected) { injectLog("请先选择要跟随的脚本", true); return; }
+                    await api(url, {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ scripts: [injectSelected.id] })
+                    });
+                    injectLog("已开启自动跟随：" + injectSelected.name + "（仅对新开标签生效，已打开的标签需刷新或单独注入）");
+                }
+                await loadInjectWatchState();
+            } catch (e) { injectLog("切换自动跟随失败: " + e.message, true); }
+        }
+
+        async function saveCustomScript() {
+            const id = $("customId").value.trim();
+            const name = $("customName").value.trim();
+            if (!id || !name) { injectLog("请填写脚本 ID 和名称", true); return; }
+            const isCdp = injectSelected && injectSelected.kind === "cdp";
+            const payload = {
+                id: id, name: name,
+                category: $("customCategory").value.trim() || "自定义",
+                kind: isCdp ? "cdp" : "js",
+                description: injectSelected ? (injectSelected.description || "") : ""
+            };
+            if (isCdp) {
+                payload.method = $("injectCode").value.trim() || injectSelected.method;
+                try { payload.params = JSON.parse($("injectParams").value); }
+                catch (e) { injectLog("CDP 参数不是合法 JSON", true); return; }
+            } else {
+                payload.code = $("injectCode").value;
+            }
+            try {
+                await api(injectScriptsUrl(), {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                injectLog("已保存自定义脚本 " + id + " 到目标主机");
+                await loadInjectScripts();
+                injectSelected = injectScripts.find(s => s.id === id) || null;
+                renderInjectList();
+            } catch (e) { injectLog("保存失败: " + e.message, true); }
+        }
+
+        async function deleteCustomScript() {
+            const id = $("customId").value.trim();
+            if (!id) { injectLog("请填写要删除的脚本 ID", true); return; }
+            const ok = await ask("确定删除自定义脚本「" + id + "」？", { title: "删除脚本", okText: "删除", danger: true });
+            if (!ok) return;
+            try {
+                await api(injectScriptsUrl() + "/" + encodeURIComponent(id), { method: "DELETE" });
+                injectLog("已删除自定义脚本 " + id);
+                await loadInjectScripts();
+                injectSelected = null;
+                renderInjectList();
+                $("injectCode").value = "";
+                $("customId").value = ""; $("customName").value = "";
+            } catch (e) { injectLog("删除失败: " + e.message, true); }
         }
     </script>
 </body>

@@ -126,6 +126,47 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 新增 API（均需 API_KEY）：`/api/audit`、`/api/tags`、`/api/snippets`、`/api/templates`、`/api/recordings`、`/api/schedules`、`/api/batch/exec`、`/api/metrics`，以及 WS `/ws/inspect/{sid}/{tid}?domain=network|console|performance`。
 
+### CDP 脚本注入
+
+顶栏「工具」→「CDP 脚本注入」打开独立面板。它解决一个与身份伪装守护不同的问题：`stealth.py` 改的是浏览器身份层（UA / Client Hints），本面板改的是**页面 JS 可读对象层**（`navigator.webdriver`、`window.chrome`、原型链、控制台等），两者并行工作、互不覆盖。
+
+内置 20 条脚本，分四类：
+
+| 分类 | 代表脚本 | 作用 |
+|---|---|---|
+| 指纹伪装 | 基础指纹伪装、清除自动化框架痕迹、Canvas/WebGL 轻微扰动 | 覆盖 `navigator.webdriver`、`window.chrome`、plugins/languages、`__playwright__`、`cdc_*` 等页面可见标记 |
+| 环境模拟 | 时区、语言、分辨率、地理位置 | 走 `Emulation.*` CDP 命令，刷新后仍有效 |
+| 反调试 | 无限 debugger 绕过、console 保护、阻止关闭/跳转、固定窗口尺寸、反 CDP 检测、原型链检测绕过 | 参考 AntiDebug_Breaker 的 hook 思路，处理 `eval` / `Function` / `console` / `history` 等入口 |
+| 实用片段 | 隐藏广告、自动滚动、提取正文、Hook fetch/XHR、Hook cookie、伪装自检 | 伪装自检用 `console.table` 输出 webdriver / chrome / plugins / 自动化标记 / UA / 时区等检测项，结果同时存到 `window.__cdpSelfCheck`，用于确认注入是否真正生效 |
+
+注入方式：
+
+- **新文档自动注入**（推荐）：`Page.addScriptToEvaluateOnNewDocument`，由内核在文档创建后、页面脚本前执行，刷新与跳转后持续生效。**只对已注册的那个标签有效**。
+- **当前页面立即执行**：`Runtime.evaluate`，立即生效但刷新后失效；页面检测脚本若已先行读取指纹，再改已经来不及。
+- **自动跟随新标签**：browser 级 WS 上开启 `Target.setDiscoverTargets`，对每个新 page target 自动 attach 并注入，解决"新标签不继承"的问题。**JS 类脚本只对随后打开的标签生效，开启时已加载的页面需手动刷新或单独注入**；CDP 命令类（如 `Emulation.*`）attach 后立即生效。实例停止时自动关闭守护。
+
+范围选择：**标签范围**可选单个标签或实例内全部标签；**实例范围**可选当前实例或所有运行实例（批量注入，逐个下发并汇总结果，跨实例时自动按各实例的全部标签注入）。
+
+自定义脚本保存在**目标实例所在主机**的 `DATA_DIR/inject_scripts.json`（可用 `DATA_DIR` 环境变量改路径），容器重建不丢；内置脚本只读不可覆盖。脚本列表、保存、删除均跟随当前选中的目标实例切换到对应主机。多主机场景下，注入请求经 `/remote/{host_id}/...` 转发到目标主机，脚本定义随请求体一起发送，目标主机不必先导入脚本库。
+
+自动跟随状态与注入记录属于**运行态**：manager 重启或实例停止后不会恢复（CDP identifier 在实例销毁后也已失效），需重新开启自动跟随；这不影响已持久化的自定义脚本库。
+
+新增 API（均需 API_KEY）：
+
+```
+GET    /api/scripts                          列出内置 + 自定义脚本
+POST   /api/scripts                          保存自定义脚本
+DELETE /api/scripts/{script_id}              删除自定义脚本
+POST   /api/instance/{sid}/inject            注入（script_id/code、mode、target_id 或 all_targets）
+GET    /api/instance/{sid}/injections        查看实例注入记录
+DELETE /api/instance/{sid}/injections/{id}   撤销持久注入
+POST   /api/instance/{sid}/watch             开启自动跟随（body: {"scripts": ["id"]}）
+GET    /api/instance/{sid}/watch             查询自动跟随状态
+DELETE /api/instance/{sid}/watch             关闭自动跟随
+```
+
+**能力边界**：CDP 只能改页面 JS 可见层。TLS/JA3 与 HTTP/2 SETTINGS 指纹由 Chromium 网络栈决定，JS 注入无法触及；`--remote-debugging-port` 特征属于网络层，页面 JS 也无法直接读取。反调试脚本可能干扰目标站点自身逻辑，请按需选择，不要默认全开。
+
 ### 用户目录说明
 
 新建实例弹窗中可选三种模式：
@@ -424,8 +465,10 @@ docker compose up -d
 改完代码可以先在本地跑一遍静态检查，确认没有低级错误再提交：
 
 ```bash
-python -m py_compile app/main.py                  # 后端语法
+python -m py_compile app/main.py app/scripts_builtin.py app/stealth.py   # 后端语法
 python test_multihost.py                          # 多主机/鉴权自测（纯逻辑；装了 fastapi+httpx 会连 mock 远端跑完整集成测试）
+python -m unittest test_inject -v                 # 脚本注入静态自检
+python -m unittest test_inject_api -v             # 脚本注入 API 层测试（需 fastapi+httpx，不依赖 Docker）
 bash -n start.sh upgrade.sh                       # 启动/升级脚本
 docker compose config -q                          # Compose 配置
 curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针

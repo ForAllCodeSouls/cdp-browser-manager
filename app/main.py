@@ -23,6 +23,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
+try:
+    from .scripts_builtin import BUILTIN_SCRIPTS, BUILTIN_MAP, get_script
+except ImportError:  # 兼容直接以 main.py 作为模块启动
+    from scripts_builtin import BUILTIN_SCRIPTS, BUILTIN_MAP, get_script
+
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s [%(threadName)s] %(message)s",
@@ -1390,6 +1395,13 @@ def stop_instance(sid: str) -> bool:
     if not item:
         return False
     stop_stealth_guard(sid)
+    # 脚本注入守护与注入记录同属该实例的运行时状态，实例销毁后一并清理。
+    try:
+        stop_inject_watcher(sid)
+    except Exception:
+        pass
+    with LOCK:
+        INJECTIONS.pop(sid, None)
     try:
         c = client.containers.get(item["container_id"])
         c.remove(force=True)
@@ -2726,6 +2738,10 @@ async def api_cdp_cmd(sid: str, request: Request):
         "Page.printToPDF",
         "Page.getLayoutMetrics",
         "Runtime.evaluate",
+        # CDP 脚本注入：新文档持久注入 / 撤销。
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Page.removeScriptToEvaluateOnNewDocument",
+        "Page.enable",
         # 元素检查器：DOM 查询 + 计算样式 + 外链 CSS 内容。
         "DOM.getDocument",
         "DOM.querySelector",
@@ -2753,6 +2769,8 @@ async def api_cdp_cmd(sid: str, request: Request):
         "Emulation.setUserAgentOverride",
         "Emulation.setGeolocationOverride",
         "Emulation.clearGeolocationOverride",
+        "Emulation.setTimezoneOverride",
+        "Emulation.setLocaleOverride",
         "Network.emulateNetworkConditions",
     }
     if method not in allowed:
@@ -3634,7 +3652,14 @@ STORE_FILES = {
     "templates": DATA_DIR / "instance_templates.json",
     "schedules": DATA_DIR / "schedules.json",
     "recordings": DATA_DIR / "recordings.json",
+    # CDP 脚本注入：自定义脚本库（内置脚本在 scripts_builtin.py 里，不落盘）。
+    "inject_scripts": DATA_DIR / "inject_scripts.json",
 }
+
+# CDP 脚本注入的运行态：注入记录 + 自动跟随新标签守护。
+# 记录不是持久化数据：实例停止即失效，重启后 identifier 也已失效。
+INJECTIONS: Dict[str, list] = {}
+WATCHERS: Dict[str, dict] = {}
 
 
 def store_load(kind: str, default=None):
@@ -4082,4 +4107,391 @@ async def api_schedules_save(request: Request):
 async def api_schedules_delete(job_id: str):
     items = [x for x in store_load("schedules", []) if x.get("id") != job_id]
     store_save("schedules", items)
+    return {"ok": True}
+
+
+# ===========================================================================
+# CDP 脚本注入：页面 JS 可见层的指纹伪装 / 反调试 / 环境模拟 / 实用片段。
+# 与 stealth.py 的 UA/Client Hints 覆盖互补：stealth 改的是浏览器身份层，
+# 这里改的是页面可读的 JS 对象层。网络层指纹（TLS/JA3、HTTP/2）不在范围内。
+# ===========================================================================
+def load_inject_scripts() -> dict:
+    data = store_load("inject_scripts", {})
+    return data if isinstance(data, dict) else {}
+
+
+def resolve_inject_script(script_id: str):
+    builtin = get_script(script_id)
+    if builtin:
+        return builtin
+    return load_inject_scripts().get(script_id)
+
+
+def all_inject_scripts() -> list:
+    items = [{**s, "origin": "builtin"} for s in BUILTIN_SCRIPTS]
+    for sid_, s in load_inject_scripts().items():
+        items.append({**s, "id": sid_, "origin": "custom"})
+    return items
+
+
+def cdp_browser_ws_url(sid: str) -> str:
+    info = cdp_http(sid, "/json/version")
+    url = str(info.get("webSocketDebuggerUrl", ""))
+    if not url:
+        raise RuntimeError("未获取到 browser WebSocket 地址")
+    item = get_instance(sid)
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise RuntimeError("容器网络未就绪")
+    parsed = urlsplit(url)
+    return f"ws://{ip}:{parsed.port or 9222}{parsed.path}"
+
+
+def cdp_ws_call(url: str, method: str, params: dict = None,
+                session_id: str = None, timeout: int = 6) -> dict:
+    import websocket as ws_client
+
+    ws = ws_client.create_connection(url, timeout=timeout, suppress_origin=True)
+    try:
+        call_id = 1
+        msg = {"id": call_id, "method": method, "params": params or {}}
+        if session_id:
+            msg["sessionId"] = session_id
+        ws.send(json.dumps(msg))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                data = json.loads(ws.recv())
+            except Exception:
+                break
+            if data.get("id") == call_id:
+                if "error" in data:
+                    raise RuntimeError(str(data["error"]))
+                return data.get("result", {})
+        raise RuntimeError("CDP 命令响应超时")
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def apply_inject_script(sid: str, tid: str, script: dict, mode: str) -> dict:
+    if script.get("kind") == "cdp":
+        result = cdp_command(sid, tid, script["method"], script.get("params") or {})
+        return {"identifier": "", "result": result, "mode": "cdp"}
+    source = script.get("code", "")
+    if not source.strip():
+        raise RuntimeError("脚本内容为空")
+    if mode == "new_document":
+        result = cdp_command(
+            sid, tid, "Page.addScriptToEvaluateOnNewDocument", {"source": source}
+        )
+        return {"identifier": result.get("identifier", ""), "result": result, "mode": mode}
+    result = cdp_command(
+        sid, tid, "Runtime.evaluate",
+        {"expression": source, "awaitPromise": False, "returnByValue": False},
+    )
+    if "exceptionDetails" in result:
+        raise RuntimeError("页面脚本执行异常: " + str(result["exceptionDetails"])[:200])
+    return {"identifier": "", "result": result, "mode": mode}
+
+
+def inject_watch_loop(sid: str, script_ids: list, stop_event: threading.Event):
+    """browser 级守护：新标签出现时自动 attach 并注入脚本。
+
+    注意 JS 脚本注册的是 addScriptToEvaluateOnNewDocument，只对后续导航生效；
+    守护开启时已加载的页面需要手动刷新或单独执行「立即注入」。CDP 命令类脚本
+    （如 Emulation.*）在 attach 后立即下发，无此限制。
+    """
+    import websocket as ws_client
+
+    while not stop_event.is_set():
+        ws = None
+        try:
+            url = cdp_browser_ws_url(sid)
+            ws = ws_client.create_connection(url, timeout=2, suppress_origin=True)
+            call_id = 0
+            pending = {}
+
+            def send(method, params=None, session_id=None, callback=None):
+                nonlocal call_id
+                call_id += 1
+                msg = {"id": call_id, "method": method, "params": params or {}}
+                if session_id:
+                    msg["sessionId"] = session_id
+                ws.send(json.dumps(msg))
+                pending[call_id] = callback
+                return call_id
+
+            def on_attach(result):
+                session = (result or {}).get("sessionId")
+                if not session:
+                    return
+                for script_id in script_ids:
+                    script = resolve_inject_script(script_id)
+                    if not script:
+                        continue
+                    try:
+                        if script.get("kind") == "cdp":
+                            send(script["method"], script.get("params") or {}, session_id=session)
+                        else:
+                            send("Page.addScriptToEvaluateOnNewDocument",
+                                 {"source": script.get("code", "")}, session_id=session)
+                    except Exception as e:
+                        log.warning("守护注入 %s 失败: %s", script_id, e)
+
+            def attach(target_id):
+                send("Target.attachToTarget",
+                     {"targetId": target_id, "flatten": True}, callback=on_attach)
+
+            def on_targets(result):
+                for target in (result or {}).get("targetInfos", []):
+                    if target.get("type") == "page":
+                        attach(target["targetId"])
+
+            send("Target.setDiscoverTargets", {"discover": True})
+            send("Target.getTargets", callback=on_targets)
+
+            while not stop_event.is_set():
+                try:
+                    raw = ws.recv()
+                except ws_client.WebSocketTimeoutException:
+                    continue
+                except Exception:
+                    break
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if msg.get("id") in pending:
+                    cb = pending.pop(msg["id"])
+                    if cb:
+                        try:
+                            cb(msg.get("result", {}))
+                        except Exception as e:
+                            log.warning("注入守护回调异常: %s", e)
+                elif msg.get("method") == "Target.targetCreated":
+                    target = msg.get("params", {}).get("targetInfo", {})
+                    if target.get("type") == "page":
+                        attach(target["targetId"])
+        except Exception as e:
+            log.debug("注入守护 %s 暂时失败: %s", sid[:8], e)
+        finally:
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+        if not stop_event.is_set():
+            stop_event.wait(2)
+
+
+def start_inject_watcher(sid: str, script_ids: list) -> dict:
+    stop_inject_watcher(sid)
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=inject_watch_loop, args=(sid, list(script_ids), stop),
+        name=f"inject-watch-{sid[:8]}", daemon=True,
+    )
+    WATCHERS[sid] = {"stop": stop, "thread": thread, "scripts": list(script_ids)}
+    thread.start()
+    return {"sid": sid, "scripts": list(script_ids), "running": True}
+
+
+def stop_inject_watcher(sid: str):
+    old = WATCHERS.pop(sid, None)
+    if old:
+        old["stop"].set()
+        try:
+            old["thread"].join(timeout=3)
+        except Exception:
+            pass
+
+
+@app.get("/api/scripts")
+async def api_inject_scripts_list(request: Request):
+    # 面板每次打开/切换主机都会拉脚本库，这里不写审计，避免无意义地膨胀审计日志。
+    return {"items": all_inject_scripts()}
+
+
+@app.post("/api/scripts")
+async def api_inject_scripts_save(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的 JSON")
+    script_id = str(payload.get("id", "") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", script_id):
+        raise HTTPException(status_code=400, detail="脚本 ID 只能包含字母数字、下划线、点和连字符")
+    if script_id in BUILTIN_MAP:
+        raise HTTPException(status_code=400, detail="内置脚本不可覆盖")
+    name = str(payload.get("name", "") or "").strip()
+    code = str(payload.get("code", "") or "")
+    kind = str(payload.get("kind", "js") or "js")
+    if kind not in ("js", "cdp"):
+        raise HTTPException(status_code=400, detail="脚本类型只能是 js 或 cdp")
+    if not name:
+        raise HTTPException(status_code=400, detail="缺少脚本名称")
+    if kind == "js" and not code.strip():
+        raise HTTPException(status_code=400, detail="脚本内容为空")
+    item = {
+        "id": script_id, "name": name,
+        "category": str(payload.get("category", "自定义") or "自定义"),
+        "kind": kind,
+        "description": str(payload.get("description", "") or ""),
+    }
+    if kind == "js":
+        item["code"] = code
+    else:
+        method = str(payload.get("method", "") or "").strip()
+        if not method or "." not in method:
+            raise HTTPException(status_code=400, detail="CDP 命令格式不合法")
+        item["method"] = method
+        item["params"] = payload.get("params") or {}
+    data = load_inject_scripts()
+    data[script_id] = item
+    if not store_save("inject_scripts", data):
+        raise HTTPException(status_code=500, detail="脚本保存失败（检查 DATA_DIR 挂载）")
+    audit("scripts_save", detail=script_id)
+    return {"ok": True, "script": item}
+
+
+@app.delete("/api/scripts/{script_id}")
+async def api_inject_scripts_delete(script_id: str):
+    if script_id in BUILTIN_MAP:
+        raise HTTPException(status_code=400, detail="内置脚本不可删除")
+    data = load_inject_scripts()
+    if script_id not in data:
+        raise HTTPException(status_code=404, detail="脚本不存在")
+    del data[script_id]
+    store_save("inject_scripts", data)
+    audit("scripts_delete", detail=script_id)
+    return {"ok": True}
+
+
+@app.post("/api/instance/{sid}/inject")
+async def api_inject(sid: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的 JSON")
+    script_id = str(payload.get("script_id", "") or "").strip()
+    code = str(payload.get("code", "") or "")
+    script = resolve_inject_script(script_id) if script_id else None
+    if script:
+        # 编辑框内容优先：允许改完直接注入，但不写回脚本库。
+        if script.get("kind") == "cdp":
+            if "params" in payload:
+                script = {**script, "params": payload["params"]}
+        elif code.strip():
+            script = {**script, "code": code}
+    elif code.strip():
+        script = {"id": "custom-inline", "name": "临时脚本", "kind": "js", "code": code}
+    elif payload.get("method") and payload.get("kind") == "cdp":
+        # 远程主机场景下脚本库可能不在目标 manager 上，前端会随请求带上完整定义。
+        script = {
+            "id": script_id or "custom-inline",
+            "name": str(payload.get("name") or "临时 CDP 命令"),
+            "kind": "cdp",
+            "method": str(payload["method"]),
+            "params": payload.get("params") or {},
+        }
+    if not script:
+        raise HTTPException(status_code=400, detail="未找到脚本，且未提供脚本内容")
+
+    mode = str(payload.get("mode", "new_document") or "new_document")
+    if mode not in ("new_document", "immediate"):
+        raise HTTPException(status_code=400, detail="注入模式不合法")
+
+    target_id = str(payload.get("target_id", "") or "").strip()
+    all_targets = bool(payload.get("all_targets", False)) or not target_id
+    if all_targets:
+        try:
+            targets = await run_in_threadpool(cdp_http, sid, "/json/list")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        tids = [t.get("id", "") for t in (targets if isinstance(targets, list) else [])
+                if t.get("type") == "page" and valid_target_id(t.get("id", ""))]
+        if not tids:
+            raise HTTPException(status_code=404, detail="实例内没有可注入的页面标签")
+    else:
+        if not valid_target_id(target_id):
+            raise HTTPException(status_code=400, detail="非法的标签 ID")
+        tids = [target_id]
+
+    results = []
+    for tid in tids:
+        try:
+            info = await run_in_threadpool(apply_inject_script, sid, tid, script, mode)
+            rec = {
+                "id": uuid.uuid4().hex[:12], "tid": tid,
+                "script_id": script.get("id", ""), "name": script.get("name", ""),
+                "mode": info["mode"], "identifier": info.get("identifier", ""),
+                "ts": time.time(),
+            }
+            with LOCK:
+                INJECTIONS.setdefault(sid, []).append(rec)
+            results.append({"tid": tid, "ok": True, "injection_id": rec["id"]})
+        except Exception as e:
+            results.append({"tid": tid, "ok": False, "error": str(e)[:200]})
+    audit("scripts_inject", sid=sid,
+          detail=f"{script.get('id')} mode={mode} ok={sum(1 for r in results if r['ok'])}/{len(results)}")
+    return {"ok": all(r["ok"] for r in results), "results": results}
+
+
+@app.get("/api/instance/{sid}/injections")
+async def api_injections_list(sid: str):
+    with LOCK:
+        return {"items": list(INJECTIONS.get(sid, []))}
+
+
+@app.delete("/api/instance/{sid}/injections/{injection_id}")
+async def api_injections_delete(sid: str, injection_id: str):
+    with LOCK:
+        rec = next((r for r in INJECTIONS.get(sid, []) if r["id"] == injection_id), None)
+    if not rec:
+        raise HTTPException(status_code=404, detail="注入记录不存在")
+    if rec.get("identifier") and rec.get("tid"):
+        try:
+            await run_in_threadpool(
+                cdp_command, sid, rec["tid"],
+                "Page.removeScriptToEvaluateOnNewDocument",
+                {"identifier": rec["identifier"]},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail="撤销注入失败: " + str(e)[:200])
+    with LOCK:
+        INJECTIONS[sid] = [r for r in INJECTIONS.get(sid, []) if r["id"] != injection_id]
+    audit("scripts_inject_undo", sid=sid, detail=injection_id)
+    return {"ok": True}
+
+
+@app.post("/api/instance/{sid}/watch")
+async def api_inject_watch_start(sid: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的 JSON")
+    script_ids = payload.get("scripts") or []
+    if not isinstance(script_ids, list) or not script_ids:
+        raise HTTPException(status_code=400, detail="scripts 必须是非空数组")
+    for script_id in script_ids:
+        if not resolve_inject_script(str(script_id)):
+            raise HTTPException(status_code=404, detail="脚本不存在: " + str(script_id))
+    result = await run_in_threadpool(start_inject_watcher, sid, [str(x) for x in script_ids])
+    audit("scripts_watch_start", sid=sid, detail=",".join(result["scripts"]))
+    return result
+
+
+@app.get("/api/instance/{sid}/watch")
+async def api_inject_watch_status(sid: str):
+    watcher = WATCHERS.get(sid)
+    return {"running": bool(watcher), "scripts": watcher["scripts"] if watcher else []}
+
+
+@app.delete("/api/instance/{sid}/watch")
+async def api_inject_watch_stop(sid: str):
+    await run_in_threadpool(stop_inject_watcher, sid)
+    audit("scripts_watch_stop", sid=sid)
     return {"ok": True}

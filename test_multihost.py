@@ -40,11 +40,13 @@ if not HAS_TESTCLIENT:
     sys.modules.setdefault("fastapi.templating", MagicMock())
     sys.modules.setdefault("starlette.concurrency", MagicMock())
 
-# 模块导入会启动两个后台线程；测试里屏蔽，避免碰 Docker / 拉镜像。
+# 模块导入会启动两个后台线程并创建 Docker 客户端；测试里都屏蔽，
+# 避免本机没装 Docker 时 from_env() 直接抛错（装了 fastapi 的环境同样适用）。
 _real_thread = threading.Thread
 threading.Thread = lambda *a, **kw: SimpleNamespace(start=lambda: None)
 try:
-    import app.main as main
+    with patch("docker.from_env", return_value=MagicMock()):
+        import app.main as main
 finally:
     threading.Thread = _real_thread
 
