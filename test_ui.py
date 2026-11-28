@@ -189,6 +189,21 @@ class DevToolsDrawerTests(unittest.TestCase):
         self.assertIn('@app.api_route("/{port:int}/devtools/{rest:path}"', main)
         self.assertIn("Content-Security-Policy", main)
 
+    def test_ws_param_no_protocol_prefix(self):
+        # 回归：Chrome 158 DevTools frontend 自行补 ws:// 前缀，?ws= 不能带协议。
+        self.assertIn("const wsPath = location.host", JS)
+        self.assertIn('"/devtools/inspector.html?ws=" + encodeURIComponent(wsPath)', JS)
+        self.assertNotIn('const ws = scheme + "://" + location.host + prefix', JS)
+
+    def test_backend_ws_normalizer_fallback(self):
+        # 后端兜底：即便浏览器缓存旧 JS 传来完整 ws://，注入的脚本也会剥掉前缀。
+        main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("def inject_devtools_ws_normalizer(", main)
+        self.assertIn("DEVTOOLS_WS_NORMALIZER", main)
+        self.assertIn("return inject_devtools_ws_normalizer(text)", main)
+        self.assertIn("history.replaceState", main)
+        self.assertIn("no-store, no-cache, must-revalidate", main)
+
 
 class PythonCopyInjectionTests(unittest.TestCase):
     """方案一：原生 DevTools 右键菜单注入中文「复制为 Python」。"""

@@ -1982,7 +1982,16 @@ def cdp_command(sid: str, target_id: str, method: str, params: dict) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request, "index.html", {})
+    # 主页面内联了全部 JS（含原生 DevTools 的 ?ws= URL 构造）。浏览器若缓存
+    # 旧 HTML，升级后会继续用旧逻辑，典型症状是原生 DevTools 仍传完整 ws://
+    # 前缀而一开就断。强制 no-store，确保每次刷新都拿到当前版本。
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                 "Pragma": "no-cache", "Expires": "0"},
+    )
 
 
 @app.get("/api/vnc-refresh")
@@ -3361,12 +3370,46 @@ def relax_devtools_csp(text: str) -> str:
     不含敏感数据，WS 连接本身仍由 manager 的 key 校验；移除 CSP meta 即可
     让浏览器按默认策略加载资源与建立连接。没有 CSP meta 时原样返回。
     """
-    return re.sub(
+    text = re.sub(
         r"<meta\s+[^>]*http-equiv\s*=\s*[\"']Content-Security-Policy[\"'][^>]*>",
         "",
         text,
         flags=re.I,
     )
+    return inject_devtools_ws_normalizer(text)
+
+
+# Chrome 158+ 的 DevTools frontend 读取地址栏 ?ws= 时会自行补 ws:// / wss://
+# 前缀。若 manager 页面被浏览器缓存了旧 JS，仍会传完整的 ws://host:port/path，
+# frontend 拼成 ws://ws//host... 而 DNS 解析失败、窗口一开就断。这里在返回的
+# inspector.html 里注入一段最早执行的脚本：发现 ws= 带协议前缀就剥掉，并用
+# replaceState 修正地址栏（frontend 从 location.search 读取）。这是后端兜底，
+# 即使前端 JS 是旧缓存也能正确建连；已是新格式则原样返回。
+DEVTOOLS_WS_NORMALIZER = (
+    "<script>(function(){try{var u=new URL(location.href);"
+    "var w=u.searchParams.get('ws');"
+    "if(w&&/^wss?:\\/\\//i.test(w)){"
+    "u.searchParams.set('ws',w.replace(/^wss?:\\/\\//i,''));"
+    "history.replaceState(null,'',u.toString());}"
+    "}catch(e){}})();</script>"
+)
+
+
+def inject_devtools_ws_normalizer(text: str) -> str:
+    """在 inspector.html 的 <title> 后注入 ws= 参数规范化脚本（幂等）。
+
+    Chrome inspector.html 省略了 <head> 标签，故以 <title> 为锚点；该脚本是
+    普通同步脚本，早于随后 defer 的 module script 执行，能在 frontend 读取
+    location.search 前完成地址栏修正。
+    """
+    if not text or "__cdmpWsNorm" in text:
+        return text
+    m = re.search(r"</title\s*>", text, flags=re.I)
+    if not m:
+        return text
+    insert_at = m.end()
+    snippet = DEVTOOLS_WS_NORMALIZER.replace("<script>", "<script>/*__cdmpWsNorm*/", 1)
+    return text[:insert_at] + snippet + text[insert_at:]
 
 
 # DevTools 右键「复制为 Python」注入：原生 Network 面板只有 cURL / fetch /
