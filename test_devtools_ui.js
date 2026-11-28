@@ -89,6 +89,11 @@ console.log("== 开发者工具交互测试（抽屉抓包面板 + 原生入口�
         ok(url.includes("/9333/devtools/inspector.html"), "走 /<port>/devtools 同源代理");
         ok(decodeURIComponent(url).includes("/devtools/page/tid123"), "ws 指向 page 级 CDP");
         ok(decodeURIComponent(url).includes("key=testkey"), "携带 API_KEY");
+        // 回归：Chrome 158 DevTools frontend 的 ?ws= 只接受 host:port/path，
+        // 传完整 ws:// 会被拼成 ws://ws//... 导致 DNS 失败、窗口一开就断。
+        const wsParam = new URL(url).searchParams.get("ws") || "";
+        ok(!wsParam.includes("ws://") && !wsParam.includes("wss://"), "?ws= 不含协议前缀（交给 frontend 补）");
+        ok(wsParam.startsWith("example.test") && wsParam.includes("/9333/devtools/page/tid123"), "?ws= 为 主机/端口/路径 格式（frontend 自行补协议）");
 
         // 6. 远端实例原生入口走 /remote/<host>/<port>/...
         const w5 = makeDom();

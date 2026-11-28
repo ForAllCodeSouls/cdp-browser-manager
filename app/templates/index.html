@@ -6246,12 +6246,16 @@
             if (!port) { toast("该实例未暴露 CDP 端口"); return null; }
             const prefix = (sel.host && sel.host !== "local")
                 ? "/remote/" + encodeURIComponent(sel.host) : "";
-            const scheme = location.protocol === "https:" ? "wss" : "ws";
-            const ws = scheme + "://" + location.host + prefix + "/" + port +
+            // 关键：Chrome DevTools frontend 的 ?ws= 参数只接受 "主机:端口/路径"，
+            // 它会自行补 ws:// 或 wss:// 前缀。若这里传完整 ws://... URL，frontend
+            // 会拼成 ws://ws//host...，DNS 解析失败并弹「Debugging connection was
+            // closed」（提示 --remote-allow-origins 同样是误导性通用文案）。
+            // 故此处只给 host + 路径；wss 由 frontend 依据页面 https 协议自动选择。
+            const wsPath = location.host + prefix + "/" + port +
                 "/devtools/page/" + tid + (apiKey ? "?key=" + encodeURIComponent(apiKey) : "");
             const url = location.origin + prefix + "/" + port +
-                "/devtools/inspector.html?ws=" + encodeURIComponent(ws);
-            return { url: url, ws: ws, tid: tid, port: port, prefix: prefix };
+                "/devtools/inspector.html?ws=" + encodeURIComponent(wsPath);
+            return { url: url, ws: wsPath, tid: tid, port: port, prefix: prefix };
         }
 
         async function openNativeDevTools() {
