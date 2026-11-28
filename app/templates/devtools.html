@@ -111,16 +111,9 @@
     const SID = QS.get("sid") || "";
     const TID_HINT = QS.get("tid") || "";
     const KEY_STORAGE = "cdpManagerApiKey";
-    const SETTINGS_KEY = "cdpManagerSettings";
     let apiKey = QS.get("key") || "";
     try { if (!apiKey) apiKey = localStorage.getItem(KEY_STORAGE) || ""; } catch (e) {}
     if (QS.get("key")) { try { localStorage.setItem(KEY_STORAGE, apiKey); } catch (e) {} }
-
-    let settings = {};
-    try { settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") || {}; } catch (e) {}
-    const quality = ["low", "medium", "high"].includes(settings.quality) ? settings.quality : "medium";
-    const vncPage = settings.page === "vnc.html" ? "vnc.html" : "vnc_lite.html";
-    const scaleOn = settings.scale !== "0";
 
     const $ = (id) => document.getElementById(id);
     let inst = null;
@@ -170,33 +163,14 @@
         return !!i && (i.browser_mode === "headless" || i.browser_mode === "headless-new");
     }
 
-    /* 有头画面：noVNC 整窗 iframe（可见浏览器标签栏/地址栏）。
-       无头画面：复用 /cast 页面（CDP 抓屏，仅网页视口，客观限制）。 */
+    /* 画面统一走 /cast（CDP 抓屏）：有头/无头都只抓当前标签的网页视口。
+       这里不接 noVNC 整窗——同屏页的定位是「当前网页 + 该网页的原生 DevTools」并排，
+       抓屏正好与右侧 DevTools 调试的页面一一对应，也不会出现 VNC 连接栏。 */
     function stageUrl(targetTid) {
         if (!inst) return "";
-        if (isHeadless(inst)) {
-            return location.origin + "/cast?sid=" + encodeURIComponent(SID) +
-                "&tid=" + encodeURIComponent(targetTid) +
-                (apiKey ? "&key=" + encodeURIComponent(apiKey) : "");
-        }
-        const base = (inst.novnc_url_proxy || "").replace(/\/$/, "")
-            .replace(/\/vnc(_lite|_auto)?\.html\/?$/, "");
-        if (!base) return "";
-        const q = { low: [3, 9], medium: [6, 5], high: [9, 2] }[quality] || [6, 5];
-        const parts = ["quality=" + q[0], "compression=" + q[1]];
-        if (vncPage === "vnc_lite.html") {
-            if (scaleOn) parts.push("scale=1");
-        } else {
-            parts.push("autoconnect=1", "reconnect=1");
-            if (scaleOn) parts.push("resize=scale");
-        }
-        if (inst.novnc_port) {
-            const root = (inst.host && inst.host !== "local")
-                ? "remote/" + encodeURIComponent(inst.host) + "/" + inst.novnc_port
-                : String(inst.novnc_port);
-            parts.push("path=" + encodeURIComponent(keyQuery(root + "/websockify")));
-        }
-        return base + "/" + vncPage + (parts.length ? "?" + parts.join("&") : "");
+        return location.origin + "/cast?sid=" + encodeURIComponent(SID) +
+            "&tid=" + encodeURIComponent(targetTid) +
+            (apiKey ? "&key=" + encodeURIComponent(apiKey) : "");
     }
 
     /* 原生 DevTools URL：与面板 devToolsTarget() 完全一致，只给 host:port/path，

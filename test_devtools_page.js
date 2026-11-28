@@ -97,8 +97,9 @@ function makeEnv(opts) {
   ok(devSrc0.includes(encodeURIComponent('156.233.226.94:8001/9223/devtools/page/' + TARGETS[0].id + '?key=testkey')), 'DevTools ws 指向当前标签');
   ok(devSrc0.includes('ws=' + encodeURIComponent('156.233.226.94:8001/9223/devtools/page/' + TARGETS[0].id + '?key=testkey')),
     'ws 参数只给 host:port/path + key，无协议前缀');
-  ok(w.stageSrc && w.stageSrc.includes('/6080/vnc_lite.html'), '有头画面走 noVNC 整窗');
-  ok(w.stageSrc.includes('path='), 'noVNC WebSockify 路径带 key');
+  ok(w.stageSrc && w.stageSrc.includes('/cast?sid='), '有头画面也走 /cast CDP 抓屏（非 VNC）');
+  ok(!w.stageSrc.includes('vnc') && !w.stageSrc.includes('6080'), '有头画面不出现 noVNC 整窗');
+  ok(w.stageSrc.includes('key=testkey'), '抓屏 URL 带 key');
   const chips = w.document.querySelectorAll('#tabRow .chip');
   ok(chips.length === 2, '标签栏渲染两个标签');
   ok(chips[0].classList.contains('on'), '当前标签高亮');
@@ -109,7 +110,7 @@ function makeEnv(opts) {
   await new Promise(r => setTimeout(r, 500));
   ok(e.calls.some(c => c.clean.includes('/targets/' + TARGETS[1].id + '/activate')), '切换时 activate 新标签');
   ok((w.document.getElementById('devFrame').getAttribute('src') || '').includes(TARGETS[1].id), 'DevTools 指向新标签');
-  ok(w.stageSrc.includes(TARGETS[1].id) === false, '有头画面 VNC 整窗不按 tid 切换（合理）');
+  ok(w.stageSrc.includes(TARGETS[1].id), '抓屏画面按 tid 切换到新标签');
   ok(w.document.querySelectorAll('#tabRow .chip')[1].classList.contains('on'), '新标签高亮');
 
   // 4. dock 方向 / 折叠

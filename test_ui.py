@@ -468,10 +468,12 @@ class IntegratedDevToolsPageTests(unittest.TestCase):
         self.assertIn('"/devtools/page/" + targetTid', self.page)
         self.assertNotIn("location.assign(", self.page)
 
-    def test_headless_uses_cast_full_uses_novnc(self):
+    def test_all_modes_use_cast_not_novnc(self):
+        # 有头/无头统一走 CDP 抓屏（/cast），同屏页不再接 noVNC 整窗。
         self.assertIn('location.origin + "/cast?sid="', self.page)
-        self.assertIn("vnc_lite.html", self.page)
-        self.assertIn("if (isHeadless(inst))", self.page)
+        self.assertNotIn("vnc_lite.html", self.page)
+        self.assertNotIn("novnc_url_proxy", self.page)
+        self.assertNotIn("if (isHeadless(inst))", self.page)
 
     def test_activates_target_before_switch(self):
         self.assertIn("/targets/\" + encodeURIComponent(targetTid) + \"/activate", self.page)
