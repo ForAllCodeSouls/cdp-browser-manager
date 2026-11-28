@@ -261,9 +261,19 @@ class EnhanceToolkitInjectionTests(unittest.TestCase):
         for kw in ('zh:', 'en:', 'ja:', "devtools.preferences", "setLang", "applyLang"):
             self.assertIn(kw, self.snippet)
 
-    def test_shadow_dom_isolated(self):
-        self.assertIn("attachShadow", self.snippet)
+    def test_boot_deferred_and_style_in_head(self):
+        # 回归：注入在 <head> 同步执行时 body 尚不存在，挂到 <html> 会被 DevTools
+        # frontend 的 DOM 接管破坏；必须延迟到 DOMContentLoaded 后挂 body，
+        # 且样式放 <head>（放 ShadowRoot 会被一起破坏，实测整块 CSS 失效）。
+        self.assertIn("function boot()", self.snippet)
+        self.assertIn('document.readyState==="loading"', self.snippet)
+        self.assertIn('addEventListener("DOMContentLoaded",boot', self.snippet)
+        self.assertIn("cdmpEnhStyle", self.snippet)
+        self.assertIn("document.head||document.documentElement", self.snippet)
+        self.assertIn("document.body.appendChild(root)", self.snippet)
         self.assertIn("data-cdmp-enh", self.snippet)
+        # 面板自身不再 attachShadow（样式由 head 全局 style 承载）
+        self.assertNotIn("attachShadow", self.snippet)
 
     def test_idempotent_injection(self):
         import ast

@@ -3470,7 +3470,13 @@ def inject_devtools_python_menu(text: str) -> str:
 DEVTOOLS_ENHANCE_SNIPPET = r"""<script>/*__cdmpEnh*/
 (function(){
 "use strict";
-try{
+// 本脚本注入在 <head> 的 </title> 之后，同步执行阶段 document.body 还不存在。
+// 若在此时把面板挂到 <html> 上，DevTools frontend 的 module 初始化会重建/接管
+// 文档 DOM，连带破坏面板的 ShadowRoot，导致 CSS 全部失效（裸按钮、无布局）。
+// 因此整体延迟到 DOMContentLoaded 之后执行，此时 body 已就绪、原生 UI 已挂载。
+function boot(){
+ if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",boot,{once:true});return;}
+ try{
 var Q=new URLSearchParams(location.search);
 var SID=Q.get("cdmp_sid")||"",TID=Q.get("cdmp_tid")||"",KEY=Q.get("cdmp_key")||"",LANG=Q.get("cdmp_lang")||"zh";
 if(!SID||!TID)return;
@@ -3519,10 +3525,18 @@ var CSS=""+
 ".cdmp-h .hint{color:#7f869f;font-size:11px;margin:2px 0 8px}"+
 ".cdmp-h .hi{cursor:pointer;padding:6px 8px;border-bottom:1px solid #2b3044;color:#cfd5ea}"+
 ".cdmp-h .hi:hover{background:#2a2f42}";
+// CSS 必须放到 <head>：DevTools frontend 初始化会重建 body 内节点，若把 <style>
+// 放在面板 ShadowRoot 里会被一并破坏，实测整块样式失效（裸按钮、无定位）。
+// head 相对稳定，且 .cdmp-h 前缀不会污染原生组件（原生各有自己的 shadow root）。
+if(!document.getElementById("cdmpEnhStyle")){
+ var st=document.createElement("style");st.id="cdmpEnhStyle";st.textContent=CSS;
+ (document.head||document.documentElement).appendChild(st);
+}
+var old=document.querySelector(".cdmp-h[data-cdmp-enh]");if(old&&old.parentNode)old.parentNode.removeChild(old);
 var root=document.createElement("div");root.className="cdmp-h";root.setAttribute("data-cdmp-enh","1");
-(document.body||document.documentElement).appendChild(root);
-var sh=root.attachShadow?root.attachShadow({mode:"open"}):root;
-sh.innerHTML="<style>"+CSS+"</style>"+
+document.body.appendChild(root);
+var sh=root;
+sh.innerHTML=
 "<div class='pnl'>"+
 "<div class='hd'><b data-i18n='enh'></b><span class='x' id='cx' title='close'>&#10005;</span></div>"+
 "<div class='lg'><span data-i18n='language'></span><select id='clang'><option value='zh'>中文</option><option value='en'>English</option><option value='ja'>日本語</option></select><span data-i18n='nativeTip' class='hint' style='margin:0'></span></div>"+
@@ -3536,7 +3550,7 @@ sh.innerHTML="<style>"+CSS+"</style>"+
 "<div class='ft'><span id='cState' data-i18n='disconnected'></span><span id='cCount'>0</span></div>"+
 "</div>"+
 "<div class='fab' id='cFab' title='Enhance'>&#9881;</div>";
-var $=function(id){return sh.getElementById(id);};
+var $=function(id){return root.querySelector("#"+id);};
 function applyLang(){
  var ns=sh.querySelectorAll("[data-i18n]");
  for(var i=0;i<ns.length;i++)ns[i].textContent=T(ns[i].getAttribute("data-i18n"));
@@ -3672,6 +3686,8 @@ $("cJson").addEventListener("click",function(){exportData("json");});
 $("cSend").addEventListener("click",sendCdp);
 applyLang();
 }catch(e){}
+}
+boot();
 })();</script>"""
 
 
