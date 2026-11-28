@@ -69,7 +69,7 @@ ok(w.document.getElementById('sideViewLog').classList.contains('on'), '日志视
 console.log('\n[3] WS 地址构造（同源 /ws/inspect + 密钥）');
 const url = w.capWsUrl('sid1', 'tid123');
 ok(url.startsWith('wss://example.test/ws/inspect/sid1/tid123'), 'WS 走同源 /ws/inspect（https 下为 wss）');
-ok(url.includes('domain=network'), '带 domain=network');
+ok(url.includes('domain=all'), '九面板共用 domain=all 全功能域');
 ok(url.includes('key=testkey'), '携带 API_KEY');
 
 console.log('\n[4] cURL 生成（unix + win）');

@@ -3991,6 +3991,15 @@ INSPECT_DOMAINS = {
     "network": ["Network.enable", "Runtime.enable"],
     "console": ["Runtime.enable", "Log.enable"],
     "performance": ["Performance.enable"],
+    # all：九面板共用的全功能域，启用后前端按 method 自行分发事件。
+    # 只启用事件型域；Emulation/Tracing/Storage 等命令型域按需直接调用即可。
+    "all": [
+        "Runtime.enable", "Log.enable", "Network.enable",
+        "DOM.enable", "CSS.enable", "DOMDebugger.enable",
+        "Debugger.enable", "Performance.enable", "HeapProfiler.enable",
+        "DOMStorage.enable", "IndexedDB.enable", "ServiceWorker.enable",
+        "Security.enable", "Page.enable",
+    ],
 }
 
 
@@ -4032,10 +4041,11 @@ async def ws_inspect(websocket: WebSocket, sid: str, tid: str):
             f"ws://{ip}:9222/devtools/page/{tid}", timeout=10, suppress_origin=True
         )
         upstream.settimeout(1)
-        # 启用事件域。CDP 会对每条启用命令回一个空结果，pump 里忽略即可。
+        # 启用事件域。使用独立负数 id 段，避免与前端命令 id 冲突误触发前端回调。
+        enable_id = [-1]
         for m in INSPECT_DOMAINS[domain]:
-            call_id[0] += 1
-            upstream_send({"id": call_id[0], "method": m, "params": {}})
+            enable_id[0] -= 1
+            upstream_send({"id": enable_id[0], "method": m, "params": {}})
         audit("inspect.open", sid, detail="domain=" + domain)
 
         def pump():
@@ -4061,7 +4071,10 @@ async def ws_inspect(websocket: WebSocket, sid: str, tid: str):
                 params = msg.get("params", {})
                 # 按域过滤，只推前端订阅的事件，避免画面帧等无关流量。
                 keep = False
-                if domain == "network" and method.startswith("Network."):
+                if domain == "all":
+                    # 全功能模式：前端按 method 分发给九个面板，后端不再过滤。
+                    keep = True
+                elif domain == "network" and method.startswith("Network."):
                     keep = True
                 elif domain == "console" and (
                     method in ("Runtime.consoleAPICalled", "Runtime.exceptionThrown",
@@ -4090,14 +4103,18 @@ async def ws_inspect(websocket: WebSocket, sid: str, tid: str):
             except Exception:
                 continue
             if req.get("type") == "cmd" and req.get("method"):
-                call_id[0] += 1
+                # 沿用前端自带的 id；前端按此 id 关联回调，后端不得另分配。
+                cid = req.get("id")
+                if not isinstance(cid, int):
+                    call_id[0] += 1
+                    cid = call_id[0]
                 upstream_send({
-                    "id": call_id[0],
+                    "id": cid,
                     "method": req["method"],
                     "params": req.get("params") or {},
                 })
                 # 响应通过 pump 以 type=result 回推；前端按 id 关联。
-                await websocket.send_json({"type": "sent", "id": call_id[0]})
+                await websocket.send_json({"type": "sent", "id": cid})
     except WebSocketDisconnect:
         pass
     except Exception as e:

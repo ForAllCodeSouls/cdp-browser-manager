@@ -249,7 +249,7 @@ class CapturePanelTests(unittest.TestCase):
             self.assertIn(kw, INDEX)
 
     def test_real_cdp_wiring(self):
-        for kw in ("/ws/inspect/", "domain=network", "Network.requestWillBeSent",
+        for kw in ("/ws/inspect/", "domain=all", "Network.requestWillBeSent",
                    "Network.responseReceived", "Network.getResponseBody", "oncontextmenu"):
             self.assertIn(kw, JS + INDEX)
 
@@ -268,6 +268,57 @@ class CapturePanelTests(unittest.TestCase):
     def test_standalone_file_removed(self):
         # 抓包功能已整合进主应用，不再保留单独 html 文件
         self.assertFalse((ROOT / "devtools-preview.html").exists())
+
+
+class DevToolsFullPanelTests(unittest.TestCase):
+    """九面板 CDP 复刻：DOM 结构、统一分发、四项增强。"""
+
+    def test_nine_panel_tabs_and_containers(self):
+        for p in ("elements", "console", "sources", "network", "performance",
+                  "memory", "application", "security", "device", "cdp", "tools"):
+            self.assertIn('data-p="' + p + '"', INDEX)
+        self.assertIn('id="dtTabbar"', INDEX)
+        self.assertIn('id="dtPanelElements"', INDEX)
+        self.assertIn('id="dtPanelSources"', INDEX)
+        self.assertIn('id="dtPanelApplication"', INDEX)
+
+    def test_unified_dispatch_and_cmd_id(self):
+        for fn in ("function dtCmd(", "function dtOnResult(", "function dtDispatch(", "function dtSwitch("):
+            self.assertIn(fn, JS)
+        self.assertIn('type: "cmd", id: id, method: method', JS)
+        for method in ("DOM.getDocument", "CSS.getMatchedStylesForNode", "Debugger.getScriptSource",
+                       "Tracing.start", "HeapProfiler.takeHeapSnapshot", "DOMStorage.getDOMStorageItems",
+                       "Emulation.setDeviceMetricsOverride", "Security.getSecurityState"):
+            self.assertIn(method, JS)
+
+    def test_core_debug_panels(self):
+        for fn in ("dtLoadDom", "dtFlatten", "dtSelectNode", "dtRenderElem",
+                   "dtScriptParsed", "dtToggleBp", "dtPaused", "dtEvalConsole"):
+            self.assertIn("function " + fn + "(", JS)
+        for kw in ("matchedCSSRules", "computedStyle", "getBoxModel", "getEventListeners",
+                   "callFrames", "scopeChain"):
+            self.assertIn(kw, JS)
+
+    def test_analysis_panels(self):
+        for fn in ("dtPerfMetrics", "dtPerfToggle", "dtHeapSnapshot", "dtParseHeap",
+                   "dtAppRefresh", "dtSecurityRefresh", "dtDeviceApply", "dtDeviceGeo"):
+            self.assertIn("function " + fn + "(", JS)
+        for kw in ("Performance.getMetrics", "Tracing.dataCollected", "addHeapSnapshotChunk",
+                   "IndexedDB.getDatabaseNames", "CacheStorage.listCaches", "setGeolocationOverride"):
+            self.assertIn(kw, JS)
+
+    def test_enhancements(self):
+        for fn in ("dtScanSecrets", "dtExport", "dtFetchToggle", "dtOpenReplay", "dtReplaySend"):
+            self.assertIn("function " + fn + "(", JS)
+        for kw in ("Bearer Token", "JWT", "Fetch.continueRequest", "requests.request",
+                   "编辑并重新发送", "dtScanSecrets", "dtExport"):
+            self.assertIn(kw, JS)
+        for kw in ("扫描此请求敏感信息", "批量导出脚本"):
+            self.assertIn(kw, INDEX)
+
+    def test_native_entry_kept(self):
+        self.assertIn("function openNativeDevTools(", JS)
+        self.assertIn("原生 DevTools", INDEX)
 
 
 if __name__ == "__main__":

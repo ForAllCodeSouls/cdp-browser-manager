@@ -938,6 +938,89 @@
         .cap-statusbar { height: 22px; flex: 0 0 22px; background: #292a2d; border-top: 1px solid #3c4043;
             display: flex; align-items: center; padding: 0 9px; gap: 12px; color: #9aa0a6; font-size: 10.5px; }
         .cap-statusbar .cap-spacer { flex: 1; }
+
+        /* ---- 九面板扩展样式（dt- 前缀）---- */
+        #dtTabbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+        #dtTabbar .cap-tab { flex: 0 0 auto; white-space: nowrap; }
+        .dt-panel { padding: 0; }
+        .dt-empty { color: #9aa0a6; font-size: 11.5px; padding: 14px; line-height: 1.7; }
+        .dt-split { display: flex; flex: 1; min-height: 0; }
+        .dt-tree { flex: 1 1 52%; min-width: 0; overflow: auto; padding: 6px 4px;
+            font: 11.5px/1.75 ui-monospace,monospace; border-right: 1px solid #3c4043; }
+        .dt-node { cursor: pointer; padding: 1px 6px; border-radius: 3px; white-space: nowrap; color: #c9cdd2; }
+        .dt-node:hover { background: #2e2f32; }
+        .dt-node.sel { background: rgba(138,180,248,.2); color: #e8eaed; }
+        .dt-node .tg { display: inline-block; width: 12px; color: #9aa0a6; }
+        .dt-tag { color: #c58af9; }
+        .dt-attr { color: #fdd663; }
+        .dt-txt { color: #c9cdd2; }
+        .dt-side { flex: 1 1 48%; min-width: 0; display: flex; flex-direction: column; background: #232427; }
+        .dt-side-tabs, .dt-app-tabs { display: flex; flex: 0 0 auto; background: #292a2d; border-bottom: 1px solid #3c4043; overflow-x: auto; }
+        .dt-side-tab { padding: 6px 11px; color: #9aa0a6; font-size: 11px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; }
+        .dt-side-tab:hover { color: #e8eaed; }
+        .dt-side-tab.on { color: #e8eaed; border-bottom-color: #8ab4f8; }
+        .dt-side-body { flex: 1; overflow: auto; padding: 9px 11px; font: 11px/1.7 ui-monospace,monospace; color: #c9cdd2; white-space: pre-wrap; word-break: break-all; }
+        .dt-side-body .k { color: #c58af9; }
+        .dt-side-body .v { color: #8ab4f8; }
+        .dt-editbar { flex: 0 0 auto; display: flex; gap: 5px; padding: 5px 7px; border-top: 1px solid #3c4043; background: #292a2d; flex-wrap: wrap; }
+        .dt-toolrow { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #292a2d; border-bottom: 1px solid #3c4043; flex-wrap: wrap; }
+        .dt-toolrow .cap-spacer { flex: 1; }
+        .cap-select, .cap-input { height: 24px; background: #1f2022; border: 1px solid #444; border-radius: 4px;
+            color: #c9cdd2; font-size: 11px; padding: 0 7px; outline: none; }
+        .cap-select:focus, .cap-input:focus { border-color: #8ab4f8; }
+        .cap-check { font-size: 11px; color: #9aa0a6; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+        .cap-console-bar { display: flex; gap: 6px; align-items: center; padding: 5px 8px; background: #292a2d; border-bottom: 1px solid #3c4043; }
+        .cap-console-bar .cap-spacer { flex: 1; }
+        .cap-console-input { display: flex; gap: 7px; align-items: center; padding: 6px 8px; border-top: 1px solid #3c4043; background: #1d1e20; }
+        .cap-console-input input { flex: 1; height: 25px; background: #1f2022; border: 1px solid #444; border-radius: 4px;
+            color: #e8eaed; font: 11.5px ui-monospace,monospace; padding: 0 8px; outline: none; }
+        .cap-console-input input:focus { border-color: #8ab4f8; }
+        .cap-prompt { color: #81c995; font: 12px ui-monospace,monospace; }
+        .dt-src-layout { display: flex; flex: 1; min-height: 0; }
+        .dt-src-files { width: 32%; min-width: 110px; overflow: auto; padding: 5px 4px; border-right: 1px solid #3c4043;
+            font: 11px ui-monospace,monospace; }
+        .dt-src-file { padding: 2px 6px; cursor: pointer; color: #c9cdd2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .dt-src-file:hover { background: #2e2f32; }
+        .dt-src-file.sel { background: rgba(138,180,248,.2); }
+        .dt-src-file .bp { color: #f28b82; }
+        .dt-src-code { flex: 1; min-width: 0; overflow: auto; padding: 4px 0; font: 11px/1.7 ui-monospace,monospace; color: #c9cdd2; }
+        .dt-code-line { display: flex; white-space: pre; }
+        .dt-code-line:hover { background: #2a2b2e; }
+        .dt-code-line .ln { flex: 0 0 42px; text-align: right; padding-right: 9px; color: #777; cursor: pointer; user-select: none; }
+        .dt-code-line .ln.bp::after { content: "●"; color: #f28b82; margin-left: 3px; }
+        .dt-code-line .src { white-space: pre; }
+        .dt-src-debug { width: 30%; min-width: 160px; overflow: auto; border-left: 1px solid #3c4043; background: #232427; }
+        .dt-debug-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border-bottom: 1px solid #3c4043; }
+        .dt-debug-title { padding: 6px 9px 2px; color: #9aa0a6; font-size: 10.5px; text-transform: uppercase; }
+        .dt-debug-box { padding: 2px 9px 8px; font: 11px/1.6 ui-monospace,monospace; color: #c9cdd2; white-space: pre-wrap; word-break: break-all; }
+        .dt-metrics, .dt-trace, .dt-heap, .dt-security, .dt-app-body, .dt-cdp-result, .dt-tool-result {
+            flex: 1; min-height: 0; overflow: auto; padding: 9px 11px; font: 11px/1.7 ui-monospace,monospace;
+            color: #c9cdd2; white-space: pre-wrap; word-break: break-all; }
+        .dt-metrics { flex: 0 0 auto; max-height: 45%; display: grid; grid-template-columns: repeat(auto-fill,minmax(190px,1fr)); gap: 4px 10px; }
+        .dt-metric { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid #2e2f32; padding: 2px 0; }
+        .dt-metric b { color: #8ab4f8; font-weight: 500; }
+        .dt-bar { height: 14px; background: #3c4043; border-radius: 3px; position: relative; margin: 1px 0; }
+        .dt-bar i { display: block; height: 100%; background: #8ab4f8; border-radius: 3px; }
+        .dt-device-grid { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-bottom: 1px solid #2e2f32; flex-wrap: wrap; }
+        .dt-device-grid label { display: flex; align-items: center; gap: 5px; color: #9aa0a6; font-size: 11px; }
+        .dt-device-grid .cap-input { width: 92px; }
+        .dt-device-grid #dtDevUa { width: 260px; }
+        .dt-cdp-params { flex: 0 0 84px; resize: none; background: #1f2022; border: 0; border-bottom: 1px solid #3c4043;
+            color: #c9cdd2; font: 11.5px/1.6 ui-monospace,monospace; padding: 8px 11px; outline: none; }
+        .dt-tools { flex: 1; overflow: auto; padding: 10px; display: grid; grid-template-columns: repeat(auto-fill,minmax(230px,1fr)); gap: 9px; align-content: start; }
+        .dt-tool-card { background: #292a2d; border: 1px solid #3c4043; border-radius: 7px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .dt-tool-title { color: #e8eaed; font-weight: 600; font-size: 12px; }
+        .dt-tool-desc { color: #9aa0a6; font-size: 11px; line-height: 1.6; }
+        .dt-tool-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+        .dt-tool-result { color: #81c995; font-size: 10.5px; max-height: 90px; padding: 3px 0; }
+        .dt-edit-modal { position: absolute; inset: 0; background: rgba(0,0,0,.65); z-index: 70; display: none;
+            align-items: center; justify-content: center; }
+        .dt-edit-modal.open { display: flex; }
+        .dt-edit-box { width: 90%; max-height: 88%; overflow: auto; background: #292a2d; border: 1px solid #4a4d51;
+            border-radius: 9px; padding: 13px; display: flex; flex-direction: column; gap: 8px; }
+        .dt-edit-box textarea { min-height: 90px; background: #1f2022; border: 1px solid #444; border-radius: 4px;
+            color: #e8eaed; font: 11px/1.6 ui-monospace,monospace; padding: 7px; outline: none; resize: vertical; }
+        .dt-edit-box .dt-edit-title { color: #e8eaed; font-weight: 600; font-size: 12px; }
         .dev-head {
             flex: 0 0 auto;
             display: flex;
@@ -1412,11 +1495,18 @@
                                 <button class="cap-btn" id="capBtnConn" onclick="capToggleConnect()">开始抓包</button>
                                 <span class="cap-state"><span class="cap-dot" id="capStateDot"></span><span id="capStateText">未连接</span></span>
                             </div>
-                            <div class="cap-tabbar">
-                                <div class="cap-tab on" data-p="network" onclick="capSwitchPanel('network')">网络</div>
-                                <div class="cap-tab" data-p="console" onclick="capSwitchPanel('console')">控制台</div>
-                                <span class="cap-spacer"></span>
-                                <span class="cap-hint">右键请求可复制 cURL / 转 Python</span>
+                            <div class="cap-tabbar" id="dtTabbar">
+                                <div class="cap-tab" data-p="elements" onclick="dtSwitch('elements')">元素</div>
+                                <div class="cap-tab" data-p="console" onclick="dtSwitch('console')">控制台</div>
+                                <div class="cap-tab" data-p="sources" onclick="dtSwitch('sources')">源码</div>
+                                <div class="cap-tab on" data-p="network" onclick="dtSwitch('network')">网络</div>
+                                <div class="cap-tab" data-p="performance" onclick="dtSwitch('performance')">性能</div>
+                                <div class="cap-tab" data-p="memory" onclick="dtSwitch('memory')">内存</div>
+                                <div class="cap-tab" data-p="application" onclick="dtSwitch('application')">应用</div>
+                                <div class="cap-tab" data-p="security" onclick="dtSwitch('security')">安全</div>
+                                <div class="cap-tab" data-p="device" onclick="dtSwitch('device')">设备</div>
+                                <div class="cap-tab" data-p="cdp" onclick="dtSwitch('cdp')">CDP台</div>
+                                <div class="cap-tab" data-p="tools" onclick="dtSwitch('tools')">工具</div>
                             </div>
                             <div class="cap-toolbar">
                                 <button class="cap-tbtn on" id="capBtnRecord" onclick="capToggleRecord()"><span class="cap-dot on"></span>录制中</button>
@@ -1425,7 +1515,7 @@
                                 <span class="cap-count" id="capCnt">0 个请求</span>
                                 <input class="cap-search" id="capFilter" placeholder="过滤 URL（支持中文输入）" oninput="capApplyFilter()">
                             </div>
-                            <div class="cap-panel on" id="capPanelNetwork">
+                            <div class="cap-panel on" id="capPanelNetwork" data-p="network">
                                 <div class="cap-net-wrap">
                                     <table class="cap-table">
                                         <thead><tr>
@@ -1445,9 +1535,195 @@
                                     <div class="cap-detail-body" id="capDetailBody">点击上方请求查看详情；右键请求可直接复制。</div>
                                 </div>
                             </div>
-                            <div class="cap-panel" id="capPanelConsole">
+                            <div class="cap-panel" id="capPanelConsole" data-p="console">
+                                <div class="cap-console-bar">
+                                    <input class="cap-search" id="dtConsoleFilter" placeholder="过滤日志" oninput="dtRenderConsole()">
+                                    <button class="cap-tbtn" onclick="dtClearConsole()">清空</button>
+                                    <span class="cap-spacer"></span>
+                                    <label class="cap-check"><input type="checkbox" id="dtConsoleKeep">保留重复</label>
+                                </div>
                                 <div class="cap-console" id="capConsoleLog">
                                     <div class="cap-logrow"><span class="ic">›</span><span class="msg">连接后这里会实时显示页面 console 与异常。</span></div>
+                                </div>
+                                <div class="cap-console-input">
+                                    <span class="cap-prompt">&gt;</span>
+                                    <input id="dtConsoleInput" placeholder="执行 JavaScript，回车运行（↑↓ 历史）" onkeydown="dtConsoleKey(event)">
+                                    <button class="cap-btn" onclick="dtEvalConsole()">运行</button>
+                                </div>
+                            </div>
+
+                            <!-- 元素面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelElements" data-p="elements">
+                                <div class="dt-split">
+                                    <div class="dt-tree" id="dtDomTree"><div class="dt-empty">连接后加载 DOM 树；点击节点查看样式与盒模型。</div></div>
+                                    <div class="dt-side">
+                                        <div class="dt-side-tabs">
+                                            <div class="dt-side-tab on" data-t="styles" onclick="dtElemTab('styles')">样式</div>
+                                            <div class="dt-side-tab" data-t="computed" onclick="dtElemTab('computed')">计算</div>
+                                            <div class="dt-side-tab" data-t="box" onclick="dtElemTab('box')">盒模型</div>
+                                            <div class="dt-side-tab" data-t="events" onclick="dtElemTab('events')">事件</div>
+                                        </div>
+                                        <div class="dt-side-body" id="dtElemSide">选择左侧节点查看详情。</div>
+                                        <div class="dt-editbar">
+                                            <button class="cap-tbtn" onclick="dtElemEditHtml()">编辑 HTML</button>
+                                            <button class="cap-tbtn" onclick="dtElemCopy('outerHTML')">复制 HTML</button>
+                                            <button class="cap-tbtn" onclick="dtElemCopy('selector')">复制选择器</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 源码面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelSources" data-p="sources">
+                                <div class="dt-src-layout">
+                                    <div class="dt-src-files" id="dtSrcFiles"><div class="dt-empty">连接后列出已加载脚本。</div></div>
+                                    <div class="dt-src-code" id="dtSrcCode">选择脚本查看源码并点击行号下断点。</div>
+                                    <div class="dt-src-debug">
+                                        <div class="dt-debug-bar">
+                                            <button class="cap-tbtn" onclick="dtCmd('Debugger.resume',{},()=>dtToast('已继续'))">继续</button>
+                                            <button class="cap-tbtn" onclick="dtCmd('Debugger.stepOver',{})">单步</button>
+                                            <button class="cap-tbtn" onclick="dtCmd('Debugger.stepInto',{})">步入</button>
+                                            <button class="cap-tbtn" onclick="dtCmd('Debugger.stepOut',{})">步出</button>
+                                        </div>
+                                        <div class="dt-debug-title">调用栈</div>
+                                        <div class="dt-debug-box" id="dtCallStack">—</div>
+                                        <div class="dt-debug-title">作用域</div>
+                                        <div class="dt-debug-box" id="dtScope">—</div>
+                                        <div class="dt-debug-title">断点</div>
+                                        <div class="dt-debug-box" id="dtBreakpoints">—</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 性能面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelPerformance" data-p="performance">
+                                <div class="dt-toolrow">
+                                    <button class="cap-btn" id="dtPerfBtn" onclick="dtPerfToggle()">开始录制</button>
+                                    <button class="cap-tbtn" onclick="dtPerfMetrics()">刷新指标</button>
+                                    <span class="cap-spacer"></span>
+                                    <span class="cap-hint" id="dtPerfHint">Performance.getMetrics + Tracing</span>
+                                </div>
+                                <div class="dt-metrics" id="dtPerfMetrics">点击「刷新指标」获取页面性能计数。</div>
+                                <div class="dt-trace" id="dtPerfTrace">录制后显示最长任务（近似火焰图）。</div>
+                            </div>
+
+                            <!-- 内存面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelMemory" data-p="memory">
+                                <div class="dt-toolrow">
+                                    <button class="cap-btn" id="dtHeapBtn" onclick="dtHeapSnapshot()">采集堆快照</button>
+                                    <button class="cap-tbtn" onclick="dtCmd('HeapProfiler.collectGarbage',{},()=>dtToast('已触发 GC'))">强制 GC</button>
+                                    <span class="cap-spacer"></span>
+                                    <span class="cap-hint" id="dtHeapHint">HeapProfiler</span>
+                                </div>
+                                <div class="dt-heap" id="dtHeapBody">采集后显示对象类型分布（按实例数）。</div>
+                            </div>
+
+                            <!-- 应用面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelApplication" data-p="application">
+                                <div class="dt-app-tabs">
+                                    <div class="dt-side-tab on" data-t="local" onclick="dtAppTab('local')">Local Storage</div>
+                                    <div class="dt-side-tab" data-t="session" onclick="dtAppTab('session')">Session</div>
+                                    <div class="dt-side-tab" data-t="cookie" onclick="dtAppTab('cookie')">Cookie</div>
+                                    <div class="dt-side-tab" data-t="indexeddb" onclick="dtAppTab('indexeddb')">IndexedDB</div>
+                                    <div class="dt-side-tab" data-t="cache" onclick="dtAppTab('cache')">Cache</div>
+                                </div>
+                                <div class="dt-toolrow">
+                                    <button class="cap-tbtn" onclick="dtAppRefresh()">刷新</button>
+                                    <button class="cap-tbtn" onclick="dtAppAdd()">新增</button>
+                                    <input class="cap-input" id="dtAppNewItem" placeholder="键名=值" style="width:180px">
+                                    <button class="cap-tbtn" onclick="dtAppClear()">清空</button>
+                                    <span class="cap-spacer"></span>
+                                    <span class="cap-hint" id="dtAppHint">—</span>
+                                </div>
+                                <div class="dt-app-body" id="dtAppBody">选择分类后刷新查看。</div>
+                            </div>
+
+                            <!-- 安全面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelSecurity" data-p="security">
+                                <div class="dt-toolrow"><button class="cap-tbtn" onclick="dtSecurityRefresh()">刷新安全状态</button></div>
+                                <div class="dt-security" id="dtSecurityBody">连接后显示主源安全状态与证书信息。</div>
+                            </div>
+
+                            <!-- 设备面板 -->
+                            <div class="cap-panel dt-panel" id="dtPanelDevice" data-p="device">
+                                <div class="dt-toolrow">
+                                    <select class="cap-select" id="dtDevicePreset" onchange="dtApplyPreset()">
+                                        <option value="">设备预设…</option>
+                                        <option value="375,812,2">iPhone X 375×812</option>
+                                        <option value="390,844,3">iPhone 14 390×844</option>
+                                        <option value="414,896,3">iPhone Max 414×896</option>
+                                        <option value="360,640,2">Android 360×640</option>
+                                        <option value="768,1024,1">iPad 768×1024</option>
+                                        <option value="1920,1080,1">桌面 1920×1080</option>
+                                    </select>
+                                    <button class="cap-tbtn" onclick="dtDeviceReset()">恢复默认</button>
+                                    <span class="cap-spacer"></span>
+                                </div>
+                                <div class="dt-device-grid">
+                                    <label>宽度 <input class="cap-input" id="dtDevW" value="—"></label>
+                                    <label>高度 <input class="cap-input" id="dtDevH" value="—"></label>
+                                    <label>DPR <input class="cap-input" id="dtDevDpr" value="—"></label>
+                                    <button class="cap-tbtn" onclick="dtDeviceApply()">应用尺寸</button>
+                                </div>
+                                <div class="dt-device-grid">
+                                    <label>UA <input class="cap-input" id="dtDevUa" placeholder="自定义 User-Agent（留空用默认）"></label>
+                                    <button class="cap-tbtn" onclick="dtDeviceUa()">应用 UA</button>
+                                </div>
+                                <div class="dt-device-grid">
+                                    <label>纬度 <input class="cap-input" id="dtDevLat" placeholder="39.9042"></label>
+                                    <label>经度 <input class="cap-input" id="dtDevLng" placeholder="116.4074"></label>
+                                    <button class="cap-tbtn" onclick="dtDeviceGeo()">定位</button>
+                                    <button class="cap-tbtn" onclick="dtDeviceGeoClear()">清除</button>
+                                </div>
+                                <div class="dt-device-grid">
+                                    <label>媒体 <select class="cap-select" id="dtDevMedia">
+                                        <option value="">默认</option><option value="print">print</option>
+                                        <option value="dark"> prefers-color-scheme: dark</option>
+                                        <option value="light">prefers-color-scheme: light</option>
+                                    </select></label>
+                                    <button class="cap-tbtn" onclick="dtDeviceMedia()">应用媒体</button>
+                                </div>
+                            </div>
+
+                            <!-- CDP 命令台 -->
+                            <div class="cap-panel dt-panel" id="dtPanelCdp" data-p="cdp">
+                                <div class="dt-toolrow">
+                                    <input class="cap-input" id="dtCdpMethod" placeholder="CDP 方法，如 Runtime.evaluate" style="flex:1">
+                                    <button class="cap-btn" onclick="dtCdpSend()">发送</button>
+                                    <button class="cap-tbtn" onclick="dtCdpHistory()">历史</button>
+                                </div>
+                                <textarea class="dt-cdp-params" id="dtCdpParams" placeholder='参数 JSON，如 {"expression":"1+1","returnByValue":true}'></textarea>
+                                <div class="dt-cdp-result" id="dtCdpResult">输入方法与参数后点击发送，查看原始 CDP 响应。</div>
+                            </div>
+
+                            <!-- 增强工具 -->
+                            <div class="cap-panel dt-panel" id="dtPanelTools" data-p="tools">
+                                <div class="dt-tools">
+                                    <div class="dt-tool-card">
+                                        <div class="dt-tool-title">请求编辑重放</div>
+                                        <div class="dt-tool-desc">在网络面板右键请求 →「编辑重放」，改 method/URL/头/体后重新发送。</div>
+                                        <div class="dt-tool-actions"><button class="cap-tbtn" onclick="dtSwitch('network')">去网络面板</button></div>
+                                    </div>
+                                    <div class="dt-tool-card">
+                                        <div class="dt-tool-title">敏感信息扫描</div>
+                                        <div class="dt-tool-desc">扫描已抓包的 URL / 请求头 / 请求体中的 token、密钥、手机号等。</div>
+                                        <div class="dt-tool-actions"><button class="cap-tbtn" onclick="dtScanSecrets()">立即扫描</button></div>
+                                        <div class="dt-tool-result" id="dtScanResult">—</div>
+                                    </div>
+                                    <div class="dt-tool-card">
+                                        <div class="dt-tool-title">批量导出脚本</div>
+                                        <div class="dt-tool-desc">导出当前抓包请求为 Python requests 脚本文件。</div>
+                                        <div class="dt-tool-actions">
+                                            <button class="cap-tbtn" onclick="dtExport('py')">Python 脚本</button>
+                                            <button class="cap-tbtn" onclick="dtExport('json')">JSON</button>
+                                        </div>
+                                    </div>
+                                    <div class="dt-tool-card">
+                                        <div class="dt-tool-title">API 触发重放</div>
+                                        <div class="dt-tool-desc">通过 Fetch 域拦截并改写请求（需先在网络面板开启拦截）。</div>
+                                        <div class="dt-tool-actions"><button class="cap-tbtn" onclick="dtFetchToggle()">开启/关闭拦截</button></div>
+                                        <div class="dt-tool-result" id="dtFetchState">拦截未开启</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="cap-statusbar">
@@ -1465,6 +1741,25 @@
                                 <div class="cap-ctx-item" data-act="py-httpx" onclick="capCtxAction('py-httpx')">复制为 Python (httpx)</div>
                                 <div class="cap-ctx-sep"></div>
                                 <div class="cap-ctx-item" data-act="copy-url" onclick="capCtxAction('copy-url')">复制请求地址</div>
+                                <div class="cap-ctx-sep"></div>
+                                <div class="cap-ctx-item" data-act="edit-replay" onclick="capCtxAction('edit-replay')">编辑并重新发送</div>
+                                <div class="cap-ctx-item" data-act="scan-one" onclick="capCtxAction('scan-one')">扫描此请求敏感信息</div>
+                            </div>
+                            <div class="dt-edit-modal" id="dtEditModal">
+                                <div class="dt-edit-box">
+                                    <div class="dt-edit-title" id="dtEditTitle">编辑并重新发送</div>
+                                    <label>方法 <select class="cap-select" id="dtEditMethod">
+                                        <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
+                                    </select></label>
+                                    <label>URL <input class="cap-input" id="dtEditUrl" style="width:100%"></label>
+                                    <label>请求头（JSON）<textarea id="dtEditHeaders"></textarea></label>
+                                    <label>请求体<textarea id="dtEditBody"></textarea></label>
+                                    <div class="dt-tool-actions">
+                                        <button class="cap-btn" onclick="dtReplaySend()">发送</button>
+                                        <button class="cap-tbtn" onclick="dtEditClose()">取消</button>
+                                    </div>
+                                    <div class="dt-tool-result" id="dtReplayResult">—</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -5917,8 +6212,9 @@
         }
         function capWsUrl(sid, tid) {
             const proto = location.protocol === "https:" ? "wss" : "ws";
+            // 全功能域：九面板共用一个连接，事件由 dtDispatch 按 method 分发。
             let url = proto + "://" + location.host + "/ws/inspect/" +
-                encodeURIComponent(sid) + "/" + encodeURIComponent(tid) + "?domain=network";
+                encodeURIComponent(sid) + "/" + encodeURIComponent(tid) + "?domain=all";
             if (apiKey) url += "&key=" + encodeURIComponent(apiKey);
             return url;
         }
@@ -5951,9 +6247,15 @@
             capWs.onmessage = function (ev) {
                 let m;
                 try { m = JSON.parse(ev.data); } catch (e) { return; }
-                if (m.type === "event") capHandleEvent(m.method, m.params || {});
-                else if (m.type === "result" && m.msg && m.msg.id != null && capPending[m.msg.id]) {
-                    capPending[m.msg.id](m.msg.result || {}); delete capPending[m.msg.id];
+                if (m.type === "event") {
+                    capHandleEvent(m.method, m.params || {});
+                    if (typeof dtDispatch === "function") dtDispatch(m.method, m.params || {});
+                }
+                else if (m.type === "result" && m.msg && m.msg.id != null) {
+                    if (typeof dtOnResult === "function") dtOnResult(m.msg);
+                    if (capPending[m.msg.id]) {
+                        capPending[m.msg.id](m.msg.result || {}); delete capPending[m.msg.id];
+                    }
                 } else if (m.type === "error") capLog("错误：" + m.message, "err");
             };
             capWs.onclose = function () { capDisconnect(true); };
@@ -5971,7 +6273,8 @@
             if (!capWs || !capConnected) { if (cb) cb({}); return; }
             const id = ++capCallId;
             if (cb) capPending[id] = cb;
-            capWs.send(JSON.stringify({ type: "cmd", method: method, params: params || {} }));
+            // 带上 id：后端按此 id 原样回推响应，前端才能正确关联回调。
+            capWs.send(JSON.stringify({ type: "cmd", id: id, method: method, params: params || {} }));
         }
         function capHandleEvent(method, p) {
             if (!capRecording && method.indexOf("Network.") === 0) return;
@@ -6137,6 +6440,12 @@
             else if (act === "py-requests") text = capGenPython("requests", r);
             else if (act === "py-httpx") text = capGenPython("httpx", r);
             else if (act === "copy-url") text = r.url;
+            if (act === "edit-replay") { dtOpenReplay(r, false); return; }
+            if (act === "scan-one") {
+                const f = dtScanRequest(r);
+                toast(f.length ? "发现敏感信息：" + f.join("；") : "未发现敏感信息");
+                return;
+            }
             capCopyText(text);
             toast("已复制：" + act.replace("py-", "Python ").replace("curl-", "cURL "));
         }
@@ -6169,9 +6478,571 @@
         }
         function capSwitchPanel(which) {
             document.querySelectorAll("#capWrap .cap-tab").forEach(x => x.classList.toggle("on", x.getAttribute("data-p") === which));
-            const np = $("capPanelNetwork"), cp = $("capPanelConsole");
-            if (np) np.classList.toggle("on", which === "network");
-            if (cp) cp.classList.toggle("on", which === "console");
+            document.querySelectorAll("#capWrap .cap-panel").forEach(x => x.classList.toggle("on", x.getAttribute("data-p") === which));
+        }
+
+        // ===================================================================
+        // 九面板统一层（dt- 前缀）：与抓包共用 WS 连接，按 method 分发事件。
+        // 所有命令走 capSendCmd（带 id），结果由 dtOnResult 关联到等待队列。
+        // ===================================================================
+        let dtPanel = "network";
+        let dtPending = {}, dtCallId = 5000;
+        let dtConsoleRows = [], dtHist = [], dtHistIdx = -1;
+        let dtNodes = [], dtSelectedNode = null, dtElemKind = "styles";
+        let dtScripts = [], dtSrcSelected = null, dtBreakpoints = [];
+        let dtPerfRecording = false, dtPerfStart = 0, dtTraces = [];
+        let dtAppKind = "local", dtFetchOn = false, dtFetchReqId = null;
+        let dtSecrets = [];
+
+        function dtToast(msg, kind) { if (typeof toast === "function") toast(msg, kind); }
+        function dtQ(id) { return document.getElementById(id); }
+        // 发命令：返回 Promise，后端按 id 回推响应。
+        function dtCmd(method, params) {
+            if (!capWs || !capConnected) return Promise.resolve({});
+            return new Promise(resolve => {
+                const id = ++dtCallId;
+                dtPending[id] = resolve;
+                capWs.send(JSON.stringify({ type: "cmd", id: id, method: method, params: params || {} }));
+            });
+        }
+        function dtOnResult(msg) {
+            const id = msg && msg.id;
+            if (id != null && dtPending[id]) { dtPending[id](msg.result || {}); delete dtPending[id]; }
+        }
+        // 统一事件分发：把 CDP 事件转给对应面板。
+        function dtDispatch(method, p) {
+            if (method === "Runtime.consoleAPICalled") dtConsoleEvent(p, "log");
+            else if (method === "Runtime.exceptionThrown") dtConsoleEvent(p, "error");
+            else if (method === "Log.entryAdded") dtConsoleEvent(p, p.entry && p.entry.level);
+            else if (method === "Debugger.scriptParsed") dtScriptParsed(p);
+            else if (method === "Debugger.paused") dtPaused(p);
+            else if (method === "Debugger.resumed") { if (dtQ("dtCallStack")) dtQ("dtCallStack").textContent = "—"; }
+            else if (method === "Security.stateChanged" || method === "Security.visibleSecurityStateChanged") dtSecurityEvent(p);
+            else if (method === "Network.requestWillBeSent" && dtFetchOn) dtFetchIntercept(p);
+            else if (method === "HeapProfiler.addHeapSnapshotChunk" && dtHeapChunks) dtHeapChunks.push(p.chunk || "");
+            else if (method === "Tracing.dataCollected" && dtPerfRecording) {
+                (p.value || []).forEach(ev => dtTraces.push(ev));
+                if (dtTraces.length >= 1 && dtQ("dtPerfHint")) dtQ("dtPerfHint").textContent = "录制中… " + dtTraces.length + " 事件";
+            }
+        }
+        function dtSwitch(which) {
+            dtPanel = which;
+            capSwitchPanel(which);
+            if (which === "elements") dtLoadDom();
+            else if (which === "sources") dtLoadScripts();
+            else if (which === "console") dtRenderConsole();
+            else if (which === "performance") dtPerfMetrics();
+            else if (which === "application") dtAppRefresh();
+            else if (which === "security") dtSecurityRefresh();
+        }
+
+        // ---- 控制台 ----
+        function dtConsoleEvent(p, kind) {
+            let text = "", lv = "log";
+            if (p.type === "exceptionThrown" || (p.exceptionDetails && p.exceptionDetails.text)) {
+                const d = p.exceptionDetails || {};
+                text = d.exception && d.exception.description ? d.exception.description : (d.text || "异常");
+                lv = "error";
+            } else if (p.entry) {
+                text = p.entry.text || ""; lv = (p.entry.level || "info").toLowerCase();
+            } else {
+                text = (p.args || []).map(a => a && (a.value !== undefined ? a.value : a.description)).join(" ");
+                lv = p.type || "log";
+            }
+            if (lv === "warning") lv = "warn";
+            const last = dtConsoleRows[dtConsoleRows.length - 1];
+            if (last && last.text === text && !dtQ("dtConsoleKeep")?.checked) { last.count = (last.count || 1) + 1; }
+            else dtConsoleRows.push({ text: String(text), kind: lv, count: 1, ts: Date.now() });
+            if (dtConsoleRows.length > 1000) dtConsoleRows.shift();
+            dtRenderConsole();
+        }
+        function dtRenderConsole() {
+            const box = dtQ("capConsoleLog"); if (!box) return;
+            const q = (dtQ("dtConsoleFilter")?.value || "").trim().toLowerCase();
+            box.innerHTML = "";
+            dtConsoleRows.filter(r => !q || r.text.toLowerCase().includes(q)).forEach(r => {
+                const row = document.createElement("div");
+                row.className = "cap-logrow " + (r.kind === "error" ? "err" : r.kind === "warn" ? "warn" : "");
+                row.innerHTML = "<span class='ic'></span><span class='msg'></span>";
+                row.querySelector(".ic").textContent = r.kind === "error" ? "✕" : r.kind === "warn" ? "!" : "›";
+                row.querySelector(".msg").textContent = r.text + (r.count > 1 ? " ×" + r.count : "");
+                box.appendChild(row);
+            });
+            box.scrollTop = box.scrollHeight;
+        }
+        function dtClearConsole() { dtConsoleRows = []; dtRenderConsole(); }
+        function dtConsoleKey(e) {
+            if (e.key === "Enter") { dtEvalConsole(); e.preventDefault(); }
+            else if (e.key === "ArrowUp") { if (dtHistIdx < dtHist.length - 1) { dtHistIdx++; dtQ("dtConsoleInput").value = dtHist[dtHistIdx] || ""; } }
+            else if (e.key === "ArrowDown") { if (dtHistIdx > 0) { dtHistIdx--; dtQ("dtConsoleInput").value = dtHist[dtHistIdx] || ""; } }
+        }
+        function dtEvalConsole() {
+            const input = dtQ("dtConsoleInput"); if (!input) return;
+            const expr = input.value.trim(); if (!expr) return;
+            dtHist.unshift(expr); dtHistIdx = -1; input.value = "";
+            dtConsoleRows.push({ text: "> " + expr, kind: "input", count: 1, ts: Date.now() });
+            dtCmd("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true }).then(res => {
+                const r = res || {};
+                let out = r.exceptionDetails ? ("异常：" + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text))
+                    : (r.result && (r.result.value !== undefined ? JSON.stringify(r.result.value) : r.result.description) || "");
+                dtConsoleRows.push({ text: String(out), kind: r.exceptionDetails ? "error" : "result", count: 1, ts: Date.now() });
+                dtRenderConsole();
+            });
+            dtRenderConsole();
+        }
+
+        // ---- 元素面板 ----
+        function dtLoadDom() {
+            dtCmd("DOM.getDocument", { depth: -1, pierce: true }).then(res => {
+                const root = res && res.root; if (!root) return;
+                dtNodes = []; dtFlatten(root, 0); dtRenderTree();
+            });
+        }
+        function dtFlatten(n, depth) {
+            if (!n || depth > 30) return;
+            const children = n.children || [];
+            const childIds = children.map(c => c.nodeId).filter(Boolean);
+            dtNodes.push({ nodeId: n.nodeId, name: n.nodeName, type: n.nodeType, attrs: n.attributes || [],
+                text: n.nodeValue || "", depth: depth, childIds: childIds, expanded: depth < 3 });
+            for (const c of children) dtFlatten(c, depth + 1);
+        }
+        function dtRenderTree() {
+            const box = dtQ("dtDomTree"); if (!box) return;
+            if (!dtNodes.length) { box.innerHTML = "<div class='dt-empty'>未获取到 DOM。</div>"; return; }
+            const map = {}; dtNodes.forEach(n => map[n.nodeId] = n);
+            let html = "";
+            function walk(n) {
+                const attr = []; for (let i = 0; i < n.attrs.length; i += 2) attr.push(n.attrs[i] + "=\"" + n.attrs[i+1] + "\"");
+                const tg = n.childIds.length ? (n.expanded ? "▾" : "▸") : "·";
+                html += "<div class='dt-node" + (dtSelectedNode === n.nodeId ? " sel" : "") + "' data-nid='" + n.nodeId + "'>" +
+                    "<span class='tg' data-tg='" + n.nodeId + "'>" + tg + "</span>" +
+                    "<span class='dt-tag'>&lt;" + dtEsc(n.name.toLowerCase()) + "</span>" +
+                    (attr.length ? " <span class='dt-attr'>" + dtEsc(attr.join(" ")) + "</span>" : "") + "&gt;</div>";
+                if (n.expanded) n.childIds.forEach(cid => { if (map[cid]) walk(map[cid]); });
+            }
+            if (dtNodes[0]) walk(dtNodes[0]);
+            box.innerHTML = html;
+            box.querySelectorAll(".dt-node").forEach(el => {
+                el.onclick = e => {
+                    const tg = e.target.getAttribute("data-tg");
+                    if (tg) { const n = dtFindNode(tg); if (n) { n.expanded = !n.expanded; dtRenderTree(); } return; }
+                    dtSelectNode(el.getAttribute("data-nid"));
+                };
+            });
+        }
+        function dtFindNode(id) { for (const n of dtNodes) if (n.nodeId === id) return n; return null; }
+        function dtEsc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]); }
+        function dtSelectNode(nid) {
+            dtSelectedNode = nid; dtRenderTree();
+            if (!nid) return;
+            dtCmd("DOM.describeNode", { nodeId: nid }).then(d => {
+                dtCmd("CSS.getMatchedStylesForNode", { nodeId: nid }).then(css => dtRenderElem(css, d));
+            });
+        }
+        function dtElemTab(kind) {
+            dtElemKind = kind;
+            document.querySelectorAll("#dtPanelElements .dt-side-tab").forEach(x => x.classList.toggle("on", x.getAttribute("data-t") === kind));
+            if (dtSelectedNode) dtSelectNode(dtSelectedNode);
+        }
+        function dtRenderElem(css, describe) {
+            const box = dtQ("dtElemSide"); if (!box) return;
+            const c = css || {};
+            if (dtElemKind === "styles") {
+                const rules = c.matchedCSSRules || [];
+                box.innerHTML = rules.slice(0, 60).map(r => {
+                    const sel = r.rule && r.rule.selectorList && r.rule.selectorList.text || "";
+                    const props = (r.rule && r.rule.style && r.rule.style.cssProperties || []).map(p => "  " + p.name + ": " + p.value + ";").join("\n");
+                    return "<span class='k'>" + dtEsc(sel) + "</span> {\n" + dtEsc(props) + "\n}";
+                }).join("\n\n") || "（无匹配规则）";
+            } else if (dtElemKind === "computed") {
+                box.innerHTML = (c.computedStyle || []).map(p => "<span class='k'>" + dtEsc(p.name) + "</span>: <span class='v'>" + dtEsc(p.value) + "</span>;").join("\n") || "（无计算样式）";
+            } else if (dtElemKind === "box") {
+                dtCmd("DOM.getBoxModel", { nodeId: dtSelectedNode }).then(bm => {
+                    const m = bm && bm.model; if (!m) { box.textContent = "（无盒模型）"; return; }
+                    box.innerHTML = "<span class='k'>content</span> " + m.width + "×" + m.height +
+                        "\n<span class='k'>padding</span> " + JSON.stringify(m.padding) +
+                        "\n<span class='k'>border</span> " + JSON.stringify(m.border) +
+                        "\n<span class='k'>margin</span> " + JSON.stringify(m.margin);
+                });
+            } else if (dtElemKind === "events") {
+                dtCmd("DOMDebugger.getEventListeners", { objectId: (describe && describe.object && describe.object.objectId) || undefined })
+                    .then(ev => {
+                        const ls = ev && ev.listeners || [];
+                        box.innerHTML = ls.map(l => "<span class='k'>" + dtEsc(l.type) + "</span> → " + dtEsc((l.handler && l.handler.description || "").slice(0, 120))).join("\n") || "（无事件监听器）";
+                    });
+            }
+        }
+        function dtElemCopy(kind) {
+            if (!dtSelectedNode) { dtToast("请先选中节点"); return; }
+            dtCmd("DOM.getOuterHTML", { nodeId: dtSelectedNode }).then(r => {
+                let text = (r && r.outerHTML) || "";
+                if (kind === "selector") {
+                    const m = text.match(/^<([a-zA-Z][\w-]*)/); const n = dtFindNode(dtSelectedNode);
+                    let sel = m ? m[1].toLowerCase() : "*";
+                    const idAttr = n && n.attrs[0] === "id" ? n.attrs[1] : "";
+                    if (idAttr) sel = "#" + idAttr;
+                    else if (n && n.attrs[0] === "class") sel += "." + String(n.attrs[1]).trim().split(/\s+/).join(".");
+                    text = sel;
+                }
+                capCopyText(text); dtToast("已复制 " + kind);
+            });
+        }
+        function dtElemEditHtml() {
+            if (!dtSelectedNode) { dtToast("请先选中节点"); return; }
+            dtCmd("DOM.getOuterHTML", { nodeId: dtSelectedNode }).then(r => {
+                const html = (r && r.outerHTML) || "";
+                dtQ("dtEditTitle").textContent = "编辑 HTML";
+                dtQ("dtEditMethod").style.display = "none";
+                dtQ("dtEditHeaders").style.display = "none";
+                dtQ("dtEditUrl").style.display = "none";
+                dtQ("dtEditBody").value = html;
+                dtQ("dtReplayResult").textContent = "编辑 outerHTML 后点「发送」应用";
+                dtQ("dtEditModal").classList.add("open");
+                dtQ("dtEditModal").setAttribute("data-mode", "html");
+            });
+        }
+        function dtEditClose() { const m = dtQ("dtEditModal"); if (m) m.classList.remove("open"); }
+
+        // ---- 源码面板 ----
+        function dtScriptParsed(p) {
+            if (!p || !p.url) return;
+            dtScripts.push({ url: p.url, scriptId: p.scriptId, lineCount: p.endLine - p.startLine + 1, bp: [] });
+            dtRenderScripts();
+        }
+        function dtRenderScripts() {
+            const box = dtQ("dtSrcFiles"); if (!box) return;
+            box.innerHTML = dtScripts.map((s, i) => "<div class='dt-src-file" + (dtSrcSelected === i ? " sel" : "") + "' data-i='" + i + "' title='" + dtEsc(s.url) + "'>" +
+                (s.bp.length ? "<span class='bp'>● </span>" : "") + dtEsc(s.url.split("/").pop() || s.url) + "</div>").join("") || "<div class='dt-empty'>无脚本</div>";
+            box.querySelectorAll(".dt-src-file").forEach(el => el.onclick = () => dtOpenScript(+el.getAttribute("data-i")));
+        }
+        function dtLoadScripts() { dtRenderScripts(); }
+        function dtOpenScript(i) {
+            dtSrcSelected = i; dtRenderScripts();
+            const s = dtScripts[i]; if (!s) return;
+            dtCmd("Debugger.getScriptSource", { scriptId: s.scriptId }).then(r => {
+                const src = (r && r.scriptSource) || "";
+                const lines = src.split("\n");
+                const box = dtQ("dtSrcCode"); if (!box) return;
+                box.innerHTML = lines.map((ln, idx) => {
+                    const lineNo = idx + 1, bp = s.bp.indexOf(lineNo) >= 0;
+                    return "<div class='dt-code-line'><span class='ln" + (bp ? " bp" : "") + "' data-ln='" + lineNo + "'>" + lineNo + "</span><span class='src'>" + dtEsc(ln) + "</span></div>";
+                }).join("");
+                box.querySelectorAll(".ln").forEach(el => el.onclick = () => dtToggleBp(+el.getAttribute("data-ln")));
+            });
+        }
+        function dtToggleBp(line) {
+            const s = dtScripts[dtSrcSelected]; if (!s) return;
+            const idx = s.bp.indexOf(line);
+            if (idx >= 0) { s.bp.splice(idx, 1); dtCmd("Debugger.removeBreakpoint", { breakpointId: "dt:" + s.url + ":" + line }); }
+            else { s.bp.push(line); dtCmd("Debugger.setBreakpointByUrl", { lineNumber: line - 1, url: s.url }); }
+            dtBreakpoints = dtBreakpoints.filter(b => !(b.url === s.url && b.line === line));
+            if (idx < 0) dtBreakpoints.push({ url: s.url, line: line });
+            dtOpenScript(dtSrcSelected); dtRenderBps();
+        }
+        function dtRenderBps() {
+            const box = dtQ("dtBreakpoints"); if (box) box.textContent = dtBreakpoints.map(b => b.url.split("/").pop() + ":" + b.line).join("\n") || "—";
+        }
+        function dtPaused(p) {
+            const frames = (p.callFrames || []).slice(0, 20);
+            if (dtQ("dtCallStack")) dtQ("dtCallStack").innerHTML = frames.map(f => dtEsc(f.functionName || "(匿名)") + " @ " + dtEsc((f.url || "").split("/").pop()) + ":" + (f.location.lineNumber + 1)).join("\n") || "—";
+            const scope = frames[0] && frames[0].scopeChain || [];
+            Promise.all(scope.slice(0, 3).map(s => dtCmd("Runtime.getProperties", { objectId: s.object.objectId }).then(r => ({ name: s.name, props: (r && r.result || []).slice(0, 12) }))))
+                .then(arr => {
+                    if (dtQ("dtScope")) dtQ("dtScope").innerHTML = arr.map(x => "<span class='k'>" + dtEsc(x.name) + "</span>\n" + x.props.map(p => "  " + dtEsc(p.name) + " = " + dtEsc(p.value && (p.value.value !== undefined ? p.value.value : p.value.description))).join("\n")).join("\n");
+                });
+        }
+
+        // ---- 性能面板 ----
+        function dtPerfMetrics() {
+            dtCmd("Performance.getMetrics").then(r => {
+                const box = dtQ("dtPerfMetrics"); if (!box) return;
+                const ms = (r && r.metrics) || [];
+                box.innerHTML = ms.map(m => "<div class='dt-metric'><span>" + dtEsc(m.name) + "</span><b>" + (typeof m.value === "number" ? m.value.toFixed(1) : m.value) + "</b></div>").join("") || "（无指标）";
+            });
+        }
+        function dtPerfToggle() {
+            const btn = dtQ("dtPerfBtn"); if (!btn) return;
+            if (!dtPerfRecording) {
+                dtPerfRecording = true; dtPerfStart = Date.now(); dtTraces = [];
+                btn.textContent = "停止录制"; btn.className = "cap-btn danger";
+                dtCmd("Tracing.start", { categories: "devtools.timeline,disabled-by-default-devtools.timeline", transferMode: "ReportEvents" });
+                if (dtQ("dtPerfHint")) dtQ("dtPerfHint").textContent = "录制中…再次点击停止";
+            } else {
+                dtPerfRecording = false; btn.textContent = "开始录制"; btn.className = "cap-btn";
+                dtCmd("Tracing.end", {}).then(() => dtRenderTrace());
+                if (dtQ("dtPerfHint")) dtQ("dtPerfHint").textContent = "已停止";
+            }
+        }
+        function dtRenderTrace() {
+            const box = dtQ("dtPerfTrace"); if (!box) return;
+            if (!dtTraces.length) { box.textContent = "本次未捕获到 Tracing 事件（可用 Performance.getMetrics 指标）。"; return; }
+            const byName = {};
+            dtTraces.forEach(t => { if (t.ph === "X" && t.dur) byName[t.name] = (byName[t.name] || 0) + t.dur / 1000; });
+            const top = Object.keys(byName).map(k => [k, byName[k]]).sort((a, b) => b[1] - a[1]).slice(0, 25);
+            const max = top.length ? top[0][1] : 1;
+            box.innerHTML = top.map(([k, v]) => "<div title='" + dtEsc(k) + " " + v.toFixed(2) + "ms'>" + dtEsc(k) + " " + v.toFixed(2) + "ms" +
+                "<div class='dt-bar'><i style='width:" + Math.max(1, v / max * 100).toFixed(1) + "%'></i></div></div>").join("");
+        }
+
+        // ---- 内存面板 ----
+        function dtHeapSnapshot() {
+            if (dtQ("dtHeapHint")) dtQ("dtHeapHint").textContent = "采集中…";
+            const chunks = [];
+            dtCmd("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
+            // 响应式 takeHeapSnapshot 通过事件回传；用 addHeapSnapshotChunk 收集。
+            dtHeapChunks = chunks;
+            setTimeout(() => {
+                if (!chunks.length) {
+                    if (dtQ("dtHeapHint")) dtQ("dtHeapHint").textContent = "未收到 chunk（该 CDP 版本可能需流式接口）";
+                    return;
+                }
+                try { dtParseHeap(chunks.join("")); } catch (e) { if (dtQ("dtHeapBody")) dtQ("dtHeapBody").textContent = "解析失败：" + e; }
+            }, 1500);
+        }
+        let dtHeapChunks = null;
+        function dtParseHeap(json) {
+            const data = JSON.parse(json), nodes = data.snapshot.node_fields, types = data.snapshot.meta.node_types[0];
+            const nameIdx = nodes.indexOf("name"), selfIdx = nodes.indexOf("self_size");
+            const counts = {};
+            for (let i = 0; i < data.nodes.length; i += nodes.length) {
+                const name = data.strings[data.nodes[i + nameIdx]] || "(unknown)";
+                const key = types[nameIdx] === "string" ? name : name;
+                counts[key] = counts[key] || { n: 0, sz: 0 };
+                counts[key].n++; counts[key].sz += data.nodes[i + selfIdx] || 0;
+            }
+            const top = Object.keys(counts).map(k => [k, counts[k]]).sort((a, b) => b[1].n - a[1].n).slice(0, 30);
+            const box = dtQ("dtHeapBody"); if (!box) return;
+            box.innerHTML = "节点总数：" + (data.nodes.length / nodes.length) + "\n\n" + top.map(([k, v]) =>
+                dtEsc(k) + " — " + v.n + " 个 / " + (v.sz / 1024).toFixed(1) + " KB").join("\n");
+            if (dtQ("dtHeapHint")) dtQ("dtHeapHint").textContent = "HeapProfiler 快照已解析";
+        }
+
+        // ---- 应用面板 ----
+        function dtAppTab(kind) {
+            dtAppKind = kind;
+            document.querySelectorAll("#dtPanelApplication .dt-side-tab").forEach(x => x.classList.toggle("on", x.getAttribute("data-t") === kind));
+            dtAppRefresh();
+        }
+        function dtAppRefresh() {
+            const box = dtQ("dtAppBody"); if (!box) return;
+            const kind = dtAppKind;
+            if (kind === "local" || kind === "session") {
+                const storageId = { storageId: { securityOrigin: location.origin, isLocalStorage: kind === "local" } };
+                dtCmd("DOMStorage.getDOMStorageItems", storageId).then(r => {
+                    const items = (r && r.items) || [];
+                    box.innerHTML = items.map(kv => "<div class='dt-metric'><span>" + dtEsc(kv[0]) + "</span><b>" + dtEsc(String(kv[1]).slice(0, 100)) + "</b></div>").join("") || "（空）";
+                    if (dtQ("dtAppHint")) dtQ("dtAppHint").textContent = kind + " · " + items.length + " 项";
+                });
+            } else if (kind === "cookie") {
+                dtCmd("Network.getCookies", {}).then(r => {
+                    const cs = (r && r.cookies) || [];
+                    box.innerHTML = cs.map(c => "<div class='dt-metric'><span>" + dtEsc(c.name) + " @ " + dtEsc(c.domain) + "</span><b>" + dtEsc(String(c.value).slice(0, 80)) + "</b></div>").join("") || "（空）";
+                    if (dtQ("dtAppHint")) dtQ("dtAppHint").textContent = "Cookie · " + cs.length + " 项";
+                });
+            } else if (kind === "indexeddb") {
+                dtCmd("IndexedDB.getDatabaseNames", {}).then(r => {
+                    box.textContent = ((r && r.databaseNames) || []).join("\n") || "（无 IndexedDB）";
+                    if (dtQ("dtAppHint")) dtQ("dtAppHint").textContent = "IndexedDB";
+                });
+            } else if (kind === "cache") {
+                dtCmd("CacheStorage.listCaches", {}).then(r => {
+                    box.textContent = ((r && r.caches) || []).map(c => c.cacheName).join("\n") || "（无 Cache Storage）";
+                    if (dtQ("dtAppHint")) dtQ("dtAppHint").textContent = "Cache Storage";
+                });
+            }
+        }
+        async function dtAppAdd() {
+            if (dtAppKind !== "local" && dtAppKind !== "session") { dtToast("仅 Local/Session Storage 支持新增"); return; }
+            const okAsk = await ask("确认写入该存储项？", { title: "新增存储项" });
+            if (!okAsk) return;
+            const input = dtQ("dtAppNewItem"); const raw = input ? input.value : "";
+            const eq = raw.indexOf("="); if (eq <= 0) { dtToast("格式应为 键名=值"); return; }
+            const k = raw.slice(0, eq), v = raw.slice(eq + 1);
+            dtCmd("DOMStorage.setDOMStorageItem", { storageId: { securityOrigin: location.origin, isLocalStorage: dtAppKind === "local" }, key: k, value: v })
+                .then(() => { dtToast("已写入"); dtAppRefresh(); });
+        }
+        async function dtAppClear() {
+            if (!await ask("确认清空当前分类？此操作会影响目标页面数据。", { title: "清空存储", danger: true })) return;
+            if (dtAppKind === "local" || dtAppKind === "session") {
+                dtCmd("DOMStorage.clear", { storageId: { securityOrigin: location.origin, isLocalStorage: dtAppKind === "local" } }).then(() => dtAppRefresh());
+            } else if (dtAppKind === "cookie") {
+                dtCmd("Network.deleteCookies", {}).then(() => dtAppRefresh());
+            } else dtToast("该分类暂不支持一键清空");
+        }
+
+        // ---- 安全面板 ----
+        function dtSecurityEvent(p) {
+            const box = dtQ("dtSecurityBody"); if (!box) return;
+            const st = (p.securityState && p.securityState.state) || p.securityState || "";
+            box.textContent = "安全状态：" + st + "\n" + JSON.stringify(p, null, 2).slice(0, 2000);
+        }
+        function dtSecurityRefresh() {
+            dtCmd("Security.getSecurityState", {}).then(r => {
+                const box = dtQ("dtSecurityBody"); if (box) box.textContent = JSON.stringify(r, null, 2).slice(0, 3000) || "无数据";
+            });
+        }
+
+        // ---- 设备面板 ----
+        function dtApplyPreset() {
+            const sel = dtQ("dtDevicePreset"); if (!sel || !sel.value) return;
+            const [w, h, dpr] = sel.value.split(",").map(Number);
+            dtQ("dtDevW").value = w; dtQ("dtDevH").value = h; dtQ("dtDevDpr").value = dpr;
+            dtDeviceApply();
+        }
+        function dtDeviceApply() {
+            const w = +dtQ("dtDevW").value, h = +dtQ("dtDevH").value, dpr = +dtQ("dtDevDpr").value;
+            if (!w || !h) { dtToast("请输入宽高"); return; }
+            dtCmd("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: dpr || 1, mobile: !!dtQ("dtDevicePreset").value })
+                .then(() => dtToast("已应用 " + w + "×" + h));
+        }
+        function dtDeviceReset() {
+            dtCmd("Emulation.clearDeviceMetricsOverride", {}).then(() => {
+                dtQ("dtDevW").value = "—"; dtQ("dtDevH").value = "—"; dtQ("dtDevDpr").value = "—";
+                dtQ("dtDevicePreset").value = ""; dtToast("已恢复默认");
+            });
+        }
+        function dtDeviceUa() {
+            const ua = dtQ("dtDevUa").value.trim();
+            dtCmd("Emulation.setUserAgentOverride", { userAgent: ua || navigator.userAgent }).then(() => dtToast("已应用 UA"));
+        }
+        function dtDeviceGeo() {
+            const lat = parseFloat(dtQ("dtDevLat").value), lng = parseFloat(dtQ("dtDevLng").value);
+            if (isNaN(lat) || isNaN(lng)) { dtToast("请输入经纬度"); return; }
+            dtCmd("Emulation.setGeolocationOverride", { latitude: lat, longitude: lng, accuracy: 10 }).then(() => dtToast("已设置定位"));
+        }
+        function dtDeviceGeoClear() { dtCmd("Emulation.clearGeolocationOverride", {}).then(() => dtToast("已清除定位")); }
+        function dtDeviceMedia() {
+            const v = dtQ("dtDevMedia").value;
+            const features = v === "print" ? [{ name: "prefers-color-scheme", value: "light" }] :
+                v ? [{ name: "prefers-color-scheme", value: v }] : [];
+            dtCmd("Emulation.setEmulatedMedia", { media: v === "print" ? "print" : "screen", features: features })
+                .then(() => dtToast("已应用媒体"));
+        }
+
+        // ---- CDP 命令台 ----
+        function dtCdpSend() {
+            const method = (dtQ("dtCdpMethod").value || "").trim();
+            if (!method) { dtToast("请输入 CDP 方法"); return; }
+            let params = {};
+            try { params = JSON.parse(dtQ("dtCdpParams").value || "{}"); }
+            catch (e) { dtToast("参数 JSON 格式错误"); return; }
+            dtCmd(method, params).then(res => {
+                dtQ("dtCdpResult").textContent = JSON.stringify(res, null, 2).slice(0, 20000);
+            });
+        }
+        function dtCdpHistory() {
+            const m = dtQ("dtCdpMethod");
+            if (!dtCdpHist.length) { dtToast("暂无历史"); return; }
+            m.value = dtCdpHist[0]; dtCdpParams.value = dtCdpHistPar[0] || "{}";
+        }
+        let dtCdpHist = [], dtCdpHistPar = [];
+        const _dtCdpSend = dtCdpSend;
+        dtCdpSend = function () {
+            const method = (dtQ("dtCdpMethod").value || "").trim();
+            if (method) { dtCdpHist.unshift(method); dtCdpHistPar.unshift(dtQ("dtCdpParams").value || "{}"); }
+            return _dtCdpSend();
+        };
+
+        // ---- 增强工具 ----
+        const SECRET_PATTERNS = [
+            ["Bearer Token", /Bearer\s+[A-Za-z0-9._\-]{12,}/gi],
+            ["API Key", /(api[_-]?key|apikey)\s*[:=]\s*["']?[A-Za-z0-9._\-]{8,}/gi],
+            ["密码字段", /(password|passwd|pwd)\s*[:=]\s*["'][^"']{4,}["']/gi],
+            ["私钥", /-----BEGIN (RSA |EC )?PRIVATE KEY-----/g],
+            ["手机号", /(?<!\d)1[3-9]\d{9}(?!\d)/g],
+            ["身份证", /(?<!\d)\d{17}[\dXx](?!\d)/g],
+            ["邮箱", /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g],
+            ["JWT", /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
+        ];
+        function dtScanRequest(r) {
+            const hay = [r.url, JSON.stringify(r.headers || {}), r.postData || ""].join("\n");
+            const found = [];
+            for (const [name, re] of SECRET_PATTERNS) {
+                re.lastIndex = 0;
+                const m = hay.match(re);
+                if (m) found.push(name + " ×" + m.length + "：" + m.slice(0, 2).join(", "));
+            }
+            return found;
+        }
+        function dtScanSecrets() {
+            const lines = [];
+            dtSecrets = [];
+            capRequests.forEach(r => {
+                const f = dtScanRequest(r);
+                if (f.length) { dtSecrets.push({ req: r, found: f }); lines.push("[!] " + r.method + " " + r.url + "\n    " + f.join("\n    ")); }
+            });
+            const box = dtQ("dtScanResult");
+            if (box) box.textContent = lines.length ? "发现 " + dtSecrets.length + " 个请求存在敏感信息：\n" + lines.join("\n\n") : "未发现敏感信息（共扫描 " + capRequests.length + " 个请求）";
+            return dtSecrets;
+        }
+        function dtExport(kind) {
+            if (!capRequests.length) { dtToast("暂无请求可导出"); return; }
+            let text = "", mime = "text/plain", name = "capture";
+            if (kind === "py") {
+                text = "# 由中文开发者工具导出 · 共 " + capRequests.length + " 条\nimport requests\n\n";
+                capRequests.slice().reverse().forEach((r, i) => {
+                    text += "# " + (i + 1) + ". " + r.method + " " + r.url + "\n";
+                    text += "requests.request(" + JSON.stringify(r.method) + ", " + JSON.stringify(r.url) +
+                        ", headers=" + JSON.stringify(r.headers || {}) + (r.postData ? ", data=" + JSON.stringify(r.postData) : "") + ")\n\n";
+                });
+                mime = "text/x-python"; name = "capture.py";
+            } else {
+                text = JSON.stringify(capRequests.slice().reverse(), null, 2); mime = "application/json"; name = "capture.json";
+            }
+            const blob = new Blob([text], { type: mime });
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            dtToast("已导出 " + capRequests.length + " 条请求");
+        }
+        function dtFetchToggle() {
+            dtFetchOn = !dtFetchOn;
+            const box = dtQ("dtFetchState");
+            if (box) box.textContent = dtFetchOn ? "拦截已开启：新请求将暂停，等待继续" : "拦截未开启";
+            dtCmd(dtFetchOn ? "Fetch.enable" : "Fetch.disable", { patterns: dtFetchOn ? [{ urlPattern: "*", requestStage: "Request" }] : [] });
+        }
+        function dtFetchIntercept(p) {
+            dtFetchReqId = p.requestId;
+            const r = { id: p.requestId, url: p.request.url, method: p.request.method, headers: p.request.headers || {}, postData: p.request.postData || "" };
+            dtOpenReplay(r, true);
+        }
+        function dtOpenReplay(r, intercept) {
+            dtQ("dtEditTitle").textContent = intercept ? "拦截请求 · 编辑后继续" : "编辑并重新发送";
+            dtQ("dtEditMethod").value = r.method; dtQ("dtEditMethod").style.display = "";
+            dtQ("dtEditUrl").value = r.url; dtQ("dtEditUrl").style.display = "";
+            dtQ("dtEditHeaders").value = JSON.stringify(r.headers || {}, null, 2); dtQ("dtEditHeaders").style.display = "";
+            dtQ("dtEditBody").value = r.postData || "";
+            dtQ("dtReplayResult").textContent = intercept ? "修改后点「发送」将继续该请求" : "修改后点「发送」在页面中重新发起";
+            dtQ("dtEditModal").classList.add("open");
+            dtQ("dtEditModal").setAttribute("data-mode", intercept ? "fetch" : "replay");
+        }
+        function dtReplaySend() {
+            const mode = dtQ("dtEditModal").getAttribute("data-mode");
+            if (mode === "html") {
+                const html = dtQ("dtEditBody").value;
+                dtCmd("DOM.setOuterHTML", { nodeId: dtSelectedNode, outerHTML: html }).then(() => { dtEditClose(); dtToast("HTML 已更新"); dtLoadDom(); });
+                return;
+            }
+            const method = dtQ("dtEditMethod").value, url = dtQ("dtEditUrl").value.trim();
+            let headers = {};
+            try { headers = JSON.parse(dtQ("dtEditHeaders").value || "{}"); } catch (e) { dtToast("请求头 JSON 错误"); return; }
+            const body = dtQ("dtEditBody").value;
+            if (!url) { dtToast("请输入 URL"); return; }
+            if (mode === "fetch" && dtFetchReqId) {
+                const h = Object.keys(headers).map(k => ({ name: k, value: String(headers[k]) }));
+                dtCmd("Fetch.continueRequest", { requestId: dtFetchReqId, url: url, method: method,
+                    headers: h, postData: body || undefined }).then(() => {
+                    dtFetchReqId = null; dtEditClose(); dtToast("已继续请求");
+                });
+                return;
+            }
+            const expr = "(async()=>{const r=await fetch(" + JSON.stringify(url) + ",{method:" + JSON.stringify(method) +
+                ",headers:" + JSON.stringify(headers) + (body ? ",body:" + JSON.stringify(body) : "") +
+                "});const t=await r.text();return {status:r.status,body:t.slice(0,2000)}})()";
+            dtCmd("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true }).then(res => {
+                dtQ("dtReplayResult").textContent = JSON.stringify(res && res.result && res.result.value || res, null, 2).slice(0, 4000);
+                dtToast("重放完成");
+            });
         }
 
         // ---- 批量执行 ----

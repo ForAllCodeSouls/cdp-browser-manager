@@ -2029,9 +2029,16 @@ class ExtendedFeaturesTests(unittest.TestCase):
         m = self.main_src
         self.assertIn('@app.websocket("/ws/inspect/{sid}/{tid}")', m)
         self.assertIn("INSPECT_DOMAINS = {", m)
-        for d in ("network", "console", "performance"):
+        for d in ("network", "console", "performance", "all"):
             self.assertIn('"' + d + '":', m)
         self.assertIn('key_ok(websocket.query_params.get("key", ""))', m)
+        # all 域：启用全功能 CDP 域并转发所有事件；负数 enable id 避免与前端命令 id 冲突。
+        self.assertIn('if domain == "all":', m)
+        self.assertIn('enable_id = [-1]', m)
+        self.assertIn('"DOM.enable", "CSS.enable", "DOMDebugger.enable"', m)
+        self.assertIn('"Debugger.enable", "Performance.enable", "HeapProfiler.enable"', m)
+        # 命令 id 沿用前端自带 id，保证回调正确关联。
+        self.assertIn('cid = req.get("id")', m)
 
     def test_store_helpers_and_audit(self):
         m = self.main_src
