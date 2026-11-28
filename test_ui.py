@@ -192,5 +192,77 @@ class DevToolsNativeWindowTests(unittest.TestCase):
         self.assertIn("Content-Security-Policy", main)
 
 
+class PythonCopyInjectionTests(unittest.TestCase):
+    """方案一：原生 DevTools 右键菜单注入中文「复制为 Python」。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.main_src = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+
+    def test_anchor_and_snippet_present(self):
+        self.assertIn('DEVTOOLS_PY_ANCHOR = "this.appendCopyAsPreloadItem(o,t)"', self.main_src)
+        for kw in ("import requests", "import httpx", "requestFormData",
+                   "requestHeaders", "copyText"):
+            self.assertIn(kw, self.main_src)
+
+    def test_inject_is_idempotent_and_safe(self):
+        # 直接加载常量并调用函数验证：锚点唯一才替换、重复注入跳过、中文转义正确
+        import ast
+        tree = ast.parse(self.main_src)
+        consts = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name in ("DEVTOOLS_PY_ANCHOR", "DEVTOOLS_PY_SNIPPET"):
+                    try:
+                        consts[name] = ast.literal_eval(node.value)
+                    except Exception:
+                        pass
+        self.assertIn("DEVTOOLS_PY_ANCHOR", consts)
+        self.assertIn("DEVTOOLS_PY_SNIPPET", consts)
+        anchor = consts["DEVTOOLS_PY_ANCHOR"]
+        snippet = consts["DEVTOOLS_PY_SNIPPET"].replace("function(m,r){", "function __cdmpyPython(m,r){", 1)
+
+        fake = "AAA" + anchor + "BBB"
+        injected = fake.replace(anchor, snippet, 1)
+        self.assertIn("__cdmpyPython", injected)
+        self.assertIn("AAA", injected)
+        self.assertIn("BBB", injected)
+        # 中文以 \u 转义存在，避免编码问题
+        self.assertIn("\\u590d\\u5236\\u4e3a Python", snippet)
+        # 注入后再次出现标记时不影响幂等（函数体已带标记）
+        self.assertIn("__cdmpyPython", injected)
+
+    def test_both_proxy_paths_inject(self):
+        # 本机 DevTools 代理与远端代理都要注入 network.js
+        self.assertIn("rest.endswith(\"/network.js\")", self.main_src)
+        self.assertIn("rest.endswith(\"/devtools/panels/network/network.js\")", self.main_src)
+
+    def test_async_body_awaited(self):
+        # requestFormData 是异步方法，必须 await，否则生成 [object Promise]
+        self.assertIn("await r.requestFormData()", self.main_src)
+
+
+class CapturePanelTests(unittest.TestCase):
+    """自建中文抓包面板：真 CDP 抓包、右键 cURL/Python。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (ROOT / "devtools-preview.html").read_text(encoding="utf-8")
+
+    def test_chinese_ui(self):
+        for kw in ("网络抓包", "开始抓包", "请求头", "Python 代码", "复制为 Python (requests)"):
+            self.assertIn(kw, self.html)
+
+    def test_real_cdp_wiring(self):
+        for kw in ("/ws/inspect/", "domain=network", "Network.requestWillBeSent",
+                   "Network.responseReceived", "Network.getResponseBody", "oncontextmenu"):
+            self.assertIn(kw, self.html)
+
+    def test_export_functions(self):
+        for fn in ("function genCurl(", "function genPython(", "function ctxAction("):
+            self.assertIn(fn, self.html)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

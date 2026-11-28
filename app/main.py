@@ -3179,6 +3179,15 @@ async def remote_http_proxy(host_id: str, rest: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"远端主机 {host_id} 请求失败: {e}")
 
+    # 远端 DevTools 的 network.js 同样注入中文「复制为 Python」菜单项。
+    # 远端 manager 若已带注入则幂等跳过；未带则由这里补齐。
+    if raw and rest.endswith("/devtools/panels/network/network.js"):
+        text = raw.decode("utf-8", "replace")
+        injected = inject_devtools_python_menu(text)
+        if injected != text:
+            raw = injected.encode("utf-8")
+            ctype = "application/javascript; charset=utf-8"
+
     # CDP JSON 里的 WS 地址需要二次改写到本机代理路径。
     first = rest.split("/", 1)[0]
     if first.isdigit() and rest.startswith(first + "/json/") and raw:
@@ -3360,6 +3369,51 @@ def relax_devtools_csp(text: str) -> str:
     )
 
 
+# DevTools 右键「复制为 Python」注入：原生 Network 面板只有 cURL / fetch /
+# PowerShell，没有 Python。DevTools frontend 是 ES module，UI/SDK 不挂全局，
+# 因此不能靠外部脚本 hook；改为在同源代理 network.js 时，用唯一源码锚点把
+# 两个中文菜单项插进右键菜单函数作用域内——这里 t 是 NetworkRequest，
+# Ne.InspectorFrontendHost 是 DevTools 自带的复制接口，均为该作用域现成变量。
+# 注入是一段自包含 IIFE，全程异常兜底；锚点随版本消失时静默跳过，原生不受影响。
+DEVTOOLS_PY_ANCHOR = "this.appendCopyAsPreloadItem(o,t)"
+
+DEVTOOLS_PY_SNIPPET = (
+    "this.appendCopyAsPreloadItem(o,t),"
+    "function(m,r){"
+    "function q(s){return JSON.stringify(String(s==null?'':s))}"
+    "function hs(){var d={},a=[];try{a=r.requestHeaders()||[]}catch(e){}"
+    "a.forEach(function(x){if(x&&x.name)d[x.name]=x.value});return d}"
+    "async function gen(k){var u='',me='GET',bo=null;"
+    "try{u=r.url()}catch(e){}try{me=r.requestMethod||'GET'}catch(e){}"
+    "try{bo=await r.requestFormData()}catch(e){}"
+    "if(!u||/^(data|blob):/.test(u))return;"
+    "var hj=JSON.stringify(hs(),null,2),L=['# \\u7531 DevTools \\u6293\\u5305\\u751f\\u6210'];"
+    "L.push(k==='r'?'import requests':'import httpx');L.push('');"
+    "L.push('url = '+q(u));L.push('headers = '+hj);if(bo)L.push('data = '+q(bo));L.push('');"
+    "if(k==='r'){L.push('resp = requests.request(');L.push('  '+q(me)+', url, headers=headers'+(bo?', data=data':''));L.push(')')}"
+    "else{L.push('with httpx.Client() as cl:');L.push('  resp = cl.request(');"
+    "L.push('    '+q(me)+', url, headers=headers'+(bo?', data=data':''));L.push('  )')}"
+    "L.push('print(resp.status_code)');L.push('print(resp.text)');"
+    "try{Ne.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(L.join('\\n'))}catch(e){}}"
+    "m.defaultSection().appendItem('\\u590d\\u5236\\u4e3a Python (requests)',function(){gen('r')});"
+    "m.defaultSection().appendItem('\\u590d\\u5236\\u4e3a Python (httpx)',function(){gen('h')})"
+    "}(o,t)"
+)
+
+
+def inject_devtools_python_menu(text: str) -> str:
+    """把中文「复制为 Python」菜单注入压缩后的 network.js（幂等）。
+
+    仅当源码锚点恰好出现一次时替换，避免版本漂移造成误改；已注入过则原样返回。
+    """
+    if not text or "__cdmpyPython" in text:
+        return text
+    if text.count(DEVTOOLS_PY_ANCHOR) != 1:
+        return text
+    snippet = DEVTOOLS_PY_SNIPPET.replace("function(m,r){", "function __cdmpyPython(m,r){", 1)
+    return text.replace(DEVTOOLS_PY_ANCHOR, snippet, 1)
+
+
 @app.api_route("/{port:int}/devtools/{rest:path}", methods=["GET", "HEAD"])
 async def cdp_devtools_http(port: int, rest: str, request: Request):
     """DevTools frontend 静态资源同源代理：/<port>/devtools/inspector.html。
@@ -3396,6 +3450,12 @@ async def cdp_devtools_http(port: int, rest: str, request: Request):
         text = relax_devtools_csp(text)
         # 让页面内相对路径资源与 WS 均走 manager 同源；URL 里的 ws= 由前端构造时给定。
         return Response(content=text, media_type="text/html; charset=utf-8")
+    # 给 Network 面板注入中文「复制为 Python」菜单项；非 JS 或锚点缺失时原样返回。
+    if raw and (rest.endswith("/network.js") or rest == "network.js"):
+        text = raw.decode("utf-8", "replace")
+        injected = inject_devtools_python_menu(text)
+        if injected != text:
+            raw = injected.encode("utf-8")
     return Response(content=raw, media_type=ctype)
 
 
