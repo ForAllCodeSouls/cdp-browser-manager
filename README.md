@@ -119,7 +119,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
 
-- **开发者工具**：对当前标签页做网络抓包（请求/状态/类型列表）、Console 实时日志（含异常）、元素检查（CSS 选择器查询 DOM 并取 OuterHTML）、性能采样（JS 堆/DOM 节点/布局次数，2 秒一采样）、以及直接下发白名单内任意 CDP 命令的控制台。网络/Console/性能三页共用 manager 的 `/ws/inspect/{sid}/{tid}` 事件代理（按 domain 订阅，关闭弹窗即断开）
+- **开发者工具**：与「运行日志」共用右侧抽屉，顶部两个按钮切换（`D` 快捷键直达，切到日志或收起抽屉时自动断开）。轻量面板提供网络抓包、Console 实时日志、元素检查（CSS 选择器取 OuterHTML）、性能采样（2 秒一次）与 CDP 命令控制台；每个采集页有明确的「开始/停止」按钮与状态提示，标签 ID 会自动从画面区/缓存/`/targets` 补齐。面板顶部的 **原生 DevTools ↗** 在新窗口打开 Chrome 自带 DevTools 前端（元素树、断点、Network、Performance 完整功能），走 manager 同源代理 `/{port}/devtools/inspector.html` + `/{port}/devtools/page/{tid}` WS，代理会移除其仅允许 `ws://127.0.0.1` 的 CSP；无需额外打包前端资源，版本与浏览器内核天然匹配。轻量面板仍保留作为快速入口，两套并存
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
@@ -477,6 +477,7 @@ python test_multihost.py                          # 多主机/鉴权自测（纯
 python -m unittest test_inject -v                 # 脚本注入静态自检
 python -m unittest test_inject_api -v             # 脚本注入 API 层测试（需 fastapi+httpx，不依赖 Docker）
 python -m unittest test_ui -v                     # UI 信息架构与主题兼容自检
+node test_devtools_ui.js                          # 开发者工具交互自检（需 npm i jsdom，不依赖 Docker）
 bash -n start.sh upgrade.sh                       # 启动/升级脚本
 docker compose config -q                          # Compose 配置
 curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针

@@ -140,5 +140,40 @@ class HandlerIntegrityTests(unittest.TestCase):
         self.assertIn("castState", dev)
 
 
+class DevToolsDrawerTests(unittest.TestCase):
+    """开发者工具与日志共用抽屉、开始/停止成对、原生入口。"""
+
+    def test_devtools_lives_in_drawer(self):
+        self.assertIn('class="side-switch"', INDEX)
+        self.assertIn("switchSideView('log')", INDEX)
+        self.assertIn("switchSideView('dev')", INDEX)
+        self.assertIn('class="side-view" id="devMask"', INDEX)
+        self.assertIn('id="sideViewLog"', INDEX)
+
+    def test_start_stop_pairs(self):
+        self.assertIn("function devToggle()", JS)
+        self.assertIn("function devDisconnect(", JS)
+        self.assertIn("devDisconnect(true)", JS)
+        for btn in ("devMainBtn", "devStatus"):
+            self.assertIn('id="' + btn + '"', INDEX + JS)
+
+    def test_native_devtools_entry(self):
+        self.assertIn("function openNativeDevTools()", JS)
+        self.assertIn("/devtools/inspector.html", JS)
+        self.assertIn("/devtools/page/", JS)
+        self.assertIn("openNativeDevTools()", INDEX)
+
+    def test_tid_autoresolve(self):
+        self.assertIn("function devResolveTid()", JS)
+        self.assertIn("/targets", JS)
+        self.assertNotIn("devPerfRows", JS)
+
+    def test_backend_devtools_proxy(self):
+        main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("def relax_devtools_csp(", main)
+        self.assertIn('@app.api_route("/{port:int}/devtools/{rest:path}"', main)
+        self.assertIn("Content-Security-Policy", main)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

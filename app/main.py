@@ -327,6 +327,10 @@ def auth_exempt(path: str, method: str) -> bool:
     m = re.match(r"^/\d+/(.+)$", path)
     if m and method == "GET":
         rest = m.group(1)
+        # DevTools frontend 资源路径不一定带扩展名，整体放行；其 WS 连接
+        # 由 cdp_devtools_ws 单独校验 key，页面本身不含敏感数据。
+        if rest.startswith("devtools/"):
+            return True
         return not rest.startswith("json/") and bool(STATIC_RESOURCE_RE.search(rest))
     return False
 
@@ -3313,6 +3317,61 @@ async def cdp_json_proxy(port: int, rest: str, request: Request):
     except Exception:
         pass
     return Response(content=raw, media_type="application/json; charset=utf-8")
+
+
+def relax_devtools_csp(text: str) -> str:
+    """移除 DevTools frontend 自带的 CSP meta，使其能连 manager 同源 WS。
+
+    Chrome 自带的 /devtools/inspector.html 内置 CSP 只放行 ws://127.0.0.1，
+    通过 manager 域名访问时其 WebSocket 会被拦截。该页面只是调试工具外壳，
+    不含敏感数据，WS 连接本身仍由 manager 的 key 校验；移除 CSP meta 即可
+    让浏览器按默认策略加载资源与建立连接。没有 CSP meta 时原样返回。
+    """
+    return re.sub(
+        r"<meta\s+[^>]*http-equiv\s*=\s*[\"']Content-Security-Policy[\"'][^>]*>",
+        "",
+        text,
+        flags=re.I,
+    )
+
+
+@app.api_route("/{port:int}/devtools/{rest:path}", methods=["GET", "HEAD"])
+async def cdp_devtools_http(port: int, rest: str, request: Request):
+    """DevTools frontend 静态资源同源代理：/<port>/devtools/inspector.html。
+
+    浏览器自带的 inspector.html 与内核版本天然匹配，无需额外打包前端资源。
+    这里从容器内网拉取资源，并对 HTML 改写 CSP 以允许 manager 同源 WS 连接。
+    WS 本身由下方同名 websocket 路由透传。
+    """
+    item = instance_by_port(port)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的实例")
+    ip = container_ip_by_id(item.get("container_id"))
+    if not ip:
+        raise HTTPException(status_code=502, detail="容器网络未就绪")
+
+    path = "/devtools/" + rest
+    if request.url.query:
+        path += "?" + request.url.query
+
+    def do():
+        import urllib.request
+
+        req = urllib.request.Request(f"http://{ip}:9222{path}", method=request.method)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "application/octet-stream")
+
+    try:
+        raw, ctype = await run_in_threadpool(do)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"DevTools 资源请求失败: {e}")
+
+    if "html" in ctype.lower() and raw:
+        text = raw.decode("utf-8", "replace")
+        text = relax_devtools_csp(text)
+        # 让页面内相对路径资源与 WS 均走 manager 同源；URL 里的 ws= 由前端构造时给定。
+        return Response(content=text, media_type="text/html; charset=utf-8")
+    return Response(content=raw, media_type=ctype)
 
 
 @app.websocket("/{port:int}/devtools/{rest:path}")

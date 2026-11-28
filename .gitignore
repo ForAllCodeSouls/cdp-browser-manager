@@ -1,2 +1,6 @@
+node_modules/
+_chk.js
+_chk_*.js
+_patch_devtools.js
 __pycache__/
 *.pyc
