@@ -119,7 +119,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
 
-- **开发者工具**：与「运行日志」共用右侧抽屉，顶部两个按钮切换（`D` 快捷键直达）。默认打开的是**内嵌原生 DevTools**：Chrome 自带前端直接嵌在抽屉里，元素树、断点、Network、Performance 与官方一致；抽屉在原生面板下自动加宽，左侧把手可拖拽调整宽度。工具栏提供「刷新 / 复制链接 / 独立窗口 ↗」，远端实例的 URL 自动走 `/remote/<主机ID>/<端口>/devtools/...`。前端由 manager 同源代理并移除仅允许 `ws://127.0.0.1` 的 CSP，WS 经同源代理透传；无需打包前端资源，版本与浏览器内核天然匹配。轻量工具（网络抓包、Console 实时日志、元素检查、性能采样、CDP 命令控制台）退居次级标签，每个采集页仍有明确的「开始/停止」按钮与状态提示，切到日志或收起抽屉时自动断开采集
+- **开发者工具**：点击详情栏「原生 DevTools ↗」或按 `D`，直接弹出**浏览器原生 DevTools 独立顶层窗口**，与在该实例浏览器里按 F12 完全一致——元素树、断点、Network、Performance、Sources 等全部面板原生可用。实现上复用 Chrome 自带的 `inspector.html` 前端（由 manager 同源代理并移除仅允许 `ws://127.0.0.1` 的 CSP），通过 `ws=<同源代理地址>/devtools/page/<标签ID>` 连接；前端版本与浏览器内核天然匹配，无需打包任何前端资源。远端实例的 URL 自动走 `/remote/<主机ID>/<端口>/devtools/...`，由服务端注入远端密钥。**为什么用独立窗口而非面板内嵌**：Chrome DevTools 前端在 iframe 里会以 `undocked` 降级模式运行，并受父页面的尺寸/DOM/快捷键约束，无法做到与 F12 一模一样；独立顶层窗口是唯一等价方案。右侧抽屉现在只承载运行日志，不再被开发者工具占用。原生窗口的代理写认证与空闲保活见下方故障排查
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
@@ -491,7 +491,7 @@ curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针
 | 切换实例画面仍是上一个 | 目标实例容器卡死，iframe 加载失败保留旧画面 | 新版面板会显示"画面无法连接"并可重试；执行 `bash upgrade.sh` 重建 |
 | noVNC 打开是目录列表 | Debian novnc 包无根目录 index.html | 面板已自动用 `/vnc_lite.html` 或 `/vnc.html`，勿手动访问根路径 |
 | VNC 一直显示 Connecting、看不到画面 | manager 的 WS 代理把浏览器发来的 RFB 二进制帧按文本帧转发，websockify 回 `Unsupported: Text frames are not supported` 并断连 | 新版代理对二进制帧显式用 BINARY opcode 转发，直连/同源代理均已实测完成 RFB 握手；确认已重建 manager |
-| 原生 DevTools 弹「Debugging connection was closed」 | 旧版透明代理把上游 WS 读超时当作断连：DevTools 空闲十几秒后代理就关闭连接 | 新版 DevTools / 远端 / VNC 代理统一用 1 秒短超时轮询，空闲超时继续等待；重建 `cdp-manager` 后在内嵌面板点「刷新」重连 |
+| 原生 DevTools 弹「Debugging connection was closed」 | 旧版透明代理把上游 WS 读超时当作断连：DevTools 空闲十几秒后代理就关闭连接 | 新版 DevTools / 远端 / VNC 代理统一用 1 秒短超时轮询，空闲超时继续等待；重建 `cdp-manager` 后重新打开原生 DevTools 窗口即可 |
 | 抓屏一直没画面 | 标签页列表为空，或 WS 代理连不上容器 | 确认实例 CDP 已就绪；查看 manager 日志里 `/ws/cast` 是否有报错；无头内核与完整内核都已实测支持 screencast 帧 |
 | 抓屏画面卡住/定格（静态页、验证码页） | 页面长时间无视觉变化，CDP 不推 screencast 帧 | Cast 模式按所选间隔（默认 0.5 秒）主动保底抓帧，静态页不会冻结；想更快可把间隔切到「快」0.2 秒；若 screencast 推帧异常，可切到 **Snap** 模式（纯定时截图，不依赖变化推帧） |
 | 刷新按钮点了没反应 | 当前没有选中标签，或刷新命令下发失败 | 新版刷新会真实下发 `Page.reload` 并同步地址栏，失败会明确提示；先确认已选中一个标签页 |

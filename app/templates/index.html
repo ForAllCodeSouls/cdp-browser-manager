@@ -495,13 +495,6 @@
         .tool-menu button:hover { background: var(--accent-soft); color: var(--accent); }
         .tool-menu button:hover .ico { color: var(--accent); }
         .panel.wide-panel { width: min(1180px, 96vw); max-width: 96vw; }
-        .dev-tabs { display: flex; gap: 5px; flex-wrap: wrap; flex: 0 0 auto;
-            border-bottom: 1px solid var(--border); padding: 8px 10px; }
-        .dev-tab { padding: 5px 10px; border: 1px solid var(--border); border-radius: 7px;
-            background: var(--surface-2); color: var(--text); font-size: 11px; cursor: pointer; }
-        .dev-tab:hover { border-color: var(--accent); }
-        .dev-tab.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-        .dev-pane { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; }
         .dev-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
         .dev-toolbar .spacer { flex: 1; }
         .dev-log { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
@@ -526,18 +519,6 @@
         .dev-result { margin-top: 10px; max-height: 180px; overflow: auto; font: 12px/1.6 ui-monospace,
             monospace; white-space: pre-wrap; word-break: break-all; background: var(--surface-2);
             border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-        /* 原生 DevTools 内嵌：占满抽屉，工具栏与 iframe 分离，避免和轻量工具混排 */
-        .dev-pane.native-pane { padding: 0; display: flex; flex-direction: column; }
-        .dev-native-bar { flex: 0 0 auto; display: flex; gap: 8px; align-items: center;
-            padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-        .dev-native-bar .spacer { flex: 1; }
-        .native-frame-wrap { flex: 1; min-height: 0; display: flex; background: #1f2023; }
-        .native-frame-wrap iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #1f2023; }
-        .native-placeholder { margin: auto; max-width: 420px; padding: 32px 24px; text-align: center;
-            color: var(--muted); line-height: 1.8; }
-        .native-placeholder b { color: var(--text); display: block; font-size: 14px; margin-bottom: 6px; }
-        .native-placeholder code { font: 12px/1.6 ui-monospace, monospace; color: var(--accent); }
-        .dev-tab[data-pane="native"] { border-color: var(--accent); color: var(--accent); }
         .rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
             background: var(--danger, #ff6b6b); margin-right: 5px; vertical-align: middle; }
         .tag-chip { display: inline-block; padding: 2px 7px; border-radius: 10px;
@@ -830,7 +811,6 @@
 
         /* 日志抽屉：默认宽度 0，打开时滑出，画面自动让位 */
         .log-drawer {
-            position: relative;
             flex: 0 0 auto;
             width: 0;
             min-width: 0;
@@ -843,13 +823,7 @@
             width: min(440px, 46vw);
             margin-left: 12px;
         }
-        /* DevTools 需要更宽的画布；拖动左侧把手可临时改宽度（只影响本页）。 */
-        .log-drawer.open.dev-mode { width: min(860px, 62vw); }
-        .drawer-resizer { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px;
-            cursor: col-resize; z-index: 6; display: none; }
-        .log-drawer.open .drawer-resizer { display: block; }
-        .drawer-resizer:hover, .drawer-resizer.dragging { background: var(--accent-soft); }
-        /* 右侧抽屉：运行日志与开发者工具共用一个位置，按钮切换 */
+        /* 右侧抽屉：只承载运行日志 */
         .side-switch {
             flex: 0 0 auto;
             display: flex;
@@ -860,6 +834,7 @@
             background: var(--surface-2);
         }
         .side-switch .spacer { flex: 1; }
+        .side-switch-title { font-size: 12px; font-weight: 600; color: var(--accent); padding: 5px 12px; }
         .side-switch-btn {
             border: 1px solid transparent;
             background: transparent;
@@ -1328,10 +1303,8 @@
                     </div>
                 </div>
                 <aside class="log-drawer" id="logDrawer">
-                    <div class="drawer-resizer" id="drawerResizer" title="拖动调整面板宽度"></div>
                     <div class="side-switch">
-                        <button class="side-switch-btn on" id="sideTabLog" onclick="switchSideView('log')">运行日志</button>
-                        <button class="side-switch-btn" id="sideTabDev" onclick="switchSideView('dev')">开发者工具</button>
+                        <span class="side-switch-title">运行日志</span>
                         <span class="spacer"></span>
                         <button class="side-close" onclick="toggleLogs(false)" title="收起右侧面板">✕</button>
                     </div>
@@ -1347,21 +1320,6 @@
                             <div class="log-info" id="logInfo">全局 · manager</div>
                             <pre class="log-body" id="logBody"></pre>
                         </div>
-                    </div>
-                    <div class="side-view" id="devMask">
-                        <div class="dev-head">
-                            <span class="dev-head-title">开发者工具 <span id="devSid" style="font-size:11px;color:var(--muted);font-weight:400"></span></span>
-                            <button class="btn-mini" id="devNativeBtn" onclick="openNativeDevTools(true)" title="在新窗口打开浏览器原生 DevTools（元素/网络/断点/性能完整功能）">独立窗口 ↗</button>
-                        </div>
-                        <div class="dev-tabs" id="devTabs">
-                            <button class="dev-tab on" data-pane="native" onclick="switchDev('native')">原生 DevTools</button>
-                            <button class="dev-tab" data-pane="network" onclick="switchDev('network')">网络抓包</button>
-                            <button class="dev-tab" data-pane="console" onclick="switchDev('console')">Console</button>
-                            <button class="dev-tab" data-pane="element" onclick="switchDev('element')">元素检查</button>
-                            <button class="dev-tab" data-pane="performance" onclick="switchDev('performance')">性能</button>
-                            <button class="dev-tab" data-pane="console-cmd" onclick="switchDev('console-cmd')">CDP 控制台</button>
-                        </div>
-                        <div class="dev-pane" id="devPane"></div>
                     </div>
                 </aside>
             </div>
@@ -4809,8 +4767,8 @@
                     ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
                     '<button class="lk" onclick="openDev()"' +
-                    ' title="开发者工具：网络抓包 / Console / 元素检查 / 性能 / CDP 命令控制台">' +
-                    '开发者工具</button>';
+                    ' title="打开浏览器原生 DevTools 独立窗口（元素/网络/断点/性能，与 F12 完全一致）">' +
+                    '原生 DevTools ↗</button>';
                 const linksHtml = '<div class="detail-links">' +
                     '<span class="lk-group"><span class="lk-label">CDP 端点</span>' + endpointLinks + '</span>' +
                     '<span class="lk-group"><span class="lk-label">工具</span>' + toolLinks + '</span>' +
@@ -5599,7 +5557,7 @@
         // 顶栏滑动开关：打开右侧日志抽屉 / 收起后画面占满。
         function toggleLogs(open) {
             logsOpen = !!open;
-            if (!logsOpen) { devDisconnect(); switchSideView("log"); $("logDrawer").style.width = ""; }
+            if (!logsOpen) { switchSideView("log"); $("logDrawer").style.width = ""; }
             if (logsOpen) { logsLoadedAt = 0; loadLogs(true); }
             render();
         }
@@ -5673,7 +5631,6 @@
         loadHostFilter();
         loadGroups();
         applyProfilesCollapse();
-        initDrawerResizer();
         initHosts().then(() => {
             if (!authRequired || apiKey) {
                 load();
@@ -5701,36 +5658,18 @@
             if (m && wrap && !wrap.contains(e.target)) m.classList.remove("open");
         });
 
-        // ---- 通用 WS 地址（带 key）----
-        function wsBase() {
-            const proto = location.protocol === "https:" ? "wss:" : "ws:";
-            return proto + "//" + location.host;
-        }
-        function wsKey() { return apiKey ? "?key=" + encodeURIComponent(apiKey) : ""; }
-
-        // ---- 开发者工具：网络抓包 / Console / 元素 / 性能 / CDP 控制台 ----
-        // ---- 开发者工具：与运行日志共用右侧抽屉，按钮切换 ----
-        let devSid = null, devTid = null, devWs = null, devDomain = null, devPerfTimer = null;
-        let devNetRows = [], devConsoleRows = [];
-        let sideView = "log";   // log | dev
-        let devPane = "native"; // native | network | console | element | performance | console-cmd
+        // ---- 开发者工具 = 浏览器原生 DevTools 独立窗口（与 F12 完全一致）----
+        // 不再占用右侧抽屉；抽屉只承载运行日志。
+        let devSid = null, devTid = null;
+        let sideView = "log";
         let devToolsUrlCache = "";
 
         function switchSideView(which) {
-            sideView = which === "dev" ? "dev" : "log";
-            $("sideViewLog").classList.toggle("on", sideView === "log");
-            $("devMask").classList.toggle("on", sideView === "dev");
-            $("sideTabLog").classList.toggle("on", sideView === "log");
-            $("sideTabDev").classList.toggle("on", sideView === "dev");
-            // DevTools 需要更宽画布；宽度支持拖拽，见 initDrawerResizer()
-            $("logDrawer").classList.toggle("dev-mode", sideView === "dev" && devPane === "native");
-            if (sideView === "dev" && devPane === "native") mountNativeDevTools();
-            if (sideView === "log") {
-                // 切走时停止抓包/监控，避免后台持续占用与事件串台。
-                devDisconnect();
-                logsLoadedAt = 0;
-                loadLogs(true);
-            }
+            // 兼容历史调用（自检/快捷键）：一律切回日志视图。
+            sideView = "log";
+            $("sideViewLog").classList.add("on");
+            logsLoadedAt = 0;
+            loadLogs(true);
         }
 
         function devHasSelection() {
@@ -5755,286 +5694,20 @@
             return "";
         }
 
+        // 开发者工具 = 浏览器原生 DevTools 独立顶层窗口，与 F12 完全一致。
+        // 不再占用右侧抽屉：抽屉现在只承载运行日志。
         function openDev() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
             devSid = sel.sid;
             devTid = null;
-            const tid = castPreferredTid || (castState && castState.tid);
+            const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
             if (tid) devTid = tid;
-            $("devSid").textContent = (sel.host_name || "本机") + " " + sel.sid.slice(0, 8);
-            logsOpen = true;
-            $("logToggle").checked = true;
-            $("logDrawer").classList.add("open");
-            switchDev("native");
-            switchSideView("dev");
+            return openNativeDevTools();
         }
 
         function closeDev() {
-            devDisconnect();
-            switchSideView("log");
-        }
-
-        function devStatus(text, kind) {
-            const el = $("devStatus"); if (!el) return;
-            el.textContent = text || "";
-            el.className = "dev-status" + (kind ? " " + kind : "");
-        }
-
-        function devDisconnect(showStopped = false) {
-            if (devWs) {
-                try {
-                    devWs.onclose = null;
-                    devWs.onerror = null;
-                    devWs.onopen = null;
-                    devWs.onmessage = null;
-                    devWs.close();
-                } catch (e) {}
-                devWs = null;
-            }
-            if (devPerfTimer) { clearInterval(devPerfTimer); devPerfTimer = null; }
-            devDomain = null;
-            devStatus(showStopped ? "已停止" : "", "");
-            devSyncButtons(false);
-        }
-
-        function devSyncButtons(active) {
-            const btn = $("devMainBtn"); if (!btn) return;
-            btn.textContent = active ? "停止" : (devDomain === "network" ? "开始抓包" :
-                devDomain === "console" ? "开始监听" : devDomain === "performance" ? "开始监控" : "开始");
-            btn.classList.toggle("btn-danger", !!active);
-        }
-
-        async function devConnect(domain) {
-            if (!devHasSelection()) return;
-            devDisconnect();
-            const tid = await devResolveTid();
-            if (!tid) {
-                devStatus("未获取到标签，请先在画面区打开一个页面", "err");
-                toast("未获取到当前标签，请先在画面区打开一个页面");
-                return;
-            }
-            devDomain = domain;
-            devStatus("连接中…", "");
-            const url = wsBase() + "/ws/inspect/" + encodeURIComponent(devSid) + "/" +
-                encodeURIComponent(tid) + "?domain=" + domain + (apiKey ? "&key=" + encodeURIComponent(apiKey) : "");
-            let ws;
-            try { ws = new WebSocket(url); }
-            catch (e) { devStatus("连接失败: " + e.message, "err"); devDomain = null; return; }
-            devWs = ws;
-            ws.onopen = () => { devStatus("运行中 · " + tid.slice(0, 8), "ok"); devSyncButtons(true); };
-            ws.onerror = () => { devStatus("连接错误，请检查实例状态", "err"); devSyncButtons(false); };
-            ws.onclose = () => {
-                if (devWs === ws) { devWs = null; devDomain = null; devSyncButtons(false); devStatus("已停止", ""); }
-            };
-            ws.onmessage = ev => {
-                let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-                if (m.type === "event") devOnEvent(m.method, m.params);
-                else if (m.type === "error") { devStatus("错误: " + m.message, "err"); toast("工具连接错误: " + m.message, "error"); }
-            };
-        }
-
-        function devToggle() {
-            if (devWs || devPerfTimer) { devDisconnect(true); return; }
-            if (devDomain === "performance") { devStartPerf(); return; }
-            devConnect(devDomain || "network");
-        }
-
-        function devStartPerf() {
-            if (!devHasSelection()) return;
-            devDisconnect();
-            devDomain = "performance";
-            devResolveTid().then(tid => {
-                if (!tid) { devStatus("未获取到标签，请先在画面区打开一个页面", "err"); return; }
-                devStatus("运行中 · 每 2 秒采样", "ok");
-                devSyncButtons(true);
-                devSamplePerf();
-                devPerfTimer = setInterval(devSamplePerf, 2000);
-            });
-        }
-
-        function switchDev(pane) {
-            devPane = pane;
-            devDisconnect();
-            document.querySelectorAll(".dev-tab").forEach(b => b.classList.toggle("on", b.dataset.pane === pane));
-            $("logDrawer").classList.toggle("dev-mode", sideView === "dev" && pane === "native");
-            const P = $("devPane");
-            if (!P) return;
-            P.className = "dev-pane" + (pane === "native" ? " native-pane" : "");
-            if (pane === "native") {
-                P.innerHTML =
-                    '<div class="dev-native-bar">' +
-                        '<span class="dev-status" id="devStatus">准备连接原生 DevTools…</span>' +
-                        '<span class="spacer"></span>' +
-                        '<button class="btn-mini" onclick="devNativeReload()" title="重新加载 DevTools 前端">刷新</button>' +
-                        '<button class="btn-mini" onclick="copyDevToolsLink()" title="复制 DevTools 链接">复制链接</button>' +
-                        '<button class="btn-mini" onclick="openNativeDevTools(true)" title="在新窗口打开">独立窗口 ↗</button>' +
-                    '</div>' +
-                    '<div class="native-frame-wrap" id="nativeFrameWrap">' +
-                        '<div class="native-placeholder" id="nativePlaceholder">' +
-                            '<b>原生 DevTools</b>' +
-                            '正在使用当前实例与标签建立连接。若前端提示调试连接已关闭，请点「刷新」重连。' +
-                        '</div>' +
-                        '<iframe id="nativeDevFrame" title="Chrome DevTools" src="about:blank"></iframe>' +
-                    '</div>';
-                mountNativeDevTools();
-            } else if (pane === "network") {
-                devDomain = "network";
-                P.innerHTML =
-                    '<div class="dev-toolbar">' +
-                        '<button class="btn-mini" id="devMainBtn" onclick="devToggle()">开始抓包</button>' +
-                        '<button class="btn-mini" onclick="devNetRows=[];devRenderNetwork()">清空</button>' +
-                        '<span class="dev-status" id="devStatus"></span>' +
-                    '</div><div id="devNetBody"></div>';
-                devRenderNetwork();
-            } else if (pane === "console") {
-                devDomain = "console";
-                P.innerHTML =
-                    '<div class="dev-toolbar">' +
-                        '<button class="btn-mini" id="devMainBtn" onclick="devToggle()">开始监听</button>' +
-                        '<button class="btn-mini" onclick="devConsoleRows=[];devRenderConsole()">清空</button>' +
-                        '<span class="dev-status" id="devStatus"></span>' +
-                    '</div><div id="devConsoleBody"></div>';
-                devRenderConsole();
-            } else if (pane === "element") {
-                devDomain = "element";
-                P.innerHTML =
-                    '<div class="hint">查询页面元素并输出外层 HTML。原生 DevTools 提供可视化元素树与实时编辑。</div>' +
-                    '<div class="dev-toolbar"><input id="devSel" placeholder="CSS 选择器，如 body > div" style="flex:1;min-width:140px" value="body">' +
-                    '<button class="btn-mini" onclick="devQueryElement()">查询</button></div>' +
-                    '<span class="dev-status" id="devStatus"></span>' +
-                    '<div class="dev-result" id="devElemResult">输入选择器并点查询</div>';
-            } else if (pane === "performance") {
-                devDomain = "performance";
-                P.innerHTML =
-                    '<div class="dev-toolbar">' +
-                        '<button class="btn-mini" id="devMainBtn" onclick="devToggle()">开始监控</button>' +
-                        '<span class="dev-status" id="devStatus"></span>' +
-                    '</div>' +
-                    '<div class="dev-toolbar"><button class="btn-mini" onclick="devClearPerf()">清空</button>' +
-                    '<span class="hint">每 2 秒采样一次性能指标</span></div>' +
-                    '<div class="dev-result" id="devPerfResult">点「开始监控」后显示性能指标</div>';
-            } else if (pane === "console-cmd") {
-                devDomain = "console-cmd";
-                P.innerHTML =
-                    '<div class="hint">直接下发 CDP 命令（白名单内），结果实时显示。例：Runtime.evaluate 参数 {"expression":"document.title"}</div>' +
-                    '<div class="dev-toolbar"><input id="devCmdMethod" placeholder="方法名，如 Runtime.evaluate" value="Runtime.evaluate" style="flex:1;min-width:140px">' +
-                    '<button class="btn-mini" onclick="devRunCmd()">执行</button></div>' +
-                    '<span class="dev-status" id="devStatus"></span>' +
-                    '<textarea class="dev-code" id="devCmdParams" spellcheck="false" style="min-height:80px">{"expression":"document.title","returnByValue":true}</textarea>' +
-                    '<div class="dev-result" id="devCmdResult"></div>';
-            }
-        }
-
-        function devOnEvent(method, params) {
-            if (method === "Network.requestWillBeSent") {
-                devNetRows.push({ id: params.requestId, method: params.request ? params.request.method : "",
-                    url: params.request ? params.request.url : "", status: "", type: params.type || "" });
-            } else if (method === "Network.responseReceived") {
-                const r = devNetRows.find(x => x.id === params.requestId);
-                if (r) r.status = params.response ? params.response.status : "";
-            } else if (method === "Runtime.consoleAPICalled") {
-                devConsoleRows.push({ lvl: params.type || "log",
-                    text: (params.args || []).map(a => a.value != null ? a.value : (a.description || "")).join(" ") });
-            } else if (method === "Runtime.exceptionThrown") {
-                devConsoleRows.push({ lvl: "error", text: (params.exceptionDetails || {}).text || "异常" });
-            } else if (method === "Log.entryAdded") {
-                const e = params.entry || {};
-                devConsoleRows.push({ lvl: e.level || "info", text: e.text || "" });
-            }
-            if (devDomain === "network" && $("devNetBody")) devRenderNetwork();
-            if (devDomain === "console" && $("devConsoleBody")) devRenderConsole();
-        }
-        function devRenderNetwork() {
-            const el = $("devNetBody"); if (!el) return;
-            if (!devNetRows.length) { el.innerHTML = '<div class="dev-empty">点「开始抓包」后显示网络请求</div>'; return; }
-            el.innerHTML = '<table class="dev-table"><thead><tr><th>状态</th><th>方法</th><th>类型</th><th>URL</th></tr></thead><tbody>' +
-                devNetRows.slice(-200).reverse().map(r =>
-                    '<tr><td>' + esc(String(r.status || "…")) + '</td><td>' + esc(r.method) + '</td><td>' +
-                    esc(r.type) + '</td><td style="max-width:360px;overflow-wrap:anywhere">' + esc(r.url) + '</td></tr>'
-                ).join("") + '</tbody></table>';
-        }
-        function devRenderConsole() {
-            const el = $("devConsoleBody"); if (!el) return;
-            if (!devConsoleRows.length) { el.innerHTML = '<div class="dev-empty">点「开始监听」后显示 Console 输出</div>'; return; }
-            el.innerHTML = devConsoleRows.slice(-300).reverse().map(r =>
-                '<div class="lvl-' + (r.lvl === "error" ? "error" : r.lvl === "warning" ? "warn" : "info") + '">' +
-                '[' + esc(r.lvl) + '] ' + esc(r.text) + '</div>'
-            ).join("");
-        }
-        async function devQueryElement() {
-            const sel = ($("devSel").value || "").trim();
-            if (!devHasSelection()) return;
-            const out = $("devElemResult");
-            if (!sel) { out.textContent = "请输入 CSS 选择器"; return; }
-            const tid = await devResolveTid();
-            if (!tid) { out.textContent = "未获取到标签，请先在画面区打开一个页面"; devStatus("未获取到标签", "err"); return; }
-            out.textContent = "查询中…";
-            try {
-                const d = await api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target_id: tid, method: "DOM.getDocument", params: { depth: -1 } })
-                });
-                const root = d.result && d.result.root && d.result.root.nodeId;
-                if (!root) throw new Error("未获取到 DOM 根节点");
-                const q = await api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target_id: tid, method: "DOM.querySelector",
-                        params: { nodeId: root, selector: sel } })
-                });
-                const nid = q.result && q.result.nodeId;
-                if (!nid) { out.textContent = "未匹配到元素: " + sel; return; }
-                const h = await api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target_id: tid, method: "DOM.getOuterHTML", params: { nodeId: nid } })
-                });
-                out.textContent = (h.result && h.result.outerHTML) || "(空)";
-                devStatus("查询完成", "ok");
-            } catch (e) { out.textContent = "查询失败: " + e.message; devStatus("查询失败", "err"); }
-        }
-        function devClearPerf() {
-            const el = $("devPerfResult");
-            if (el) el.textContent = "点「开始监控」后显示性能指标";
-            devStatus("", "");
-        }
-        async function devSamplePerf() {
-            if (devDomain !== "performance" || !devSid) return;
-            const tid = await devResolveTid();
-            if (!tid) return;
-            try {
-                const d = await api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target_id: tid, method: "Performance.getMetrics", params: {} })
-                });
-                const el = $("devPerfResult"); if (!el) return;
-                const ms = (d.result && d.result.metrics) || [];
-                const pick = k => { const m = ms.find(x => x.name === k); return m ? Math.round(m.value) : "-"; };
-                el.textContent = "JS 堆: " + Math.round(pick("JSHeapUsedSize") / 1048576) + " MB / " +
-                    Math.round(pick("JSHeapTotalSize") / 1048576) + " MB\n" +
-                    "DOM 节点: " + pick("Nodes") + " | 文档: " + pick("Documents") +
-                    " | 布局次数: " + pick("LayoutCount");
-            } catch (e) {
-                const el = $("devPerfResult");
-                if (el) el.textContent = "采样失败: " + e.message;
-            }
-        }
-        async function devRunCmd() {
-            if (!devHasSelection()) return;
-            const method = ($("devCmdMethod").value || "").trim();
-            let params; try { params = JSON.parse($("devCmdParams").value || "{}"); }
-            catch (e) { $("devCmdResult").textContent = "参数不是合法 JSON: " + e.message; return; }
-            const out = $("devCmdResult");
-            out.textContent = "执行中…";
-            try {
-                const tid = await devResolveTid();
-                if (!tid) { out.textContent = "未获取到标签，请先在画面区打开一个页面"; devStatus("未获取到标签", "err"); return; }
-                const d = await api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target_id: tid, method: method, params: params })
-                });
-                out.textContent = JSON.stringify(d.result, null, 2);
-                devStatus("执行完成", "ok");
-            } catch (e) { out.textContent = "失败: " + e.message; devStatus("执行失败", "err"); }
+            // 独立窗口由浏览器自身管理，面板不再持有可关闭的视图。
         }
 
         // 原生 DevTools：复用同源代理的 inspector.html + CDP WS。
@@ -6045,7 +5718,6 @@
             const sel = instances[devSid];
             const tid = await devResolveTid();
             if (!tid) {
-                devStatus("未获取到标签，请先在画面区打开一个页面", "err");
                 toast("未获取到当前标签，请先在画面区打开一个页面");
                 return null;
             }
@@ -6061,71 +5733,10 @@
             return { url: url, ws: ws, tid: tid, port: port, prefix: prefix };
         }
 
-        async function mountNativeDevTools() {
-            const frame = $("nativeDevFrame");
-            if (!frame) return;
+        async function openNativeDevTools() {
             const t = await devToolsTarget();
             if (!t) return;
             devToolsUrlCache = t.url;
-            devStatus("已连接 · " + t.tid.slice(0, 8), "ok");
-            const ph = $("nativePlaceholder");
-            if (ph) ph.style.display = "none";
-            frame.src = t.url;
-        }
-
-        // 抽屉宽度拖拽：只影响当前页面，不写 localStorage，避免下次布局不可预期。
-        function initDrawerResizer() {
-            const grip = $("drawerResizer"), drawer = $("logDrawer");
-            if (!grip || !drawer) return;
-            let dragging = false;
-            grip.addEventListener("mousedown", e => {
-                e.preventDefault();
-                dragging = true;
-                grip.classList.add("dragging");
-                document.body.style.userSelect = "none";
-            });
-            window.addEventListener("mousemove", e => {
-                if (!dragging) return;
-                const rect = drawer.getBoundingClientRect();
-                const width = Math.max(320, Math.min(window.innerWidth - 260, rect.right - e.clientX));
-                drawer.style.width = width + "px";
-            });
-            window.addEventListener("mouseup", () => {
-                if (!dragging) return;
-                dragging = false;
-                grip.classList.remove("dragging");
-                document.body.style.userSelect = "";
-            });
-        }
-
-        function devNativeReload() {
-            const frame = $("nativeDevFrame");
-            if (!frame) { openNativeDevTools(true); return; }
-            if (!frame.src || frame.src === "about:blank") { mountNativeDevTools(); return; }
-            frame.src = frame.src;
-            devStatus("正在重连…", "");
-        }
-
-        async function copyDevToolsLink() {
-            const t = devToolsUrlCache ? { url: devToolsUrlCache } : await devToolsTarget();
-            if (!t) return;
-            try {
-                await navigator.clipboard.writeText(t.url);
-                toast("DevTools 链接已复制", "ok");
-            } catch (e) {
-                toast("复制失败，请用「独立窗口」打开后从地址栏复制", "error");
-            }
-        }
-
-        async function openNativeDevTools(newWindow = true) {
-            const t = await devToolsTarget();
-            if (!t) return;
-            if (!newWindow) {
-                devToolsUrlCache = t.url;
-                const frame = $("nativeDevFrame");
-                if (frame) frame.src = t.url;
-                return;
-            }
             const w = window.open(t.url, "_blank", "noopener");
             if (!w) toast("弹窗被拦截，请允许本站点打开新窗口");
             else toast("已在新窗口打开原生 DevTools", "ok");
@@ -6345,10 +5956,9 @@
             if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;
             if (e.key === "l" || e.key === "L") toggleScreenLock();
-            else if (e.key === "d" || e.key === "D") { if (sideView === "dev" && logsOpen) closeDev(); else openDev(); }
+            else if (e.key === "d" || e.key === "D") openDev();
             else if (e.key === "Escape") {
-                if (sideView === "dev" && logsOpen) closeDev();
-                else if ($("batchMask").classList.contains("open")) closeBatch();
+                if ($("batchMask").classList.contains("open")) closeBatch();
                 else if ($("snipLibMask").classList.contains("open")) closeSnipLib();
                 else if ($("tplMask").classList.contains("open")) closeTpl();
                 else if ($("schedMask").classList.contains("open")) closeSched();

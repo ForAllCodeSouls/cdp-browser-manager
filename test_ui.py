@@ -85,7 +85,8 @@ class PanelTests(unittest.TestCase):
 
     def test_all_masks_present(self):
         masks = re.findall(r'id="([a-zA-Z]+Mask)"', INDEX)
-        self.assertGreaterEqual(len(set(masks)), 19)
+        # 原 19 个含 devMask（内嵌开发者工具面板）；现已改为独立原生窗口，故为 18。
+        self.assertGreaterEqual(len(set(masks)), 18)
 
 
 class VisualSystemTests(unittest.TestCase):
@@ -140,22 +141,26 @@ class HandlerIntegrityTests(unittest.TestCase):
         self.assertIn("castState", dev)
 
 
-class DevToolsDrawerTests(unittest.TestCase):
-    """开发者工具与日志共用抽屉、开始/停止成对、原生入口。"""
+class DevToolsNativeWindowTests(unittest.TestCase):
+    """开发者工具 = 浏览器原生 DevTools 独立窗口（与 F12 一模一样），不占用抽屉。"""
 
-    def test_devtools_lives_in_drawer(self):
+    def test_drawer_is_log_only(self):
         self.assertIn('class="side-switch"', INDEX)
-        self.assertIn("switchSideView('log')", INDEX)
-        self.assertIn("switchSideView('dev')", INDEX)
-        self.assertIn('class="side-view" id="devMask"', INDEX)
-        self.assertIn('id="sideViewLog"', INDEX)
+        self.assertIn('class="side-view on" id="sideViewLog"', INDEX)
+        self.assertIn("switchSideView(\"log\")", JS)
+        # 抽屉里不再有内嵌开发者工具视图 / 切换标签
+        self.assertNotIn('id="devMask"', INDEX)
+        self.assertNotIn('id="sideTabDev"', INDEX)
+        self.assertNotIn('id="devPane"', INDEX)
+        self.assertNotIn('"switchSideView(\'dev\')"', INDEX)
 
-    def test_start_stop_pairs(self):
-        self.assertIn("function devToggle()", JS)
-        self.assertIn("function devDisconnect(", JS)
-        self.assertIn("devDisconnect(true)", JS)
-        for btn in ("devMainBtn", "devStatus"):
-            self.assertIn('id="' + btn + '"', INDEX + JS)
+    def test_open_dev_launches_native_window(self):
+        # openDev 直接弹原生 DevTools 独立窗口，不再打开抽屉、不再内嵌
+        self.assertIn("function openDev()", JS)
+        self.assertIn("return openNativeDevTools();", JS)
+        self.assertNotIn('$("logDrawer").classList.add("open")', JS.split("function openDev()")[1].split("function ")[0])
+        self.assertIn("window.open(t.url", JS)
+        self.assertIn('onclick="openDev()"', INDEX)
 
     def test_native_devtools_entry(self):
         self.assertIn("function openNativeDevTools(", JS)
@@ -163,23 +168,22 @@ class DevToolsDrawerTests(unittest.TestCase):
         self.assertIn("/devtools/page/", JS)
         self.assertIn("openNativeDevTools(", INDEX)
 
-    def test_native_devtools_embedded(self):
-        # 原生 DevTools 是默认面板，直接嵌在抽屉里；轻量工具退居次级标签。
-        self.assertIn('data-pane="native"', INDEX)
-        self.assertIn('id="nativeDevFrame"', INDEX)
-        self.assertIn("function mountNativeDevTools(", JS)
-        self.assertIn("function devNativeReload(", JS)
-        self.assertIn("function copyDevToolsLink(", JS)
-        self.assertIn("initDrawerResizer()", JS)
-        self.assertIn('id="drawerResizer"', INDEX)
-        self.assertIn('"dev-mode"', JS)
+    def test_no_embedded_iframe_left(self):
+        # 内嵌 iframe 会让 DevTools 以 undocked 降级运行，无法与 F12 一模一样
+        for dead in ("nativeDevFrame", "mountNativeDevTools", "devNativeReload",
+                     "copyDevToolsLink", "initDrawerResizer", "drawerResizer",
+                     "dev-mode", "dev-tab ", "devToggle", "switchDev(",
+                     "class=\"dev-tab", "dev-tabs"):
+            self.assertNotIn(dead, INDEX + JS, dead)
+
+    def test_remote_native_devtools_path(self):
         # 远端实例的原生 DevTools 走 /remote/<host>/<port>/devtools/...
         self.assertIn('"/remote/" + encodeURIComponent(sel.host)', JS)
+        self.assertIn("function devToolsTarget()", JS)
 
     def test_tid_autoresolve(self):
         self.assertIn("function devResolveTid()", JS)
         self.assertIn("/targets", JS)
-        self.assertNotIn("devPerfRows", JS)
 
     def test_backend_devtools_proxy(self):
         main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")

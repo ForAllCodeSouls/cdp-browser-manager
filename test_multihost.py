@@ -2063,16 +2063,17 @@ class ExtendedFeaturesTests(unittest.TestCase):
 
     def test_frontend_panels_and_entries(self):
         s = self.src
-        for mask in ("devMask", "batchMask", "snipLibMask", "tplMask", "schedMask",
+        # 开发者工具已改为独立原生窗口；抽屉只保留日志，不再有 devMask 内嵌面板。
+        for mask in ("batchMask", "snipLibMask", "tplMask", "schedMask",
                      "auditMask", "resMask", "recMask"):
             self.assertIn('id="' + mask + '"', s)
-        for fn in ("switchDev(", "runBatch()", "loadSnippets()", "loadTpls()",
+        for fn in ("openDev()", "runBatch()", "loadSnippets()", "loadTpls()",
                    "loadScheds()", "loadAudit()", "loadMetrics()", "toggleRecord()",
                    "toggleTheme()"):
             self.assertIn(fn, s)
         self.assertIn('id="createProxy"', s)
         self.assertIn('proxy: ($("createProxy")', s)
-        self.assertIn("开发者工具</button>", s)
+        self.assertIn("原生 DevTools ↗</button>", s)
 
     def test_theme_attribute_and_shortcuts(self):
         s = self.src
