@@ -1,7 +1,7 @@
 /**
  * 开发者工具交互测试（jsdom）。
- * 契约：开发者工具 = 浏览器原生 DevTools 独立顶层窗口，与 F12 一模一样；
- *       不再占用右侧抽屉，抽屉只承载运行日志。
+ * 契约：开发者工具 = 右侧抽屉内中文 CDP 抓包面板，与运行日志按钮切换；
+ *       面板顶部保留「原生 DevTools ↗」打开浏览器原生独立窗口（与 F12 一致）。
  * 运行：node test_devtools_ui.js
  */
 const fs = require("fs");
@@ -31,9 +31,7 @@ function makeDom() {
         close() { this.closed = true; if (this.onclose) this.onclose(); }
         send() {}
       };
-      w.toast = () => {};
-      w.alert = () => {};
-      w.confirm = () => true;
+      w.alert = () => {}; w.confirm = () => true;
       w.open = (url) => { openUrls.push(url); return {}; };
     }
   });
@@ -43,10 +41,7 @@ function makeDom() {
     instances = { sid1: { sid:"sid1", status:"running", debug_port:9333, host_name:"本机" } };
     selectedSid = "sid1";
     apiKey = "testkey";
-    api = async (url, opts) => {
-      if (url.endsWith("/targets")) return { targets:[{id:"tid123",type:"page"}] };
-      return {};
-    };
+    api = async (url) => url.endsWith("/targets") ? { targets:[{id:"tid123",type:"page"}] } : {};
     load = async () => {};
     render = function () {};
     loadLogs = async () => {};
@@ -56,47 +51,57 @@ function makeDom() {
   return w;
 }
 
-console.log("== 开发者工具交互测试（原生独立窗口）==");
+console.log("== 开发者工具交互测试（抽屉抓包面板 + 原生入口）==");
 
-// 1. openDev 直接弹原生 DevTools 独立窗口，不打开日志抽屉
+// 1. openDev 打开抽屉开发者工具视图（不弹原生窗口）
 {
   const w = makeDom();
   w.openDev();
-  setTimeout(() => {
-    ok(openUrls.length === 1, "openDev 打开一个新窗口");
-    const url = openUrls[0] || "";
-    ok(url.includes("/9333/devtools/inspector.html"), "走 /<port>/devtools 同源代理的原生前端");
-    ok(url.includes("ws=") && decodeURIComponent(url).includes("/devtools/page/tid123"), "ws 参数指向 page 级 CDP");
-    ok(decodeURIComponent(url).includes("key=testkey"), "URL 携带 API_KEY");
-    ok(!w.document.getElementById("logDrawer").classList.contains("open"), "不打开日志抽屉（不占用右侧位置）");
-    ok(w.document.getElementById("devMask") === null, "抽屉内不再有内嵌 devMask");
+  eq(w.eval("sideView"), "dev", "openDev 切到开发者工具视图");
+  ok(w.document.getElementById("logDrawer").classList.contains("open"), "openDev 打开右侧抽屉");
+  ok(w.document.getElementById("devMask").classList.contains("on"), "devMask 抓包视图激活");
+  eq(openUrls.length, 0, "openDev 不弹原生窗口（原生入口独立触发）");
 
-    // 2. 远端实例走 /remote/<host>/<port>/devtools/...
-    const w2 = makeDom();
-    w2.eval('instances.sid1.host = "R"; instances.sid1.host_name = "主机R";');
-    w2.openDev();
-    setTimeout(() => {
-      const rurl = openUrls[0] || "";
-      ok(rurl.includes("/remote/R/9333/devtools/inspector.html"), "远端实例使用远端 DevTools 代理路径");
-      ok(decodeURIComponent(rurl).includes("/remote/R/9333/devtools/page/tid123"), "远端 WS 也走远端代理");
+  // 2. 切回日志会断开抓包
+  w.switchSideView("log");
+  eq(w.eval("sideView"), "log", "切回日志视图");
+  ok(w.document.getElementById("sideViewLog").classList.contains("on"), "日志视图显示");
 
-      // 3. 未选中实例时不会打开窗口
-      const w3 = makeDom();
-      w3.eval('selectedSid = "none";');
-      w3.openDev();
+  // 3. 未选中实例时 openDev 不开抽屉
+  const w2 = makeDom();
+  w2.eval('selectedSid = "none";');
+  w2.openDev();
+  ok(!w2.document.getElementById("logDrawer").classList.contains("open"), "未选中运行实例时不打开抽屉");
+
+  // 4. 标签 ID 自动补齐
+  const w3 = makeDom();
+  w3.eval('sessionStorage.removeItem("tabs_sid1"); devTid = null;');
+  w3.devResolveTid().then(tid => {
+    eq(tid, "tid123", "devResolveTid 从 /targets 自动补齐标签");
+
+    // 5. 原生 DevTools 入口打开独立窗口，含密钥
+    const w4 = makeDom();
+    w4.eval('devSid = "sid1";');
+    w4.openNativeDevTools().then(() => {
       setTimeout(() => {
-        eq(openUrls.length, 0, "未选中运行实例时不打开窗口");
+        eq(openUrls.length, 1, "原生入口打开一个窗口");
+        const url = openUrls[0] || "";
+        ok(url.includes("/9333/devtools/inspector.html"), "走 /<port>/devtools 同源代理");
+        ok(decodeURIComponent(url).includes("/devtools/page/tid123"), "ws 指向 page 级 CDP");
+        ok(decodeURIComponent(url).includes("key=testkey"), "携带 API_KEY");
 
-        // 4. 标签 ID 自动补齐（无画面区优先时从 /targets 取）
-        const w4 = makeDom();
-        w4.eval('sessionStorage.removeItem("tabs_sid1"); devTid = null;');
-        w4.devResolveTid().then(tid => {
-          eq(tid, "tid123", "devResolveTid 从 /targets 自动补齐标签");
-
-          console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
-          process.exit(failed ? 1 : 0);
+        // 6. 远端实例原生入口走 /remote/<host>/<port>/...
+        const w5 = makeDom();
+        w5.eval('devSid = "sid1"; instances.sid1.host = "R";');
+        w5.openNativeDevTools().then(() => {
+          setTimeout(() => {
+            const rurl = openUrls[0] || "";
+            ok(rurl.includes("/remote/R/9333/devtools/inspector.html"), "远端走 /remote 代理路径");
+            console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
+            process.exit(failed ? 1 : 0);
+          }, 10);
         });
       }, 10);
-    }, 10);
-  }, 10);
+    });
+  });
 }

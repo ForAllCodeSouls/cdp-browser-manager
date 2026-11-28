@@ -141,43 +141,41 @@ class HandlerIntegrityTests(unittest.TestCase):
         self.assertIn("castState", dev)
 
 
-class DevToolsNativeWindowTests(unittest.TestCase):
-    """开发者工具 = 浏览器原生 DevTools 独立窗口（与 F12 一模一样），不占用抽屉。"""
+class DevToolsDrawerTests(unittest.TestCase):
+    """开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换；原生窗口为其中入口。"""
 
-    def test_drawer_is_log_only(self):
+    def test_drawer_has_two_views(self):
         self.assertIn('class="side-switch"', INDEX)
         self.assertIn('class="side-view on" id="sideViewLog"', INDEX)
-        self.assertIn("switchSideView(\"log\")", JS)
-        # 抽屉里不再有内嵌开发者工具视图 / 切换标签
-        self.assertNotIn('id="devMask"', INDEX)
-        self.assertNotIn('id="sideTabDev"', INDEX)
-        self.assertNotIn('id="devPane"', INDEX)
-        self.assertNotIn('"switchSideView(\'dev\')"', INDEX)
+        self.assertIn('id="devMask"', INDEX)
+        self.assertIn('id="sideTabLog"', INDEX)
+        self.assertIn('id="sideTabDev"', INDEX)
+        self.assertIn('onclick="switchSideView(\'dev\')"', INDEX)
+        self.assertIn("function switchSideView(which)", JS)
 
-    def test_open_dev_launches_native_window(self):
-        # openDev 直接弹原生 DevTools 独立窗口，不再打开抽屉、不再内嵌
+    def test_open_dev_switches_to_drawer(self):
+        # openDev 打开抽屉并切到开发者工具视图，不再弹独立窗口
         self.assertIn("function openDev()", JS)
-        self.assertIn("return openNativeDevTools();", JS)
-        self.assertNotIn('$("logDrawer").classList.add("open")', JS.split("function openDev()")[1].split("function ")[0])
-        self.assertIn("window.open(t.url", JS)
+        open_dev = JS.split("function openDev()")[1].split("function ")[0]
+        self.assertIn('switchSideView("dev")', open_dev)
+        self.assertIn('$("logDrawer").classList.add("open")', open_dev)
         self.assertIn('onclick="openDev()"', INDEX)
 
-    def test_native_devtools_entry(self):
+    def test_native_devtools_still_available(self):
+        # 原生 DevTools 独立窗口作为抓包面板内入口保留
         self.assertIn("function openNativeDevTools(", JS)
         self.assertIn("/devtools/inspector.html", JS)
         self.assertIn("/devtools/page/", JS)
-        self.assertIn("openNativeDevTools(", INDEX)
+        self.assertIn("openNativeDevTools()", INDEX)
 
     def test_no_embedded_iframe_left(self):
-        # 内嵌 iframe 会让 DevTools 以 undocked 降级运行，无法与 F12 一模一样
+        # 不保留会降级为 undocked 的内嵌 iframe 实现
         for dead in ("nativeDevFrame", "mountNativeDevTools", "devNativeReload",
                      "copyDevToolsLink", "initDrawerResizer", "drawerResizer",
-                     "dev-mode", "dev-tab ", "devToggle", "switchDev(",
-                     "class=\"dev-tab", "dev-tabs"):
+                     "devToggle", "switchDev("):
             self.assertNotIn(dead, INDEX + JS, dead)
 
     def test_remote_native_devtools_path(self):
-        # 远端实例的原生 DevTools 走 /remote/<host>/<port>/devtools/...
         self.assertIn('"/remote/" + encodeURIComponent(sel.host)', JS)
         self.assertIn("function devToolsTarget()", JS)
 
@@ -244,24 +242,32 @@ class PythonCopyInjectionTests(unittest.TestCase):
 
 
 class CapturePanelTests(unittest.TestCase):
-    """自建中文抓包面板：真 CDP 抓包、右键 cURL/Python。"""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.html = (ROOT / "devtools-preview.html").read_text(encoding="utf-8")
+    """主应用抽屉内的中文抓包面板：真 CDP 抓包、右键 cURL/Python。"""
 
     def test_chinese_ui(self):
         for kw in ("网络抓包", "开始抓包", "请求头", "Python 代码", "复制为 Python (requests)"):
-            self.assertIn(kw, self.html)
+            self.assertIn(kw, INDEX)
 
     def test_real_cdp_wiring(self):
         for kw in ("/ws/inspect/", "domain=network", "Network.requestWillBeSent",
                    "Network.responseReceived", "Network.getResponseBody", "oncontextmenu"):
-            self.assertIn(kw, self.html)
+            self.assertIn(kw, JS + INDEX)
 
     def test_export_functions(self):
-        for fn in ("function genCurl(", "function genPython(", "function ctxAction("):
-            self.assertIn(fn, self.html)
+        for fn in ("function capGenCurl(", "function capGenPython(", "function capCtxAction("):
+            self.assertIn(fn, JS)
+
+    def test_no_naming_collision(self):
+        # 抓包函数全部 cap 前缀，不覆盖主应用的 toast/render/$ 等
+        self.assertNotIn("function render()", JS.split("// ---- 中文抓包面板")[1].split("// ---- 批量执行")[0])
+        cap_section = JS.split("// ---- 中文抓包面板")[1].split("// ---- 批量执行")[0]
+        for fn in ("capGenCurl", "capGenPython", "capRender", "capCopyText", "capLog", "capConnect"):
+            self.assertIn("function " + fn + "(", cap_section)
+        self.assertNotIn("id=\"capWrap\"", INDEX.replace('id="capWrap"', "", 1))  # 只出现一次
+
+    def test_standalone_file_removed(self):
+        # 抓包功能已整合进主应用，不再保留单独 html 文件
+        self.assertFalse((ROOT / "devtools-preview.html").exists())
 
 
 if __name__ == "__main__":

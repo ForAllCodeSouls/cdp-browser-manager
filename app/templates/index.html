@@ -860,6 +860,84 @@
         .side-close:hover { background: var(--surface-3); color: var(--text); }
         .side-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
         .side-view.on { display: flex; }
+
+        /* ---- 开发者工具：中文抓包面板（cap- 前缀，避免与主应用样式冲突）---- */
+        .log-drawer.open.cap-on { width: min(780px, 58vw); }
+        .cap-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative;
+            background: #202124; color: #e8eaed; font: 12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif; }
+        .cap-wrap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6;
+            stroke-linecap: round; stroke-linejoin: round; display: block; }
+        .cap-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding: 8px 10px; background: #1d1e20; border-bottom: 1px solid #3c4043; }
+        .cap-bar .cap-brand { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; }
+        .cap-bar .cap-brand svg { stroke: #8ab4f8; }
+        .cap-bar .cap-spacer { flex: 1; }
+        .cap-btn { height: 26px; padding: 0 11px; border-radius: 5px; border: 1px solid #3c4043;
+            background: #8ab4f8; color: #202124; font-weight: 600; font-size: 11px; cursor: pointer; }
+        .cap-btn:hover { filter: brightness(1.1); }
+        .cap-btn.ghost { background: transparent; color: #e8eaed; }
+        .cap-btn.ghost:hover { background: #35363a; }
+        .cap-btn.danger { background: #f28b82; color: #202124; }
+        .cap-state { font-size: 11px; color: #9aa0a6; display: flex; align-items: center; gap: 6px; }
+        .cap-dot { width: 8px; height: 8px; border-radius: 50%; background: #5f6368; display: inline-block; }
+        .cap-dot.on { background: #81c995; }
+        .cap-dot.err { background: #f28b82; }
+        .cap-tabbar { height: 32px; flex: 0 0 32px; background: #292a2d; display: flex; align-items: stretch;
+            border-bottom: 1px solid #3c4043; }
+        .cap-tab { padding: 0 13px; display: flex; align-items: center; gap: 6px; color: #9aa0a6;
+            cursor: pointer; position: relative; font-size: 12px; }
+        .cap-tab:hover { color: #e8eaed; background: #2e2f32; }
+        .cap-tab.on { color: #e8eaed; background: #202124; }
+        .cap-tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: #8ab4f8; }
+        .cap-tabbar .cap-spacer { flex: 1; }
+        .cap-tabbar .cap-hint { padding: 0 12px; display: flex; align-items: center; color: #9aa0a6; font-size: 11px; }
+        .cap-toolbar { height: 34px; flex: 0 0 34px; background: #292a2d; border-bottom: 1px solid #3c4043;
+            display: flex; align-items: center; gap: 6px; padding: 0 8px; color: #9aa0a6; }
+        .cap-tbtn { height: 24px; padding: 0 8px; display: flex; align-items: center; gap: 5px;
+            border: 1px solid transparent; border-radius: 4px; cursor: pointer; background: transparent;
+            color: #9aa0a6; font-size: 11px; }
+        .cap-tbtn:hover { background: #35363a; color: #e8eaed; border-color: #4a4d51; }
+        .cap-tbtn.on { background: rgba(138,180,248,.16); border-color: #8ab4f8; color: #8ab4f8; }
+        .cap-toolbar .cap-spacer { flex: 1; }
+        .cap-search { width: 200px; height: 23px; background: #1f2022; border: 1px solid #444; border-radius: 10px;
+            color: #9aa0a6; font-size: 11px; padding: 0 10px; outline: none; }
+        .cap-search:focus { border-color: #8ab4f8; color: #e8eaed; }
+        .cap-count { font-size: 11px; color: #9aa0a6; }
+        .cap-panel { display: none; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+        .cap-panel.on { display: flex; }
+        .cap-net-wrap { flex: 1; min-height: 0; overflow: auto; }
+        .cap-table { width: 100%; border-collapse: collapse; font: 11px ui-monospace,monospace; }
+        .cap-table th { position: sticky; top: 0; background: #292a2d; color: #9aa0a6; text-align: left;
+            padding: 6px 8px; border-bottom: 1px solid #3c4043; font-weight: 500; z-index: 1; }
+        .cap-table td { padding: 5px 8px; border-bottom: 1px solid #2e2f32; color: #c9cdd2; cursor: default;
+            max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cap-table tr:hover td { background: #2a2b2e; }
+        .cap-table tr.sel td { background: rgba(138,180,248,.16); }
+        .cap-st2{color:#81c995}.cap-st3{color:#9aa0a6}.cap-st4{color:#fdd663}.cap-st5{color:#f28b82}.cap-muted{color:#9aa0a6}
+        .cap-detail { height: 170px; flex: 0 0 170px; border-top: 1px solid #3c4043; background: #232427; display: flex; flex-direction: column; }
+        .cap-detail-tabs { height: 28px; flex: 0 0 28px; display: flex; background: #292a2d; border-bottom: 1px solid #3c4043; }
+        .cap-detail-tab { padding: 0 11px; display: flex; align-items: center; color: #9aa0a6; cursor: pointer;
+            font-size: 11px; border-right: 1px solid #3c4043; }
+        .cap-detail-tab.on { color: #e8eaed; background: #232427; box-shadow: inset 0 -2px 0 #8ab4f8; }
+        .cap-detail-body { flex: 1; overflow: auto; padding: 8px 10px; font: 11px/1.7 ui-monospace,monospace;
+            color: #c9cdd2; white-space: pre-wrap; word-break: break-all; }
+        .cap-detail-body .k { color: #c58af9; }
+        .cap-console { flex: 1; overflow: auto; padding: 8px 10px; font: 11.5px/1.7 ui-monospace,monospace; }
+        .cap-logrow { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #2a2b2d; }
+        .cap-logrow .ic { width: 14px; flex: 0 0 14px; text-align: center; }
+        .cap-logrow.err .ic,.cap-logrow.err .msg{color:#f28b82}.cap-logrow.warn .ic,.cap-logrow.warn .msg{color:#fdd663}.cap-logrow.ok .ic{color:#81c995}
+        .cap-logrow .msg { color: #d7d9dc; white-space: pre-wrap; word-break: break-all; }
+        .cap-ctx { position: absolute; z-index: 60; min-width: 210px; background: #2b2c2f; border: 1px solid #4a4d51;
+            border-radius: 7px; padding: 4px; box-shadow: 0 8px 26px rgba(0,0,0,.55); display: none; }
+        .cap-ctx.open { display: block; }
+        .cap-ctx-item { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; color: #e8eaed;
+            display: flex; gap: 8px; align-items: center; }
+        .cap-ctx-item:hover { background: #8ab4f8; color: #202124; }
+        .cap-ctx-sep { height: 1px; background: #3c4043; margin: 4px 2px; }
+        .cap-ctx-title { padding: 5px 10px; color: #9aa0a6; font-size: 10px; }
+        .cap-statusbar { height: 22px; flex: 0 0 22px; background: #292a2d; border-top: 1px solid #3c4043;
+            display: flex; align-items: center; padding: 0 9px; gap: 12px; color: #9aa0a6; font-size: 10.5px; }
+        .cap-statusbar .cap-spacer { flex: 1; }
         .dev-head {
             flex: 0 0 auto;
             display: flex;
@@ -1304,7 +1382,8 @@
                 </div>
                 <aside class="log-drawer" id="logDrawer">
                     <div class="side-switch">
-                        <span class="side-switch-title">运行日志</span>
+                        <button class="side-switch-btn on" id="sideTabLog" onclick="switchSideView('log')">运行日志</button>
+                        <button class="side-switch-btn" id="sideTabDev" onclick="switchSideView('dev')">开发者工具</button>
                         <span class="spacer"></span>
                         <button class="side-close" onclick="toggleLogs(false)" title="收起右侧面板">✕</button>
                     </div>
@@ -1319,6 +1398,74 @@
                             </div>
                             <div class="log-info" id="logInfo">全局 · manager</div>
                             <pre class="log-body" id="logBody"></pre>
+                        </div>
+                    </div>
+                    <div class="side-view" id="devMask">
+                        <div class="cap-wrap" id="capWrap">
+                            <div class="cap-bar">
+                                <span class="cap-brand">
+                                    <svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 5-8 4 3"/></svg>
+                                    网络抓包 · 中文开发者工具
+                                </span>
+                                <span class="cap-spacer"></span>
+                                <button class="cap-btn ghost" onclick="openNativeDevTools()" title="打开浏览器原生 DevTools 独立窗口（与 F12 一致）">原生 DevTools ↗</button>
+                                <button class="cap-btn" id="capBtnConn" onclick="capToggleConnect()">开始抓包</button>
+                                <span class="cap-state"><span class="cap-dot" id="capStateDot"></span><span id="capStateText">未连接</span></span>
+                            </div>
+                            <div class="cap-tabbar">
+                                <div class="cap-tab on" data-p="network" onclick="capSwitchPanel('network')">网络</div>
+                                <div class="cap-tab" data-p="console" onclick="capSwitchPanel('console')">控制台</div>
+                                <span class="cap-spacer"></span>
+                                <span class="cap-hint">右键请求可复制 cURL / 转 Python</span>
+                            </div>
+                            <div class="cap-toolbar">
+                                <button class="cap-tbtn on" id="capBtnRecord" onclick="capToggleRecord()"><span class="cap-dot on"></span>录制中</button>
+                                <button class="cap-tbtn" onclick="capClearRows()">清空</button>
+                                <span class="cap-spacer"></span>
+                                <span class="cap-count" id="capCnt">0 个请求</span>
+                                <input class="cap-search" id="capFilter" placeholder="过滤 URL（支持中文输入）" oninput="capApplyFilter()">
+                            </div>
+                            <div class="cap-panel on" id="capPanelNetwork">
+                                <div class="cap-net-wrap">
+                                    <table class="cap-table">
+                                        <thead><tr>
+                                            <th style="width:32%">名称</th><th style="width:8%">状态</th><th style="width:12%">类型</th>
+                                            <th style="width:10%">方法</th><th style="width:28%">地址</th><th style="width:10%">耗时</th>
+                                        </tr></thead>
+                                        <tbody id="capNetBody"></tbody>
+                                    </table>
+                                </div>
+                                <div class="cap-detail">
+                                    <div class="cap-detail-tabs">
+                                        <div class="cap-detail-tab on" data-d="headers" onclick="capDetailTab('headers')">请求头</div>
+                                        <div class="cap-detail-tab" data-d="payload" onclick="capDetailTab('payload')">请求体</div>
+                                        <div class="cap-detail-tab" data-d="python" onclick="capDetailTab('python')">Python 代码</div>
+                                        <div class="cap-detail-tab" data-d="curl" onclick="capDetailTab('curl')">cURL</div>
+                                    </div>
+                                    <div class="cap-detail-body" id="capDetailBody">点击上方请求查看详情；右键请求可直接复制。</div>
+                                </div>
+                            </div>
+                            <div class="cap-panel" id="capPanelConsole">
+                                <div class="cap-console" id="capConsoleLog">
+                                    <div class="cap-logrow"><span class="ic">›</span><span class="msg">连接后这里会实时显示页面 console 与异常。</span></div>
+                                </div>
+                            </div>
+                            <div class="cap-statusbar">
+                                <span id="capStatusConn">未连接</span>
+                                <span id="capStatusCount">0 个请求</span>
+                                <span class="cap-spacer"></span>
+                                <span>中文开发者工具 · 基于 CDP 实时抓包</span>
+                            </div>
+                            <div class="cap-ctx" id="capCtxMenu">
+                                <div class="cap-ctx-title" id="capCtxTitle">请求操作</div>
+                                <div class="cap-ctx-item" data-act="curl-unix" onclick="capCtxAction('curl-unix')">复制为 cURL (bash)</div>
+                                <div class="cap-ctx-item" data-act="curl-cmd" onclick="capCtxAction('curl-cmd')">复制为 cURL (cmd)</div>
+                                <div class="cap-ctx-sep"></div>
+                                <div class="cap-ctx-item" data-act="py-requests" onclick="capCtxAction('py-requests')">复制为 Python (requests)</div>
+                                <div class="cap-ctx-item" data-act="py-httpx" onclick="capCtxAction('py-httpx')">复制为 Python (httpx)</div>
+                                <div class="cap-ctx-sep"></div>
+                                <div class="cap-ctx-item" data-act="copy-url" onclick="capCtxAction('copy-url')">复制请求地址</div>
+                            </div>
                         </div>
                     </div>
                 </aside>
@@ -4767,8 +4914,8 @@
                     ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
                     '<button class="lk" onclick="openDev()"' +
-                    ' title="打开浏览器原生 DevTools 独立窗口（元素/网络/断点/性能，与 F12 完全一致）">' +
-                    '原生 DevTools ↗</button>';
+                    ' title="打开右侧开发者工具：中文 CDP 抓包（复制 cURL / 转 Python），面板内可再打开原生 DevTools">' +
+                    '开发者工具</button>';
                 const linksHtml = '<div class="detail-links">' +
                     '<span class="lk-group"><span class="lk-label">CDP 端点</span>' + endpointLinks + '</span>' +
                     '<span class="lk-group"><span class="lk-label">工具</span>' + toolLinks + '</span>' +
@@ -5658,18 +5805,28 @@
             if (m && wrap && !wrap.contains(e.target)) m.classList.remove("open");
         });
 
-        // ---- 开发者工具 = 浏览器原生 DevTools 独立窗口（与 F12 完全一致）----
-        // 不再占用右侧抽屉；抽屉只承载运行日志。
+        // ---- 开发者工具：与运行日志共用右侧抽屉，按钮切换 ----
+        // 「开发者工具」视图 = 中文 CDP 抓包面板；原生 DevTools 仍可独立窗口打开。
         let devSid = null, devTid = null;
-        let sideView = "log";
+        let sideView = "log"; // log | dev
         let devToolsUrlCache = "";
 
         function switchSideView(which) {
-            // 兼容历史调用（自检/快捷键）：一律切回日志视图。
-            sideView = "log";
-            $("sideViewLog").classList.add("on");
-            logsLoadedAt = 0;
-            loadLogs(true);
+            sideView = which === "dev" ? "dev" : "log";
+            $("sideViewLog").classList.toggle("on", sideView === "log");
+            if ($("devMask")) $("devMask").classList.toggle("on", sideView === "dev");
+            $("sideTabLog").classList.toggle("on", sideView === "log");
+            $("sideTabDev").classList.toggle("on", sideView === "dev");
+            $("logDrawer").classList.toggle("cap-on", sideView === "dev");
+            if (sideView === "dev") {
+                // 切到开发者工具：按当前实例自动接上抓包（复用原生 DevTools 的标签解析）。
+                capEnsureConnect();
+            } else {
+                // 切回日志：停止抓包，避免后台持续占用与事件串台。
+                capDisconnect();
+                logsLoadedAt = 0;
+                loadLogs(true);
+            }
         }
 
         function devHasSelection() {
@@ -5694,8 +5851,7 @@
             return "";
         }
 
-        // 开发者工具 = 浏览器原生 DevTools 独立顶层窗口，与 F12 完全一致。
-        // 不再占用右侧抽屉：抽屉现在只承载运行日志。
+        // 开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换。
         function openDev() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
@@ -5703,11 +5859,15 @@
             devTid = null;
             const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
             if (tid) devTid = tid;
-            return openNativeDevTools();
+            logsOpen = true;
+            const toggle = $("logToggle"); if (toggle) toggle.checked = true;
+            $("logDrawer").classList.add("open");
+            switchSideView("dev");
         }
 
         function closeDev() {
-            // 独立窗口由浏览器自身管理，面板不再持有可关闭的视图。
+            capDisconnect();
+            switchSideView("log");
         }
 
         // 原生 DevTools：复用同源代理的 inspector.html + CDP WS。
@@ -5740,6 +5900,278 @@
             const w = window.open(t.url, "_blank", "noopener");
             if (!w) toast("弹窗被拦截，请允许本站点打开新窗口");
             else toast("已在新窗口打开原生 DevTools", "ok");
+        }
+
+        // ---- 中文抓包面板：接 manager 的 /ws/inspect/{sid}/{tid}?domain=network ----
+        // 全部函数以 cap 前缀命名，避免与主应用的 toast/render/$ 等冲突。
+        // 复用主应用的 apiKey（同源鉴权）、devResolveTid（标签解析）、toast（提示）。
+        let capWs = null, capConnected = false, capRecording = true;
+        let capRequests = [], capFiltered = [], capSelected = null;
+        let capCallId = 100, capPending = {}, capDetailKind = "headers", capCtxReqId = null;
+
+        function capSetState(text, kind) {
+            const st = $("capStateText"), sb = $("capStatusConn"), dot = $("capStateDot");
+            if (st) st.textContent = text;
+            if (sb) sb.textContent = text;
+            if (dot) dot.className = "cap-dot" + (kind ? " " + kind : "");
+        }
+        function capWsUrl(sid, tid) {
+            const proto = location.protocol === "https:" ? "wss" : "ws";
+            let url = proto + "://" + location.host + "/ws/inspect/" +
+                encodeURIComponent(sid) + "/" + encodeURIComponent(tid) + "?domain=network";
+            if (apiKey) url += "&key=" + encodeURIComponent(apiKey);
+            return url;
+        }
+        // 切到开发者工具时按当前选中实例自动连接；已连则跳过。
+        async function capEnsureConnect() {
+            if (capConnected) return;
+            if (!devSid || !instances[devSid]) { capSetState("未选中实例", "err"); return; }
+            capSetState("解析标签…", "");
+            let tid = "";
+            try { tid = await devResolveTid(); } catch (e) {}
+            if (!tid) { capSetState("未找到标签", "err"); toast("未找到可抓包的页面标签"); return; }
+            capConnect(devSid, tid);
+        }
+        function capToggleConnect() {
+            if (capConnected) { capDisconnect(); return; }
+            capEnsureConnect();
+        }
+        function capConnect(sid, tid) {
+            if (capConnected) return;
+            capSetState("连接中…", "");
+            try { capWs = new WebSocket(capWsUrl(sid, tid)); }
+            catch (e) { capSetState("连接失败", "err"); toast("连接失败：" + e); return; }
+            capWs.onopen = function () {
+                capConnected = true;
+                const b = $("capBtnConn");
+                if (b) { b.textContent = "停止抓包"; b.className = "cap-btn danger"; }
+                capSetState("抓包中 · " + tid.slice(0, 8), "on");
+                capLog("已连接，开始监听 Network 事件", "ok");
+            };
+            capWs.onmessage = function (ev) {
+                let m;
+                try { m = JSON.parse(ev.data); } catch (e) { return; }
+                if (m.type === "event") capHandleEvent(m.method, m.params || {});
+                else if (m.type === "result" && m.msg && m.msg.id != null && capPending[m.msg.id]) {
+                    capPending[m.msg.id](m.msg.result || {}); delete capPending[m.msg.id];
+                } else if (m.type === "error") capLog("错误：" + m.message, "err");
+            };
+            capWs.onclose = function () { capDisconnect(true); };
+            capWs.onerror = function () { capSetState("连接错误", "err"); };
+        }
+        function capDisconnect(silent) {
+            if (capWs) { try { capWs.close(); } catch (e) {} capWs = null; }
+            capConnected = false;
+            const b = $("capBtnConn");
+            if (b) { b.textContent = "开始抓包"; b.className = "cap-btn"; }
+            capSetState("未连接", "");
+            if (!silent) capLog("已停止抓包", "warn");
+        }
+        function capSendCmd(method, params, cb) {
+            if (!capWs || !capConnected) { if (cb) cb({}); return; }
+            const id = ++capCallId;
+            if (cb) capPending[id] = cb;
+            capWs.send(JSON.stringify({ type: "cmd", method: method, params: params || {} }));
+        }
+        function capHandleEvent(method, p) {
+            if (!capRecording && method.indexOf("Network.") === 0) return;
+            if (method === "Network.requestWillBeSent") {
+                const req = {
+                    id: p.requestId, url: (p.request && p.request.url) || "",
+                    method: (p.request && p.request.method) || "GET",
+                    headers: (p.request && p.request.headers) || {},
+                    postData: (p.request && p.request.postData) || "",
+                    type: p.type || "other", status: 0, start: p.timestamp,
+                    mime: "", encoded: false, fromCache: false
+                };
+                req.name = capShortName(req.url);
+                capRequests.unshift(req);
+                capRender();
+            } else if (method === "Network.responseReceived") {
+                const r = capFindReq(p.requestId);
+                if (r) {
+                    r.status = (p.response && p.response.status) || 0;
+                    r.mime = (p.response && p.response.mimeType) || "";
+                    r.encoded = !!(p.response && p.response.encodedDataLength);
+                    r.headers = (p.response && p.response.headers) || r.headers;
+                    r.remoteIP = (p.response && p.response.remoteIPAddress) || "";
+                    capRender();
+                }
+            } else if (method === "Network.loadingFinished") {
+                const f = capFindReq(p.requestId);
+                if (f) { f.duration = (p.timestamp - f.start) * 1000; capRender(); }
+            } else if (method === "Network.loadingFailed") {
+                const x = capFindReq(p.requestId);
+                if (x) { x.status = -1; x.error = p.errorText || "失败"; capRender(); }
+            } else if (method === "Network.requestWillBeSentExtraInfo" || method === "Network.responseReceivedExtraInfo") {
+                const e = capFindReq(p.requestId);
+                if (e && p.headers) e.headers = Object.assign({}, e.headers, p.headers);
+            } else if (method === "Runtime.consoleAPICalled") {
+                const args = (p.args || []).map(a => (a && (a.value !== undefined ? a.value : a.description)) || "").join(" ");
+                capLog(args, p.type === "error" ? "err" : p.type === "warning" ? "warn" : "ok");
+            } else if (method === "Runtime.exceptionThrown") {
+                const d = p.exceptionDetails || {};
+                capLog("异常：" + ((d.exception && d.exception.description) || d.text || ""), "err");
+            }
+        }
+        function capFindReq(id) { for (let i = 0; i < capRequests.length; i++) if (capRequests[i].id === id) return capRequests[i]; return null; }
+        function capShortName(url) {
+            try { const u = new URL(url), p = u.pathname.split("/").filter(Boolean); return p.length ? p[p.length - 1] : (u.hostname || url); }
+            catch (e) { return url; }
+        }
+        function capStatusClass(s) { return s >= 500 ? "cap-st-5" : s >= 400 ? "cap-st-4" : s >= 300 ? "cap-st-3" : s >= 200 ? "cap-st-2" : "cap-muted"; }
+        function capRender() {
+            const q = ($("capFilter").value || "").trim().toLowerCase();
+            capFiltered = q ? capRequests.filter(r => (r.url + r.name).toLowerCase().indexOf(q) >= 0) : capRequests.slice();
+            if ($("capCnt")) $("capCnt").textContent = capFiltered.length + " 个请求";
+            if ($("capStatusCount")) $("capStatusCount").textContent = capFiltered.length + " 个请求";
+            let html = "";
+            for (const r of capFiltered) {
+                const st = r.status < 0 ? "ERR" : (r.status || "…");
+                html += "<tr data-id='" + capEscAttr(r.id) + "' class='" + (capSelected === r.id ? "sel" : "") + "'>" +
+                    "<td title='" + capEscAttr(r.url) + "'>" + capEscHtml(r.name) + "</td>" +
+                    "<td class='" + capStatusClass(r.status) + "'>" + st + "</td>" +
+                    "<td>" + capEscHtml(r.mime || r.type) + "</td>" +
+                    "<td>" + capEscHtml(r.method) + "</td>" +
+                    "<td class='cap-muted' title='" + capEscAttr(r.url) + "'>" + capEscHtml(r.url) + "</td>" +
+                    "<td>" + (r.duration ? r.duration.toFixed(0) + " ms" : (r.error || "—")) + "</td></tr>";
+            }
+            const body = $("capNetBody");
+            if (body) {
+                body.innerHTML = html;
+                Array.prototype.forEach.call(body.querySelectorAll("tr"), tr => {
+                    tr.onclick = () => capSelectReq(tr.getAttribute("data-id"));
+                    tr.oncontextmenu = e => {
+                        e.preventDefault();
+                        capSelectReq(tr.getAttribute("data-id"));
+                        capShowCtx(e.clientX, e.clientY);
+                    };
+                });
+            }
+        }
+        function capEscHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]); }
+        function capEscAttr(s) { return capEscHtml(s).replace(/'/g, "&#39;"); }
+        function capApplyFilter() { capRender(); }
+        function capClearRows() { capRequests = []; capSelected = null; capRender(); if ($("capDetailBody")) $("capDetailBody").textContent = "已清空"; }
+        function capSelectReq(id) { capSelected = id; capRender(); capRenderDetail(); }
+        function capCurrentReq() { return capFindReq(capSelected); }
+        function capDetailTab(which) {
+            capDetailKind = which;
+            document.querySelectorAll("#capWrap .cap-detail-tab").forEach(x => x.classList.toggle("on", x.getAttribute("data-d") === which));
+            capRenderDetail();
+        }
+        function capHeaderLines(req) {
+            const h = req.headers || {};
+            return Object.keys(h).map(k => "  " + k + ": " + h[k]).join("\n");
+        }
+        function capRenderDetail() {
+            const r = capCurrentReq(), box = $("capDetailBody");
+            if (!box) return;
+            if (!r) { box.textContent = "点击上方请求查看详情"; return; }
+            if (capDetailKind === "headers") {
+                box.innerHTML = "<span class='k'>请求</span> " + capEscHtml(r.method) + " " + capEscHtml(r.url) +
+                    "\n<span class='k'>类型</span> " + capEscHtml(r.mime || r.type) +
+                    "\n<span class='k'>状态</span> " + (r.status || "—") +
+                    "\n<span class='k'>请求头</span>\n" + capEscHtml(capHeaderLines(r) || "  （无）");
+            } else if (capDetailKind === "payload") {
+                box.textContent = r.postData || "（无请求体）";
+                if (r.status && r.id) capSendCmd("Network.getResponseBody", { requestId: r.id }, res => {
+                    if (res && res.body) box.textContent = "【请求体】\n" + (r.postData || "（无）") + "\n\n【响应体】\n" + res.body;
+                });
+            } else if (capDetailKind === "python") {
+                box.textContent = capGenPython("requests", r);
+            } else if (capDetailKind === "curl") {
+                box.textContent = capGenCurl("unix", r) + "\n\n" + capGenCurl("win", r);
+            }
+        }
+        function capPyQ(s) { return JSON.stringify(String(s == null ? "" : s)); }
+        function capGenPython(style, r) {
+            const h = r.headers || {}, hj = JSON.stringify(h, null, 2), body = r.postData || "";
+            const L = ["# 由网络抓包生成", style === "requests" ? "import requests" : "import httpx", "",
+                "url = " + capPyQ(r.url), "headers = " + hj];
+            if (body) L.push("data = " + capPyQ(body));
+            L.push("");
+            if (style === "requests") {
+                L.push("resp = requests.request(");
+                L.push("  " + capPyQ(r.method) + ", url, headers=headers" + (body ? ", data=data" : ""));
+                L.push(")");
+            } else {
+                L.push("with httpx.Client() as cl:");
+                L.push("  resp = cl.request(");
+                L.push("    " + capPyQ(r.method) + ", url, headers=headers" + (body ? ", data=data" : ""));
+                L.push("  )");
+            }
+            L.push("print(resp.status_code)", "print(resp.text)");
+            return L.join("\n");
+        }
+        function capCurlQ(s) { return "'" + String(s == null ? "" : s).replace(/'/g, "'\\''") + "'"; }
+        function capGenCurl(shell, r) {
+            const parts = ["curl", "--url " + capCurlQ(r.url)];
+            if (r.method && r.method !== "GET") parts.push("-X " + capCurlQ(r.method));
+            const skip = { host: 1, "content-length": 1, "accept-encoding": 1, connection: 1 };
+            const h = r.headers || {};
+            Object.keys(h).forEach(k => { if (!skip[k.toLowerCase()]) parts.push("-H " + capCurlQ(k + ": " + h[k])); });
+            if (r.postData) parts.push("--data-raw " + capCurlQ(r.postData));
+            return parts.join(shell === "win" ? " ^\n  " : " \\\n  ");
+        }
+        function capShowCtx(x, y) {
+            const menu = $("capCtxMenu"), wrap = $("capWrap");
+            if (!menu || !wrap) return;
+            const box = wrap.getBoundingClientRect();
+            menu.classList.add("open");
+            const mw = 220, mh = 240;
+            menu.style.left = Math.min(x - box.left, box.width - mw - 6) + "px";
+            menu.style.top = Math.min(y - box.top, box.height - mh - 6) + "px";
+            capCtxReqId = capSelected;
+            const r = capCurrentReq();
+            if ($("capCtxTitle")) $("capCtxTitle").textContent = r ? capShortName(r.url) : "请求操作";
+        }
+        document.addEventListener("click", () => { const m = $("capCtxMenu"); if (m) m.classList.remove("open"); });
+        function capCtxAction(act) {
+            const r = capFindReq(capCtxReqId);
+            const menu = $("capCtxMenu"); if (menu) menu.classList.remove("open");
+            if (!r) { toast("请先选中请求"); return; }
+            let text = "";
+            if (act === "curl-unix") text = capGenCurl("unix", r);
+            else if (act === "curl-cmd") text = capGenCurl("win", r);
+            else if (act === "py-requests") text = capGenPython("requests", r);
+            else if (act === "py-httpx") text = capGenPython("httpx", r);
+            else if (act === "copy-url") text = r.url;
+            capCopyText(text);
+            toast("已复制：" + act.replace("py-", "Python ").replace("curl-", "cURL "));
+        }
+        function capCopyText(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(() => capFallbackCopy(text));
+            } else capFallbackCopy(text);
+        }
+        function capFallbackCopy(text) {
+            const ta = document.createElement("textarea");
+            ta.value = text; document.body.appendChild(ta); ta.select();
+            try { document.execCommand("copy"); } catch (e) {}
+            document.body.removeChild(ta);
+        }
+        function capToggleRecord() {
+            capRecording = !capRecording;
+            const b = $("capBtnRecord"); if (!b) return;
+            b.className = "cap-tbtn" + (capRecording ? " on" : "");
+            b.innerHTML = "<span class='cap-dot" + (capRecording ? " on" : "") + "'></span>" + (capRecording ? "录制中" : "已暂停");
+        }
+        function capLog(msg, kind) {
+            const box = $("capConsoleLog"); if (!box) return;
+            const row = document.createElement("div");
+            row.className = "cap-logrow" + (kind ? " " + kind : "");
+            const ic = kind === "err" ? "✕" : kind === "warn" ? "!" : kind === "ok" ? "✓" : "›";
+            row.innerHTML = "<span class='ic'></span><span class='msg'></span>";
+            row.querySelector(".ic").textContent = ic;
+            row.querySelector(".msg").textContent = msg;
+            box.appendChild(row); box.scrollTop = box.scrollHeight;
+        }
+        function capSwitchPanel(which) {
+            document.querySelectorAll("#capWrap .cap-tab").forEach(x => x.classList.toggle("on", x.getAttribute("data-p") === which));
+            const np = $("capPanelNetwork"), cp = $("capPanelConsole");
+            if (np) np.classList.toggle("on", which === "network");
+            if (cp) cp.classList.toggle("on", which === "console");
         }
 
         // ---- 批量执行 ----

@@ -119,9 +119,10 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
 
-- **开发者工具**：点击详情栏「原生 DevTools ↗」或按 `D`，直接弹出**浏览器原生 DevTools 独立顶层窗口**，与在该实例浏览器里按 F12 完全一致——元素树、断点、Network、Performance、Sources 等全部面板原生可用。实现上复用 Chrome 自带的 `inspector.html` 前端（由 manager 同源代理并移除仅允许 `ws://127.0.0.1` 的 CSP），通过 `ws=<同源代理地址>/devtools/page/<标签ID>` 连接；前端版本与浏览器内核天然匹配，无需打包任何前端资源。远端实例的 URL 自动走 `/remote/<主机ID>/<端口>/devtools/...`，由服务端注入远端密钥。**为什么用独立窗口而非面板内嵌**：Chrome DevTools 前端在 iframe 里会以 `undocked` 降级模式运行，并受父页面的尺寸/DOM/快捷键约束，无法做到与 F12 一模一样；独立顶层窗口是唯一等价方案。右侧抽屉现在只承载运行日志，不再被开发者工具占用。原生窗口的代理写认证与空闲保活见下方故障排查
+- **开发者工具**：点击详情栏「开发者工具」或按 `D`，在**右侧抽屉**打开中文抓包面板，与「运行日志」用顶部按钮切换；切走日志时自动断开抓包。面板接后端 `/ws/inspect/<sid>/<tid>?domain=network` 做**真实 CDP 抓包**（`Network.requestWillBeSent` / `responseReceived` / `loadingFinished` 实时列表，可取响应体），自动沿用当前选中实例与标签、携带 API_KEY。请求行**右键**即可「复制为 cURL (bash / cmd)」「复制为 Python (requests / httpx)」「复制请求地址」，详情区分请求头 / 请求体 / Python 代码 / cURL 四页，支持 URL 过滤、录制暂停与 Console 实时日志。抽屉在开发者工具视图下自动加宽
+  - **原生 DevTools 独立窗口**：抓包面板顶部「原生 DevTools ↗」按钮弹出**浏览器原生 DevTools 独立顶层窗口**，与在该实例浏览器里按 F12 完全一致——元素树、断点、Network、Performance、Sources 等全部面板原生可用。实现上复用 Chrome 自带的 `inspector.html` 前端（由 manager 同源代理并移除仅允许 `ws://127.0.0.1` 的 CSP），通过 `ws=<同源代理地址>/devtools/page/<标签ID>` 连接；前端版本与浏览器内核天然匹配，无需打包任何前端资源。远端实例的 URL 自动走 `/remote/<主机ID>/<端口>/devtools/...`，由服务端注入远端密钥。之所以用独立窗口而非 iframe 内嵌：Chrome DevTools 前端在 iframe 里会以 `undocked` 降级模式运行，无法与 F12 等价。原生窗口的代理写认证与空闲保活见下方故障排查
   - **原生右键「复制为 Python」（中文）**：原生 Network 面板只有 cURL / fetch / PowerShell，没有 Python。manager 在同源代理 `panels/network/network.js` 时，用唯一源码锚点注入两个中文菜单项——**「复制为 Python (requests)」** 与 **「复制为 Python (httpx)」**。菜单项直接调用 DevTools 内部的 `NetworkRequest` 对象读取 URL / 请求方法 / 请求头 / 请求体生成代码，复制走 DevTools 自带剪贴板接口；本机与远端两条代理路径都会注入。注入是幂等的自包含代码片段，若 Chrome 版本变化导致锚点消失则静默跳过，原生功能不受影响。注意：该增强依赖 Chrome 前端内部结构，版本升级后需重新确认锚点
-- **自建中文抓包面板**：独立文件 `devtools-preview.html`，全中文界面，接后端 `/ws/inspect/<sid>/<tid>?domain=network` 做**真实 CDP 抓包**（`Network.requestWillBeSent` / `responseReceived` / `loadingFinished` 实时列表，可取响应体）。请求行**右键**即可「复制为 cURL (bash / cmd)」「复制为 Python (requests / httpx)」「复制请求地址」，详情区分请求头 / 请求体 / Python 代码 / cURL 四页，支持 URL 过滤、录制暂停。适合不想打开完整 DevTools、只要抓包与导出代码的场景。自检：`node test_capture_panel.js`（需 jsdom）
+  - 自检：`node test_capture_panel.js`（需 jsdom）验证抽屉内抓包面板交互
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
