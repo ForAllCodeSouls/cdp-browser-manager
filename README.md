@@ -121,10 +121,11 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 - **开发者工具（浏览器原生 DevTools）**：点击详情栏「开发者工具」或按 `D`，在**独立新窗口打开浏览器原生 DevTools**（与按 F12 完全一致）。自研的九面板中文复刻已彻底移除——原生 DevTools 在元素/控制台/源码/网络/性能/内存/应用/安全/设备各面板的完整度远超复刻，故全部交给原生。右侧抽屉只承载运行日志，不再内嵌 DevTools。
   - **独立窗口实现**：复用 Chrome 自带 `inspector.html`（同源代理并移除 CSP），`window.open` 打开独立窗口，通过 `ws=<同源代理>/devtools/page/<标签ID>` 连接；远端走 `/remote/<主机ID>/<端口>/...`。曾试过抽屉 iframe 内嵌 + sandbox 防跳出，但原生 DevTools 面板在窄抽屉里太挤、且实测易被 forced undocked，故放弃内嵌回到独立窗口。`?ws=` 只传 `主机:端口/路径`、不传协议前缀（Chrome 158+ 的 frontend 会自行补 `ws://`，传完整 URL 会拼成 `ws://ws//...` 导致一开就断）；后端兜底——manager 代理 inspector.html 时注入脚本，发现 `ws=` 带协议前缀就自动剥离并 `replaceState` 修正地址栏。原生 DevTools 保持干净，**不注入任何自研面板或增强工具台**
+  - **顶部标签栏（切换 / 新建 / 关闭标签）**：原生 DevTools 启动时按 `?ws=` 绑定单个标签，切到其他标签需重新导航窗口（Chrome 自身换调试目标也是新开窗口，这是前端固有限制）。manager 在 `inspector.html` 顶部注入一条可折叠标签栏：列出实例所有页面标签，点标签即切换调试目标（替换 `ws` 里的标签 ID 并重新导航）、`+` 输入网址回车新建、`×` 关闭。脚本从自身 URL 解析端口与远端前缀，因此**直接贴 `inspector.html?ws=...` 链接打开同样有标签栏**；鉴权读同源 localStorage 的密钥，语言跟随主应用并在切换时热更新（不刷新）。切换/新建/关闭走后端 `/api/devtools/{port}/tabs`（复用按 sid 的既有实现，含关闭最后一个标签前补保底空白页的防退出逻辑），远端自动加 `/remote/<主机ID>` 前缀。切到新目标时后端会先激活该标签，避免「此标签页不活跃」导致 Network 抓不到包
   - **原生右键「复制为 Python」（中文）**：原生 Network 面板没有 Python。manager 同源代理 `panels/network/network.js` 时用唯一源码锚点注入「复制为 Python (requests)」与「复制为 Python (httpx)」两个中文菜单，调用内部 `NetworkRequest` 读取 URL/方法/头/体生成代码。幂等注入，锚点消失则静默跳过。该增强依赖 Chrome 前端内部结构，版本升级后需重新确认锚点。抓包（Network 面板）、复制 cURL、请求编辑重放等均使用原生功能
-  - 自检：`node test_devtools_ui.js`、`node test_capture_panel.js`、`node test_devtools_full.js`（需 jsdom）验证原生入口/URL/语言热切换，以及自研面板确已移除
+  - 自检：`node test_devtools_ui.js`、`node test_capture_panel.js`、`node test_devtools_full.js`、`node test_devtools_tabs.js`（需 jsdom）验证原生入口/URL/语言热切换、标签栏切换/新建/关闭，以及自研面板确已移除
 - **多语言（中 / 英 / 日，即时切换）**：顶栏工具栏「语言」下拉可切换界面语言，当前页**即时生效、无需刷新或重开窗口**，选择持久化到 localStorage（`cdpLang`）。采用 DOM 文本节点翻译 + MutationObserver 覆盖动态内容，切换后所有可见文案即时更新，不 reload 页面、不打断抓包或调试。
-- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在右侧抽屉打开原生 DevTools、`Esc` 关闭弹窗
+- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在独立新窗口打开原生 DevTools、`Esc` 关闭弹窗
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
@@ -134,7 +135,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 - **操作录制回放**：录制画面上的点击与按键序列，保存后选实例回放（点击通过 `elementFromPoint` 近似还原到页面对应位置）
 - **每实例独立代理**：新建弹窗填 `http://` / `https://` / `socks5://` / `socks4://` 代理地址，仅对当前实例生效；需重建浏览器镜像才能加载新参数
 - **只读分享水印**：分享观看页大画面叠加时间戳水印，防止截屏转播无法追溯
-- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在右侧抽屉打开原生 DevTools、`Esc` 关闭弹窗
+- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在独立新窗口打开原生 DevTools、`Esc` 关闭弹窗
 
 新增 API（均需 API_KEY）：`/api/audit`、`/api/tags`、`/api/snippets`、`/api/templates`、`/api/recordings`、`/api/schedules`、`/api/batch/exec`、`/api/metrics`，以及 WS `/ws/inspect/{sid}/{tid}?domain=network|console|performance|all`（保留给脚本注入/批量执行等主应用功能；开发者工具本身走原生 DevTools 的同源代理）。
 

@@ -2746,6 +2746,40 @@ async def api_close_target(sid: str, tid: str):
     return {"ok": True, "recreated": recreated, "tid": new_tid}
 
 
+# ---- DevTools 窗口内嵌标签栏用的按端口 API ----
+# 注入到 inspector.html 的标签栏脚本从自身 URL 解析 CDP 端口，无需在链接里
+# 额外传 sid（用户直接贴 inspector.html?ws=... 时同样能用）。这三个接口
+# 完全复用上面按 sid 的实现：新建含 URL 规范化、关闭含"最后一个标签先补
+# 保底空白页"的防退出逻辑。远端场景加 /remote/<host> 前缀后由通用代理转发。
+def _devtools_sid_by_port(port: int) -> str:
+    item = instance_by_port(port)
+    return str((item or {}).get("sid") or "")
+
+
+@app.get("/api/devtools/{port}/tabs")
+async def api_devtools_tabs(port: int):
+    sid = _devtools_sid_by_port(port)
+    if not sid:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的实例")
+    return await api_targets(sid)
+
+
+@app.post("/api/devtools/{port}/tabs")
+async def api_devtools_new_tab(port: int, request: Request):
+    sid = _devtools_sid_by_port(port)
+    if not sid:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的实例")
+    return await api_new_target(sid, request)
+
+
+@app.delete("/api/devtools/{port}/tabs/{tid}")
+async def api_devtools_close_tab(port: int, tid: str):
+    sid = _devtools_sid_by_port(port)
+    if not sid:
+        raise HTTPException(status_code=404, detail=f"端口 {port} 没有运行中的实例")
+    return await api_close_target(sid, tid)
+
+
 @app.post("/api/instance/{sid}/cmd")
 async def api_cdp_cmd(sid: str, request: Request):
     """下发 CDP 命令，如 Page.navigate / Page.reload。"""
@@ -3197,6 +3231,16 @@ async def remote_http_proxy(host_id: str, rest: str, request: Request):
             raw = injected.encode("utf-8")
             ctype = "application/javascript; charset=utf-8"
 
+    # 远端 DevTools 主文档同样注入顶部标签栏（幂等）。远端 manager 若是新版
+    # 已自带则跳过；老版本则在此补齐，保证多主机场景下标签栏一致可用。
+    if raw and rest.endswith("/devtools/inspector.html"):
+        text = raw.decode("utf-8", "replace")
+        injected = relax_devtools_csp(text)
+        injected = inject_devtools_tabbar(injected)
+        if injected != text:
+            raw = injected.encode("utf-8")
+            ctype = "text/html; charset=utf-8"
+
     # CDP JSON 里的 WS 地址需要二次改写到本机代理路径。
     first = rest.split("/", 1)[0]
     if first.isdigit() and rest.startswith(first + "/json/") and raw:
@@ -3458,6 +3502,73 @@ def inject_devtools_python_menu(text: str) -> str:
     return text.replace(DEVTOOLS_PY_ANCHOR, snippet, 1)
 
 
+# DevTools 窗口顶部标签栏：原生 DevTools 是启动时按 ?ws= 绑定单个目标的，
+# 切换调试目标只能重新导航窗口到新的 ws（Chrome 自身换目标也是新开窗口，
+# 这是前端固有限制）。这里在 inspector.html 里注入一条可折叠标签栏，列出
+# 实例的所有页面标签，支持切换/新建/关闭，解决"加载了页面但 DevTools 仍连
+# 着旧目标、Network 抓不到包"的问题。脚本从自身 URL 解析端口与远端前缀，
+# 因此用户直接贴 inspector.html?ws=... 链接打开时同样可用；鉴权读同源
+# localStorage 里的 API_KEY，语言跟随主应用的 cdpLang 并热更新。
+DEVTOOLS_TAB_SNIPPET = r"""<script id="__cdmpTabSrc">/*__cdmpTabbar*/
+(function(){
+if(window.__cdmpTabbarReady)return;window.__cdmpTabbarReady=1;
+try{
+var path=location.pathname;
+var pm=path.match(/(?:^|\/)(\d+)\/devtools\/inspector\.html/);
+if(!pm)return;
+var port=pm[1];
+var rm=path.match(/^\/remote\/([^/]+)\//);
+var prefix=rm?('/remote/'+rm[1]):'';
+function getk(n){try{return localStorage.getItem(n)||''}catch(e){return ''}}
+function wsv(){try{return new URL(location.href).searchParams.get('ws')||''}catch(e){return ''}}
+function cur(){var m=wsv().match(/\/devtools\/page\/([0-9a-fA-F]{32})/);return m?m[1]:''}
+var DICT={
+ zh:{t:'标签页',newph:'输入网址，回车新建',c:'收起',e:'展开',x:'关闭标签',cf:'确定要关闭这个标签吗？',err:'操作失败：'},
+ en:{t:'Tabs',newph:'Type URL, Enter to open',c:'Hide',e:'Show',x:'Close tab',cf:'Close this tab?',err:'Failed: '},
+ ja:{t:'タブ',newph:'URL を入力して Enter',c:'閉じる',e:'表示',x:'タブを閉じる',cf:'このタブを閉じますか？',err:'失敗: '}
+};
+function lang(){var l=getk('cdpLang');return DICT[l]?l:'zh'}
+function T(k){return DICT[lang()][k]}
+async function call(u,o){o=o||{};var h={'X-API-Key':getk('cdpManagerApiKey')};if(o.body)h['Content-Type']='application/json';var r=await fetch(prefix+u,{method:o.method||'GET',headers:h,body:o.body});var j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
+function go(tid){var w=wsv(),nw=w.replace(/\/devtools\/page\/[0-9a-fA-F]{32}/,'/devtools/page/'+tid);if(nw===w)return;var u=new URL(location.href);u.searchParams.set('ws',nw);location.assign(u.toString())}
+var bar=document.createElement('div');bar.id='cdmpTabbar';
+bar.style.cssText='position:fixed;top:0;left:0;right:0;height:30px;z-index:2147483647;display:flex;align-items:center;gap:5px;padding:0 8px;box-sizing:border-box;background:#202124;color:#e8eaed;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.45);';
+var title=document.createElement('span');title.textContent=T('t');title.style.cssText='flex:none;opacity:.7;font-size:11px;';
+var list=document.createElement('span');list.id='cdmpTabList';list.style.cssText='flex:1;display:flex;align-items:center;gap:3px;overflow-x:auto;white-space:nowrap;scrollbar-width:none;';
+var inp=document.createElement('input');inp.type='text';inp.placeholder=T('newph');inp.style.cssText='display:none;flex:1;min-width:80px;max-width:240px;height:20px;border:1px solid #5f6368;border-radius:10px;background:#303134;color:#e8eaed;padding:0 8px;font:12px inherit;outline:none;';
+var plus=document.createElement('button');plus.textContent='+';plus.title=T('t');plus.style.cssText='flex:none;width:20px;height:20px;line-height:18px;border:1px solid #5f6368;border-radius:50%;background:#303134;color:#e8eaed;cursor:pointer;font-size:15px;padding:0;';
+var fold=document.createElement('button');fold.textContent=T('c');fold.style.cssText='flex:none;border:0;background:none;color:#9aa0a6;cursor:pointer;font-size:11px;padding:0 2px;';
+bar.appendChild(title);bar.appendChild(list);bar.appendChild(inp);bar.appendChild(plus);bar.appendChild(fold);
+var collapsed=false;
+function setCollapsed(v){collapsed=v;bar.style.height=collapsed?'7px':'30px';list.style.display=collapsed?'none':'flex';title.style.display=collapsed?'none':'';plus.style.display=collapsed?'none':'';inp.style.display='none';fold.textContent=collapsed?T('e'):T('c');}
+fold.onclick=function(){setCollapsed(!collapsed)};
+plus.onclick=function(){inp.style.display='';inp.focus()};
+inp.onkeydown=function(e){if(e.key==='Enter'){var v=inp.value.trim();inp.value='';inp.style.display='none';if(v)newTab(v)}else if(e.key==='Escape'){inp.value='';inp.style.display='none'}};
+async function newTab(url){try{var d=await call('/api/devtools/'+port+'/tabs',{method:'POST',body:JSON.stringify({url:url})});if(d.id)go(d.id);else refresh()}catch(e){alert(T('err')+e.message)}}
+async function closeTab(tid,c){if(!confirm(T('cf')))return;try{var d=await call('/api/devtools/'+port+'/tabs/'+tid,{method:'DELETE'});if(tid===c){var l=await call('/api/devtools/'+port+'/tabs');var a=(l.targets||[]).filter(function(x){return x.id&&x.id!==tid});if(a[0])go(a[0].id);else if(d&&d.tid)go(d.tid)}else refresh()}catch(e){alert(T('err')+e.message)}}
+function render(tabs,c){list.innerHTML='';tabs.forEach(function(t){var wrap=document.createElement('span');wrap.style.cssText='flex:none;display:inline-flex;align-items:center;border-radius:4px;overflow:hidden;'+(t.id===c?'background:#3c4043;':'background:#2b2c2f;');var b=document.createElement('button');b.textContent=String(t.title||t.url||'...').slice(0,20);b.title=t.url||'';b.style.cssText='border:0;background:none;color:'+(t.id===c?'#fff':'#c8cacc')+';cursor:pointer;font-size:11px;padding:3px 6px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';b.onclick=function(){if(t.id!==c)go(t.id)};var x=document.createElement('span');x.textContent='\u00d7';x.title=T('x');x.style.cssText='cursor:pointer;opacity:.6;padding:0 5px;font-size:13px;';x.onclick=function(ev){ev.stopPropagation();closeTab(t.id,c)};wrap.appendChild(b);wrap.appendChild(x);list.appendChild(wrap)});}
+var lastSig='';
+async function refresh(){try{var d=await call('/api/devtools/'+port+'/tabs');var tabs=(d.targets||[]).filter(function(t){return t.id&&t.type==='page'});var c=cur();var sig=lang()+'|'+c+'|'+tabs.map(function(t){return t.id+':'+t.title}).join(',');if(sig===lastSig)return;lastSig=sig;render(tabs,c)}catch(e){}}
+function mount(){if(!document.body){setTimeout(mount,60);return}if(!bar.isConnected)document.body.appendChild(bar);}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
+setInterval(function(){mount();refresh()},2500);
+window.addEventListener('storage',function(e){if(e.key==='cdpLang'){lastSig='';title.textContent=T('t');inp.placeholder=T('newph');if(!collapsed)fold.textContent=T('c');refresh()}});
+refresh();
+}catch(e){console.warn('CDMP tabbar unavailable',e)}
+})();
+</script>"""
+
+
+def inject_devtools_tabbar(text: str) -> str:
+    """在 inspector.html 的 <title> 后注入顶部标签栏脚本（幂等）。"""
+    if not text or "__cdmpTabbar" in text:
+        return text
+    m = re.search(r"</title\s*>", text, flags=re.I)
+    if not m:
+        return text
+    return text[: m.end()] + DEVTOOLS_TAB_SNIPPET + text[m.end() :]
+
+
 @app.api_route("/{port:int}/devtools/{rest:path}", methods=["GET", "HEAD"])
 async def cdp_devtools_http(port: int, rest: str, request: Request):
     """DevTools frontend 静态资源同源代理：/<port>/devtools/inspector.html。
@@ -3508,6 +3619,8 @@ async def cdp_devtools_http(port: int, rest: str, request: Request):
                 pass
         text = raw.decode("utf-8", "replace")
         text = relax_devtools_csp(text)
+        # 顶部注入标签栏：切换/新建/关闭标签，直链打开也能用（幂等）。
+        text = inject_devtools_tabbar(text)
         # 让页面内相对路径资源与 WS 均走 manager 同源；URL 里的 ws= 由前端构造时给定。
         return Response(content=text, media_type="text/html; charset=utf-8")
     # 给 Network 面板注入中文「复制为 Python」菜单项；非 JS 或锚点缺失时原样返回。

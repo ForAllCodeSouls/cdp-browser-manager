@@ -254,12 +254,67 @@ class NativeDevToolsCleanTests(unittest.TestCase):
             self.assertNotIn(token, self.main_src)
 
     def test_only_ws_normalizer_injected(self):
+        # 保留 WS 参数修正；标签栏是独立的小注入，不算被否定的"增强工具台"。
         self.assertIn("text = inject_devtools_ws_normalizer(text)", self.main_src)
         self.assertIn("return text", self.main_src)
 
     def test_no_cdmp_params_in_devtools_url(self):
         self.assertNotIn("cdmp_sid", INDEX)
         self.assertNotIn("cdmp_lang", INDEX)
+
+
+class DevToolsTabbarTests(unittest.TestCase):
+    """原生 DevTools 窗口顶部标签栏：切换/新建/关闭，直链可用，多语言热切换。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        cls.js = JS
+
+    def test_snippet_injected_in_both_proxies(self):
+        # 本地与远端代理都注入标签栏；幂等标记防重复。
+        self.assertIn("DEVTOOLS_TAB_SNIPPET", self.main)
+        self.assertIn("def inject_devtools_tabbar(", self.main)
+        self.assertIn("__cdmpTabbar", self.main)
+        self.assertIn("text = inject_devtools_tabbar(text)", self.main)  # 本地代理
+        self.assertIn("injected = inject_devtools_tabbar(injected)", self.main)  # 远端代理
+
+    def test_snippet_parses_port_and_prefix_from_url(self):
+        # 从自身 URL 解析端口与远端前缀：直链打开也能用。
+        self.assertIn("var pm=path.match(", self.main)
+        self.assertIn("devtools\\/inspector\\.html", self.main)
+        self.assertIn("var rm=path.match(/^\\/remote\\/", self.main)
+
+    def test_snippet_switch_new_close(self):
+        # 切换=换 ws 里的 tid 重新导航；新建/关闭走按端口 API。
+        self.assertIn("u.searchParams.set('ws',nw)", self.main)
+        self.assertIn("location.assign(", self.main)
+        self.assertIn("'/api/devtools/'+port+'/tabs'", self.main)
+        self.assertIn("method:'POST'", self.main)
+        self.assertIn("method:'DELETE'", self.main)
+
+    def test_snippet_i18n_hot_update(self):
+        # 中/英/日 + storage 事件热切换，不刷新页面。
+        self.assertIn("getk('cdpLang')", self.main)
+        self.assertIn("zh:{t:'标签页'", self.main)
+        self.assertIn("en:{t:'Tabs'", self.main)
+        self.assertIn("ja:{t:'タブ'", self.main)
+        self.assertIn("window.addEventListener('storage'", self.main)
+
+    def test_snippet_auth_and_collapse(self):
+        self.assertIn("getk('cdpManagerApiKey')", self.main)
+        self.assertIn("'X-API-Key'", self.main)
+        self.assertIn("function setCollapsed(", self.main)
+
+    def test_backend_tabs_api_reuses_existing(self):
+        # 三个按端口接口复用按 sid 的既有实现，含关闭前补保底页逻辑。
+        self.assertIn('@app.get("/api/devtools/{port}/tabs")', self.main)
+        self.assertIn('@app.post("/api/devtools/{port}/tabs")', self.main)
+        self.assertIn('@app.delete("/api/devtools/{port}/tabs/{tid}")', self.main)
+        self.assertIn("def _devtools_sid_by_port(", self.main)
+        self.assertIn("return await api_targets(sid)", self.main)
+        self.assertIn("return await api_new_target(sid, request)", self.main)
+        self.assertIn("return await api_close_target(sid, tid)", self.main)
 
 
 class I18nTests(unittest.TestCase):
