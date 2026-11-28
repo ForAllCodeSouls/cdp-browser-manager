@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开发者工具 · 同屏</title>
+<style>
+    :root {
+        --bg: #202124; --bar: #292a2d; --border: #3c4043; --text: #e8eaed;
+        --muted: #9aa0a6; --accent: #8ab4f8; --on: #3c4043; --danger: #f28b82;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        background: var(--bg); color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 12px; display: flex; flex-direction: column; overflow: hidden;
+    }
+    /* 顶栏：紧凑、深色，贴近原生 DevTools 工具条 */
+    header {
+        display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-height: 36px;
+        padding: 4px 8px; background: var(--bar); border-bottom: 1px solid var(--border);
+    }
+    header .title { font-weight: 500; white-space: nowrap; }
+    header .sid {
+        font-family: ui-monospace, monospace; color: var(--muted); font-size: 11px;
+        white-space: nowrap;
+    }
+    header .state {
+        font-size: 10px; padding: 1px 7px; border-radius: 999px;
+        background: #303134; color: var(--muted); white-space: nowrap;
+    }
+    header .state.live { color: #81c995; }
+    header .state.err { color: var(--danger); }
+    header .spacer { margin-left: auto; }
+    button {
+        font: inherit; font-size: 11px; cursor: pointer; padding: 3px 9px;
+        background: transparent; color: var(--text);
+        border: 1px solid var(--border); border-radius: 4px; white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: var(--on); }
+    button:disabled { opacity: .4; cursor: default; }
+    button.on { background: var(--on); border-color: var(--accent); color: var(--accent); }
+    button.icon { min-width: 26px; padding: 3px 6px; text-align: center; }
+    /* 标签栏：像浏览器标签 */
+    .tabrow {
+        display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 46vw;
+        overflow-x: auto; scrollbar-width: none;
+    }
+    .tabrow::-webkit-scrollbar { display: none; }
+    .chip {
+        flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+        max-width: 190px; padding: 3px 7px; border: 1px solid var(--border);
+        border-radius: 4px; cursor: pointer; color: var(--muted); white-space: nowrap;
+    }
+    .chip.on { border-color: var(--accent); color: var(--text); background: var(--on); }
+    .chip .label { overflow: hidden; text-overflow: ellipsis; }
+    .chip .x { color: var(--muted); font-weight: 600; }
+    .chip .x:hover { color: var(--danger); }
+    /* 分栏 */
+    #split { flex: 1; min-height: 0; display: flex; }
+    #split.col { flex-direction: column; }
+    .pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+    .pane.stage { flex: 0 0 var(--stage, 42%); background: #0c0e14; }
+    .pane.dev { flex: 1; background: var(--bg); }
+    .pane iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }
+    #splitter { flex: 0 0 4px; cursor: col-resize; background: var(--border); }
+    #split.col #splitter { cursor: row-resize; height: 4px; }
+    #splitter:hover { background: var(--accent); }
+    .hidden { display: none !important; }
+    .overlay {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        color: var(--muted); font-size: 12px; text-align: center; padding: 16px;
+        pointer-events: none;
+    }
+    .overlay.hide { display: none; }
+</style>
+</head>
+<body>
+<header id="bar">
+    <span class="title">开发者工具</span>
+    <span class="sid" id="sidLabel">—</span>
+    <span class="state" id="state">连接中…</span>
+    <div class="tabrow" id="tabRow"></div>
+    <button class="icon" id="btnNew" title="新建标签页">+</button>
+    <span class="spacer"></span>
+    <button class="icon" id="btnDock" title="切换停靠方向（右 / 下）">⇄</button>
+    <button class="icon" id="btnFoldStage" title="折叠/展开画面">◧</button>
+    <button class="icon" id="btnFoldDev" title="折叠/展开开发者工具">◨</button>
+    <button id="btnStandalone" title="在独立窗口打开原生 DevTools">独立窗口 ↗</button>
+</header>
+<div id="split">
+    <section class="pane stage" id="stagePane">
+        <iframe id="stageFrame" title="浏览器画面"></iframe>
+        <div class="overlay" id="stageOverlay">正在连接画面…</div>
+    </section>
+    <div id="splitter"></div>
+    <section class="pane dev" id="devPane">
+        <iframe id="devFrame" title="原生 DevTools"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-clipboard-write allow-downloads"
+            referrerpolicy="no-referrer"></iframe>
+    </section>
+</div>
+
+<script>
+/* 同屏开发者工具页：套皮壳，内部仍是 CDP 原生 DevTools（inspector.html?ws=）。
+   本页不改 DevTools 本体，只负责：画面 + DevTools 并排、标签栏联动、dock/折叠/拖拽。
+   鉴权与远端路径沿用 /cast 页的做法（同源 localStorage + URL key + /remote 前缀）。 */
+(function () {
+    "use strict";
+    const QS = new URLSearchParams(location.search);
+    const SID = QS.get("sid") || "";
+    const TID_HINT = QS.get("tid") || "";
+    const KEY_STORAGE = "cdpManagerApiKey";
+    const SETTINGS_KEY = "cdpManagerSettings";
+    let apiKey = QS.get("key") || "";
+    try { if (!apiKey) apiKey = localStorage.getItem(KEY_STORAGE) || ""; } catch (e) {}
+    if (QS.get("key")) { try { localStorage.setItem(KEY_STORAGE, apiKey); } catch (e) {} }
+
+    let settings = {};
+    try { settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") || {}; } catch (e) {}
+    const quality = ["low", "medium", "high"].includes(settings.quality) ? settings.quality : "medium";
+    const vncPage = settings.page === "vnc.html" ? "vnc.html" : "vnc_lite.html";
+    const scaleOn = settings.scale !== "0";
+
+    const $ = (id) => document.getElementById(id);
+    let inst = null;
+    let tid = TID_HINT;
+    let tabs = [];
+    let devToken = 0;
+
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function authHeaders() { return apiKey ? { "X-API-Key": apiKey } : {}; }
+    function keyQuery(url) {
+        if (!apiKey) return url;
+        return url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(apiKey);
+    }
+    function scopeUrl(url) {
+        const m = String(url).match(/^\/(?:api\/)?instance\/([^/?]+)/);
+        if (!m || !inst) return url;
+        const host = inst.host;
+        return host && host !== "local"
+            ? "/remote/" + encodeURIComponent(host) + url : url;
+    }
+    async function api(url, options = {}, timeoutMs = 15000) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+            const res = await fetch(keyQuery(scopeUrl(url)), {
+                ...options,
+                headers: { ...(options.headers || {}), ...authHeaders() },
+                signal: ctrl.signal,
+            });
+            if (!res.ok) {
+                let detail = "";
+                try { detail = (await res.json()).detail || ""; } catch (e) {}
+                throw new Error(detail || ("HTTP " + res.status));
+            }
+            return await res.json();
+        } finally { clearTimeout(timer); }
+    }
+    function setState(text, cls) {
+        const el = $("state");
+        el.textContent = text;
+        el.className = "state" + (cls ? " " + cls : "");
+    }
+    function isHeadless(i) {
+        return !!i && (i.browser_mode === "headless" || i.browser_mode === "headless-new");
+    }
+
+    /* 有头画面：noVNC 整窗 iframe（可见浏览器标签栏/地址栏）。
+       无头画面：复用 /cast 页面（CDP 抓屏，仅网页视口，客观限制）。 */
+    function stageUrl(targetTid) {
+        if (!inst) return "";
+        if (isHeadless(inst)) {
+            return location.origin + "/cast?sid=" + encodeURIComponent(SID) +
+                "&tid=" + encodeURIComponent(targetTid) +
+                (apiKey ? "&key=" + encodeURIComponent(apiKey) : "");
+        }
+        const base = (inst.novnc_url_proxy || "").replace(/\/$/, "")
+            .replace(/\/vnc(_lite|_auto)?\.html\/?$/, "");
+        if (!base) return "";
+        const q = { low: [3, 9], medium: [6, 5], high: [9, 2] }[quality] || [6, 5];
+        const parts = ["quality=" + q[0], "compression=" + q[1]];
+        if (vncPage === "vnc_lite.html") {
+            if (scaleOn) parts.push("scale=1");
+        } else {
+            parts.push("autoconnect=1", "reconnect=1");
+            if (scaleOn) parts.push("resize=scale");
+        }
+        if (inst.novnc_port) {
+            const root = (inst.host && inst.host !== "local")
+                ? "remote/" + encodeURIComponent(inst.host) + "/" + inst.novnc_port
+                : String(inst.novnc_port);
+            parts.push("path=" + encodeURIComponent(keyQuery(root + "/websockify")));
+        }
+        return base + "/" + vncPage + (parts.length ? "?" + parts.join("&") : "");
+    }
+
+    /* 原生 DevTools URL：与面板 devToolsTarget() 完全一致，只给 host:port/path，
+       不传 ws:// 前缀（Chrome 158+ frontend 会自行补协议）。 */
+    function devUrl(targetTid) {
+        if (!inst) return "";
+        const port = inst.debug_port;
+        if (!port) return "";
+        const prefix = (inst.host && inst.host !== "local")
+            ? "/remote/" + encodeURIComponent(inst.host) : "";
+        const wsPath = location.host + prefix + "/" + port +
+            "/devtools/page/" + targetTid +
+            (apiKey ? "?key=" + encodeURIComponent(apiKey) : "");
+        // cdmp_bare=1：告诉后端不要往这个 iframe 里注入标签栏（顶部由本页统一提供），
+        // 让 iframe 内是纯净原生 DevTools，外观与按 F12 一致。
+        return location.origin + prefix + "/" + port +
+            "/devtools/inspector.html?cdmp_bare=1&ws=" + encodeURIComponent(wsPath);
+    }
+
+    /* 切换目标：先激活标签（避免后台冻结导致 Network 抓不到请求），
+       再更新画面与 DevTools 两侧 iframe。DevTools 切换调试目标只能重新加载前端，
+       这是 Chrome 原生固有限制（换目标即换 ws 绑定）。 */
+    async function switchTo(targetTid) {
+        if (!inst || !targetTid) return;
+        try {
+            await api("/api/instance/" + encodeURIComponent(SID) +
+                "/targets/" + encodeURIComponent(targetTid) + "/activate", { method: "POST" });
+        } catch (e) { /* 激活失败不阻断，headless 下可能不支持 */ }
+        tid = targetTid;
+        renderTabs();
+        const sUrl = stageUrl(tid);
+        if (sUrl && $("stageFrame").src !== sUrl) {
+            $("stageFrame").src = sUrl;
+            $("stageOverlay").classList.remove("hide");
+        }
+        const dUrl = devUrl(tid);
+        if (dUrl && $("devFrame").getAttribute("src") !== dUrl) {
+            $("devFrame").setAttribute("src", dUrl);
+        }
+        $("btnStandalone").disabled = false;
+        setState("就绪", "live");
+    }
+
+    function renderTabs() {
+        const row = $("tabRow");
+        row.innerHTML = "";
+        tabs.forEach(function (t) {
+            if (!t.id || t.type !== "page") return;
+            const chip = document.createElement("div");
+            chip.className = "chip" + (t.id === tid ? " on" : "");
+            const label = document.createElement("span");
+            label.className = "label";
+            label.textContent = t.title || t.url || t.id.slice(0, 8);
+            label.title = t.url || t.title || "";
+            const x = document.createElement("span");
+            x.className = "x";
+            x.textContent = "×";
+            x.title = "关闭标签";
+            x.addEventListener("click", function (e) {
+                e.stopPropagation();
+                closeTab(t.id);
+            });
+            chip.appendChild(label);
+            chip.appendChild(x);
+            chip.addEventListener("click", function () { switchTo(t.id); });
+            row.appendChild(chip);
+        });
+    }
+
+    async function refreshTabs() {
+        if (!inst) return;
+        const port = inst.debug_port;
+        if (!port) return;
+        try {
+            const data = await api("/api/devtools/" + port + "/tabs");
+            const pages = (data.targets || []).filter(function (t) { return t.type === "page" && t.id; });
+            const changed = JSON.stringify(pages.map(function (t) { return [t.id, t.title, t.url]; })) !==
+                JSON.stringify(tabs.map(function (t) { return [t.id, t.title, t.url]; }));
+            tabs = pages;
+            if (changed) renderTabs();
+            if (!tid && pages[0]) switchTo(pages[0].id);
+        } catch (e) { /* 轮询失败静默，下一轮再试 */ }
+    }
+
+    async function newTab() {
+        if (!inst || !inst.debug_port) return;
+        const url = window.prompt("新标签的网址（留空打开空白页）", "about:blank");
+        if (url === null) return;
+        try {
+            const data = await api("/api/devtools/" + inst.debug_port + "/tabs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: url || "about:blank" }),
+            });
+            if (data.id) { await refreshTabs(); switchTo(data.id); }
+        } catch (e) { setState("新建失败", "err"); }
+    }
+
+    async function closeTab(targetTid) {
+        if (!inst || !inst.debug_port) return;
+        if (!window.confirm("关闭这个标签页？")) return;
+        try {
+            await api("/api/devtools/" + inst.debug_port + "/tabs/" + encodeURIComponent(targetTid),
+                { method: "DELETE" });
+            const rest = tabs.filter(function (t) { return t.id !== targetTid; });
+            tabs = rest;
+            if (targetTid === tid && rest[0]) switchTo(rest[0].id);
+            else renderTabs();
+        } catch (e) { setState("关闭失败", "err"); }
+    }
+
+    /* dock 方向 / 折叠 / 拖拽分栏：外观与有头模式 DevTools 停靠一致。 */
+    let col = false;
+    $("btnDock").addEventListener("click", function () {
+        col = !col;
+        $("split").classList.toggle("col", col);
+        $("btnDock").classList.toggle("on", col);
+        applySplit();
+    });
+    let fold = "";
+    function applySplit() {
+        const split = $("split");
+        const stage = $("stagePane");
+        const dev = $("devPane");
+        const bar = $("splitter");
+        const foldStage = fold === "stage";
+        const foldDev = fold === "dev";
+        stage.classList.toggle("hidden", foldStage);
+        dev.classList.toggle("hidden", foldDev);
+        bar.classList.toggle("hidden", foldStage || foldDev);
+    }
+    $("btnFoldStage").addEventListener("click", function () {
+        fold = fold === "stage" ? "" : "stage";
+        $("btnFoldStage").classList.toggle("on", fold === "stage");
+        applySplit();
+    });
+    $("btnFoldDev").addEventListener("click", function () {
+        fold = fold === "dev" ? "" : "dev";
+        $("btnFoldDev").classList.toggle("on", fold === "dev");
+        applySplit();
+    });
+    $("btnNew").addEventListener("click", newTab);
+    $("btnStandalone").addEventListener("click", function () {
+        const u = devUrl(tid);
+        if (u) window.open(u, "_blank", "noopener");
+    });
+    $("stageFrame").addEventListener("load", function () {
+        $("stageOverlay").classList.add("hide");
+    });
+
+    let dragging = false;
+    $("splitter").addEventListener("mousedown", function (e) {
+        dragging = true;
+        e.preventDefault();
+    });
+    window.addEventListener("mousemove", function (e) {
+        if (!dragging) return;
+        const box = $("split").getBoundingClientRect();
+        let pct = col ? (e.clientY - box.top) / box.height : (e.clientX - box.left) / box.width;
+        pct = Math.max(15, Math.min(80, pct * 100));
+        $("split").style.setProperty("--stage", pct + "%");
+    });
+    window.addEventListener("mouseup", function () { dragging = false; });
+
+    async function init() {
+        if (!SID) { setState("缺少实例参数", "err"); return; }
+        try {
+            const list = await api("/api/list");
+            const all = list.instances || {};
+            inst = all[SID] || (Array.isArray(all) ? all.find(function (x) { return x.sid === SID; }) : null);
+        } catch (e) { setState("读取实例失败", "err"); return; }
+        if (!inst) { setState("实例不存在", "err"); return; }
+        $("sidLabel").textContent = SID.slice(0, 8) +
+            (isHeadless(inst) ? " · 无头" : " · 完整");
+        await refreshTabs();
+        if (tid) switchTo(tid);
+        else setState("无可用标签", "err");
+        setInterval(refreshTabs, 3000);
+    }
+    init();
+})();
+</script>
+</body>
+</html>

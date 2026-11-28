@@ -29,13 +29,13 @@ const fnTokens = ["dtSwitch", "dtCmd", "dtDispatch", "dtPerfToggle", "dtLoadProf
   "dtFlameRender", "dtHeapSnapshot", "dtScanSecrets", "dtExport", "capConnect", "capGenCurl"];
 fnTokens.forEach(fn => ok(!html.includes("function " + fn + "("), "函数移除: " + fn));
 
-// 3. 原生 DevTools 入口与代理链保留（独立窗口）
+// 3. 开发者工具入口改为同屏整合页；原生入口与代理链保留
 ok(html.includes("async function openDev()"), "openDev 入口保留");
-ok(html.includes("await openNativeDevTools();"), "openDev 打开原生 DevTools");
-ok(html.includes('window.open(t.url, "_blank", "noopener")'), "openDev 用独立窗口打开");
-ok(html.includes("async function openNativeDevTools()"), "原生入口函数保留");
+ok(html.includes('"/devtools?sid="'), "openDev 打开同屏整合页 /devtools");
+ok(html.includes('window.open(url, "_blank", "noopener")'), "openDev 用独立窗口打开整合页");
+ok(html.includes("async function openNativeDevTools()"), "原生入口函数保留供直链/兼容");
 ok(!html.includes('switchSideView("dev")'), "不再切抽屉 dev 视图");
-ok(!html.includes("frame.src = t.url"), "不再内嵌 iframe");
+ok(!html.includes("frame.src = t.url"), "主应用不再内嵌 iframe");
 ok(html.includes("/devtools/inspector.html?ws="), "inspector.html 代理保留");
 ok(main.includes('@app.api_route("/{port:int}/devtools/{rest:path}"'), "后端 DevTools 代理保留");
 ok(main.includes("def inject_devtools_ws_normalizer("), "ws 参数修正保留");

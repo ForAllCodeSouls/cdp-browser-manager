@@ -332,7 +332,7 @@ def auth_exempt(path: str, method: str) -> bool:
     """
     # /cast 与 /share 一样是纯页面壳：页面本身不含数据，实例列表 / CDP 命令 /
     # 抓屏 WS 各自按 API_KEY 或分享令牌鉴权，所以页面本身免鉴权打开。
-    if path in ("/", "/api/health", "/share", "/cast"):
+    if path in ("/", "/api/health", "/share", "/cast", "/devtools"):
         return True
     if path == "/api/share/view" and method == "GET":
         return True  # 观看端没有 API_KEY，由分享令牌 + 有效期单独鉴权
@@ -2362,6 +2362,16 @@ async def cast_page(request: Request):
     return templates.TemplateResponse(request, "cast.html", {})
 
 
+@app.get("/devtools", response_class=HTMLResponse)
+async def devtools_page(request: Request):
+    """同屏开发者工具页：?sid=&tid= 直达。
+
+    这是套皮壳：内部仍是 CDP 原生 DevTools（inspector.html?ws=），左侧并排画面。
+    页面本身免鉴权（同 /cast），实例数据 / CDP 命令 / 画面 WS 各自按 API_KEY 鉴权。
+    """
+    return templates.TemplateResponse(request, "devtools.html", {})
+
+
 @app.get("/api/health")
 async def api_health():
     """存活探针：面板在线且 Docker 守护进程可达。"""
@@ -3236,7 +3246,9 @@ async def remote_http_proxy(host_id: str, rest: str, request: Request):
     if raw and rest.endswith("/devtools/inspector.html"):
         text = raw.decode("utf-8", "replace")
         injected = relax_devtools_csp(text)
-        injected = inject_devtools_tabbar(injected)
+        bare = (parse_qs(urlsplit(str(request.url)).query).get("cdmp_bare") or [""])[0] == "1"
+        if not bare:
+            injected = inject_devtools_tabbar(injected)
         if injected != text:
             raw = injected.encode("utf-8")
             ctype = "text/html; charset=utf-8"
@@ -3620,7 +3632,11 @@ async def cdp_devtools_http(port: int, rest: str, request: Request):
         text = raw.decode("utf-8", "replace")
         text = relax_devtools_csp(text)
         # 顶部注入标签栏：切换/新建/关闭标签，直链打开也能用（幂等）。
-        text = inject_devtools_tabbar(text)
+        # cdmp_bare=1：同屏整合页 /devtools 内嵌时跳过，让它内部是纯净原生 DevTools
+        # （标签栏由整合页顶部统一提供，避免两层标签栏重复、更贴近按 F12 的原生外观）。
+        bare = (parse_qs(urlsplit(str(request.url)).query).get("cdmp_bare") or [""])[0] == "1"
+        if not bare:
+            text = inject_devtools_tabbar(text)
         # 让页面内相对路径资源与 WS 均走 manager 同源；URL 里的 ws= 由前端构造时给定。
         return Response(content=text, media_type="text/html; charset=utf-8")
     # 给 Network 面板注入中文「复制为 Python」菜单项；非 JS 或锚点缺失时原样返回。

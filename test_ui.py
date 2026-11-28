@@ -142,7 +142,7 @@ class HandlerIntegrityTests(unittest.TestCase):
 
 
 class DevToolsDrawerTests(unittest.TestCase):
-    """开发者工具 = 打开浏览器原生 DevTools 独立窗口（F12 同款）；抽屉只承载日志。"""
+    """开发者工具 = 打开同屏整合页 /devtools（内嵌原生 DevTools）；抽屉只承载日志。"""
 
     def test_drawer_only_has_log_view(self):
         # 自研九面板与抽屉内嵌 iframe 均已移除，抽屉只剩运行日志。
@@ -159,16 +159,16 @@ class DevToolsDrawerTests(unittest.TestCase):
                      "allow-top-navigation", "allow-clipboard-write"):
             self.assertNotIn(dead, INDEX, dead)
 
-    def test_open_dev_opens_native_devtools_window(self):
-        # 主入口与 D 键统一打开原生 DevTools 独立窗口（F12 同款）。
+    def test_open_dev_opens_integrated_page(self):
+        # 主入口与 D 键统一打开同屏整合页 /devtools（内部仍是原生 DevTools）。
         self.assertIn("async function openDev()", JS)
         open_dev = JS.split("async function openDev()")[1].split("function ")[0]
-        self.assertIn("await openNativeDevTools();", open_dev)
+        self.assertIn('"/devtools?sid="', open_dev)
+        self.assertIn("window.open(url, \"_blank\", \"noopener\")", open_dev)
+        self.assertIn("await devResolveTid()", open_dev)
+        self.assertNotIn("await openNativeDevTools();", open_dev)
         self.assertNotIn('switchSideView("dev")', open_dev)
-        self.assertNotIn('$("logDrawer").classList.add("open")', open_dev)
         self.assertIn('onclick="openDev()"', INDEX)
-        native = JS.split("async function openNativeDevTools()")[1].split("function ")[0]
-        self.assertIn('window.open(t.url, "_blank", "noopener")', native)
 
     def test_enhance_drawer_is_alias(self):
         # 兼容旧调用：openEnhanceDrawer 现在等价于 openDev
@@ -438,6 +438,55 @@ class SelfBuiltPanelsRemovedTests(unittest.TestCase):
         main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
         self.assertIn("@app.api_route(\"/{port:int}/devtools/{rest:path}\"", main)
         self.assertIn("def inject_devtools_ws_normalizer(", main)
+
+
+class IntegratedDevToolsPageTests(unittest.TestCase):
+    """同屏开发者工具页 /devtools：套皮壳，内部仍是 CDP 原生 DevTools。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.page = (ROOT / "app" / "templates" / "devtools.html").read_text(encoding="utf-8")
+        cls.main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+
+    def test_page_has_dual_panes(self):
+        # 左侧画面 + 右侧 DevTools 两个 iframe，无自研面板。
+        self.assertIn('id="stageFrame"', self.page)
+        self.assertIn('id="devFrame"', self.page)
+        self.assertIn('id="splitter"', self.page)
+        self.assertIn('id="tabRow"', self.page)
+
+    def test_devtools_iframe_sandbox_no_top_nav(self):
+        frame = self.page.split('id="devFrame"')[1].split(">")[0]
+        self.assertIn("sandbox=", frame)
+        self.assertNotIn("allow-top-navigation", frame)
+        self.assertIn("allow-same-origin", frame)
+        self.assertIn("allow-clipboard-write", frame)
+
+    def test_uses_native_inspector_ws(self):
+        # 内部仍用原生 inspector.html?ws=，不改 DevTools 本体。
+        self.assertIn('"/devtools/inspector.html?cdmp_bare=1&ws="', self.page)
+        self.assertIn('"/devtools/page/" + targetTid', self.page)
+        self.assertNotIn("location.assign(", self.page)
+
+    def test_headless_uses_cast_full_uses_novnc(self):
+        self.assertIn('location.origin + "/cast?sid="', self.page)
+        self.assertIn("vnc_lite.html", self.page)
+        self.assertIn("if (isHeadless(inst))", self.page)
+
+    def test_activates_target_before_switch(self):
+        self.assertIn("/targets/\" + encodeURIComponent(targetTid) + \"/activate", self.page)
+
+    def test_backend_skips_tabbar_for_bare_iframe(self):
+        # 整合页 iframe 带 cdmp_bare=1，后端两处注入点都应跳过标签栏，避免双层标签栏。
+        token = 'get("cdmp_bare") or [""])[0] == "1"'
+        self.assertIn(token, self.main)
+        self.assertEqual(self.main.count(token), 2)
+        self.assertIn("if not bare:", self.main)
+
+    def test_backend_route_and_auth_exempt(self):
+        self.assertIn('@app.get("/devtools", response_class=HTMLResponse)', self.main)
+        self.assertIn('templates.TemplateResponse(request, "devtools.html", {})', self.main)
+        self.assertIn('"/share", "/cast", "/devtools"', self.main)
 
 
 class PreviewModeTests(unittest.TestCase):

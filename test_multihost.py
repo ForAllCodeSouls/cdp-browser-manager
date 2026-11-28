@@ -1533,7 +1533,7 @@ class PanelEcoAndShareTests(unittest.TestCase):
     def test_audit_fixes_cast_auth_remote_key_and_lifecycle(self):
         # 1) /cast 页面与首页/分享页一样免鉴权打开：路由注释、鉴权白名单必须一致。
         #    数据层（/api/list、/api/instance/*/cmd、/ws/cast）仍各自鉴权。
-        self.assertIn('if path in ("/", "/api/health", "/share", "/cast"):', self.main_src)
+        self.assertIn('if path in ("/", "/api/health", "/share", "/cast", "/devtools"):', self.main_src)
 
         # 2) 后台 CDP 监控线程整轮 try/except：Docker 偶发异常不能让线程永久死亡。
         i = self.main_src.index("def cdp_monitor_loop():")
@@ -2080,10 +2080,11 @@ class ExtendedFeaturesTests(unittest.TestCase):
             self.assertIn(fn, s)
         self.assertIn('id="createProxy"', s)
         self.assertIn('proxy: ($("createProxy")', s)
-        # 自研面板已移除；开发者工具入口为 detail 栏按钮 + D 键，开原生 DevTools 独立窗口。
+        # 自研面板已移除；开发者工具入口为 detail 栏按钮 + D 键，打开同屏整合页 /devtools
+        # （内部仍是原生 DevTools）。openNativeDevTools 保留供直链/兼容调用。
         self.assertIn('onclick="openDev()"', s)
-        self.assertIn("await openNativeDevTools();", s)
-        self.assertIn('window.open(t.url, "_blank", "noopener")', s)
+        self.assertIn('"/devtools?sid="', s)
+        self.assertIn("function openNativeDevTools()", s)
         self.assertNotIn('id="devToolsFrame"', s)
 
     def test_theme_attribute_and_shortcuts(self):

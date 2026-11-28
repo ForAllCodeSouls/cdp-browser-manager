@@ -4901,7 +4901,7 @@
                     ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
                     '<button class="lk" onclick="openDev()"' +
-                    ' title="在新窗口打开浏览器原生 DevTools（F12 同款，支持复制 cURL / Python）">' +
+                    ' title="打开同屏开发者工具：左侧浏览器画面 + 右侧原生 DevTools（F12 同款，支持复制 cURL / Python）">' +
                     '开发者工具</button>';
                 const linksHtml = '<div class="detail-links">' +
                     '<span class="lk-group"><span class="lk-label">CDP 端点</span>' + endpointLinks + '</span>' +
@@ -5794,10 +5794,10 @@
             if (m && wrap && !wrap.contains(e.target)) m.classList.remove("open");
         });
 
-        // ---- 开发者工具：在右侧抽屉内嵌浏览器原生 DevTools（F12 同款）----
-        // 自研九面板已移除；「开发者工具」入口与 D 键均走 openDev → openNativeDevTools。
-        // 原生 DevTools 用独立窗口打开（F12 同款）；iframe 内嵌方案因会强制 undocked
-        // 且面板太挤已放弃。右侧抽屉只承载运行日志。
+        // ---- 开发者工具：打开同屏整合页（/devtools），左侧画面 + 右侧原生 DevTools ----
+        // 该页是套皮壳，内部仍是 CDP 原生 DevTools，本体不改；「开发者工具」按钮与 D 键
+        // 均走 openDev() 打开该页。右侧抽屉只承载运行日志。
+        // openNativeDevTools/devToolsTarget 保留供直链与兼容调用使用。
         let devSid = null, devTid = null;
         let devToolsUrlCache = "";
 
@@ -5843,8 +5843,10 @@
             }
         }
 
-        // 开发者工具主入口：直接打开浏览器原生 DevTools 独立窗口（F12 同款）。
-        // 自研九面板已移除；此入口与 D 键统一走这里。
+        // 开发者工具主入口：打开同屏整合页（/devtools?sid=&tid=）。
+        // 该页是套皮壳：内部仍是 CDP 原生 DevTools（inspector.html?ws=），
+        // 左侧并排浏览器画面，视觉与有头模式按 F12 同屏一致；DevTools 本体不改。
+        // 按钮与 D 键统一走这里；新页面负责 activate 标签与两侧 URL 构造。
         async function openDev() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
@@ -5852,7 +5854,14 @@
             devTid = null;
             const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
             if (tid) devTid = tid;
-            await openNativeDevTools();
+            const resolved = await devResolveTid();
+            const base = instancePanelBase(sel) || location.origin;
+            let url = base + "/devtools?sid=" + encodeURIComponent(sel.sid);
+            if (resolved) url += "&tid=" + encodeURIComponent(resolved);
+            if (apiKey) url += "&key=" + encodeURIComponent(apiKey);
+            const w = window.open(url, "_blank", "noopener");
+            if (!w) toast("弹窗被拦截，请允许本站点打开新窗口");
+            else toast("已打开同屏开发者工具", "ok");
         }
 
         // 兼容旧调用：增强抽屉入口现等价于开发者工具主入口。

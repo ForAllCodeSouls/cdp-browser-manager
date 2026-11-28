@@ -1,10 +1,10 @@
 /**
  * 开发者工具入口测试（jsdom）。
- * 当前契约：自研九面板已彻底移除；开发者工具 = 打开浏览器原生 DevTools 独立窗口
- * （F12 同款，同源代理 inspector.html + CDP WS）。openDev 与 D 键统一走
- * openDev → openNativeDevTools → window.open。打开前会 activate 目标标签，
- * 避免连到后台冻结标签显示「此标签页不活跃」、Network 抓不到请求。
- * 右侧抽屉只承载运行日志，不再内嵌 DevTools。
+ * 当前契约：自研九面板已彻底移除；开发者工具 = 打开同屏整合页 /devtools
+ * （套皮壳：左侧画面 + 右侧原生 DevTools，内部仍是 inspector.html + CDP WS）。
+ * openDev 与 D 键统一走 openDev → window.open(/devtools?sid=&tid=&key=)。
+ * 激活目标标签的逻辑移到了整合页内（避免后台冻结标签抓不到请求）。
+ * openNativeDevTools 保留供直链/兼容调用。右侧抽屉只承载运行日志。
  * 全应用中/英/日语言热切换即时生效、不刷新。
  * 运行：node test_devtools_ui.js
  */
@@ -64,18 +64,20 @@ function makeDom() {
 }
 
 (async function main() {
-  console.log("== 开发者工具入口测试（原生 DevTools 独立窗口）==");
+  console.log("== 开发者工具入口测试（同屏整合页 /devtools）==");
 
-  // 1. openDev 打开原生 DevTools 新窗口，不碰抽屉；打开前激活目标标签
+  // 1. openDev 打开同屏整合页 /devtools，不碰抽屉；带 sid/tid/key
   {
     const w = makeDom();
     await w.openDev();
     await tick();
     eq(openUrls.length, 1, "openDev 打开一个新窗口");
-    ok(openUrls[0].includes("/devtools/inspector.html"), "新窗口是原生 DevTools 代理");
+    ok(openUrls[0].includes("/devtools?sid="), "新窗口是同屏整合页 /devtools");
+    ok(openUrls[0].includes("sid=sid1"), "带上实例 sid");
+    ok(openUrls[0].includes("tid=tid123"), "带上当前标签 tid");
+    ok(openUrls[0].includes("key=testkey"), "透传 API_KEY 给整合页");
     ok(!w.document.getElementById("logDrawer").classList.contains("open"), "openDev 不打开日志抽屉");
-    eq(w.__activated.length, 1, "打开 DevTools 前激活目标标签一次");
-    ok((w.__activated[0] || "").includes("/targets/tid123/activate"), "激活的是被调试的标签 tid");
+    eq(w.__activated.length, 0, "激活逻辑移到整合页内，主入口不 activate");
     w.close();
   }
 
@@ -116,14 +118,14 @@ function makeDom() {
     w.close();
   }
 
-  // 4b. 屏幕锁期间不激活标签（脚本执行中不抢浏览器前台），但 DevTools 仍打开
+  // 4b. 屏幕锁期间仍打开整合页（激活由整合页按自身逻辑处理）
   {
     const w = makeDom();
     w.eval('screenLocked = true;');
     await w.openDev();
     await tick();
-    eq(w.__activated.length, 0, "屏幕锁期间不激活标签");
-    eq(openUrls.length, 1, "屏幕锁期间 DevTools 仍打开");
+    eq(w.__activated.length, 0, "主入口不激活标签");
+    eq(openUrls.length, 1, "屏幕锁期间整合页仍打开");
     w.close();
   }
 
