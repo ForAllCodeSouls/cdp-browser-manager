@@ -56,14 +56,15 @@ function makeDom() {
 (async function main() {
   console.log("== 开发者工具交互测试（原生 DevTools 主入口 + 增强抽屉）==");
 
-  // 1. 方案二：openDev 主入口直接打开原生 DevTools
+  // 1. openDev 主入口回到右侧日志抽屉，不开新窗口
   {
     const w = makeDom();
     w.openDev();
     await tick();
-    eq(openUrls.length, 1, "openDev 打开一个原生 DevTools 窗口");
-    ok((openUrls[0] || "").includes("/devtools/inspector.html"), "openDev 指向原生 DevTools");
-    ok(!w.document.getElementById("logDrawer").classList.contains("open"), "openDev 不再打开增强抽屉");
+    eq(openUrls.length, 0, "openDev 不开原生 DevTools 新窗口");
+    eq(w.eval("sideView"), "dev", "openDev 切到开发者工具视图");
+    ok(w.document.getElementById("logDrawer").classList.contains("open"), "openDev 打开右侧抽屉");
+    ok(w.document.getElementById("devMask").classList.contains("on"), "devMask 视图激活");
   }
 
   // 2. 增强抽屉：openEnhanceDrawer 切到 dev 视图
@@ -78,13 +79,14 @@ function makeDom() {
     ok(w.document.getElementById("sideViewLog").classList.contains("on"), "日志视图显示");
   }
 
-  // 3. 未选中实例时 openDev 不开原生窗口
+  // 3. 未选中实例时 openDev 不开抽屉也不开窗口
   {
     const w = makeDom();
     w.eval('selectedSid = "none";');
     w.openDev();
     await tick();
     eq(openUrls.length, 0, "未选中运行实例时不打开原生窗口");
+    ok(!w.document.getElementById("logDrawer").classList.contains("open"), "未选中实例时不打开抽屉");
   }
 
   // 4. 标签 ID 自动补齐
@@ -95,7 +97,7 @@ function makeDom() {
     eq(tid, "tid123", "devResolveTid 从 /targets 自动补齐标签");
   }
 
-  // 5. 原生 DevTools 入口打开独立窗口，含密钥与增强参数
+  // 5. 原生 DevTools 入口打开独立窗口，含密钥；不再携带增强工具台参数
   {
     const w = makeDom();
     w.eval('devSid = "sid1"; currentLang = "ja";');
@@ -106,9 +108,7 @@ function makeDom() {
     ok(url.includes("/9333/devtools/inspector.html"), "走 /<port>/devtools 同源代理");
     ok(decodeURIComponent(url).includes("/devtools/page/tid123"), "ws 指向 page 级 CDP");
     ok(decodeURIComponent(url).includes("key=testkey"), "携带 API_KEY");
-    ok(url.includes("cdmp_sid=sid1"), "携带增强参数 cdmp_sid");
-    ok(url.includes("cdmp_tid=tid123"), "携带增强参数 cdmp_tid");
-    ok(url.includes("cdmp_lang=ja"), "携带界面语言 cdmp_lang");
+    ok(!url.includes("cdmp_"), "不再携带增强工具台参数");
     // Chrome 158 DevTools frontend 的 ?ws= 只接受 host:port/path，
     // 传完整 ws:// 会被拼成 ws://ws//... 导致 DNS 失败、窗口一开就断。
     const wsParam = new URL(url).searchParams.get("ws") || "";

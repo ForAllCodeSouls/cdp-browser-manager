@@ -1535,15 +1535,23 @@
                             <div class="cap-bar">
                                 <span class="cap-brand">
                                     <svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 5-8 4 3"/></svg>
-                                    增强工具台 · 原生 DevTools
+                                    网络抓包 · 中文开发者工具
                                 </span>
                                 <span class="cap-spacer"></span>
-                                <button class="cap-btn" onclick="openNativeDevTools()" title="打开浏览器原生 DevTools 独立窗口（F12 同款，已内置增强工具台）">原生 DevTools ↗</button>
+                                <button class="cap-btn" onclick="openNativeDevTools()" title="打开浏览器原生 DevTools 独立窗口（F12 同款）">原生 DevTools ↗</button>
                                 <button class="cap-btn ghost" id="capBtnConn" onclick="capToggleConnect()">开始抓包</button>
                                 <span class="cap-state"><span class="cap-dot" id="capStateDot"></span><span id="capStateText">未连接</span></span>
                             </div>
                             <div class="cap-tabbar" id="dtTabbar">
+                                <div class="cap-tab" data-p="elements" onclick="dtSwitch('elements')">元素</div>
+                                <div class="cap-tab" data-p="console" onclick="dtSwitch('console')">控制台</div>
+                                <div class="cap-tab" data-p="sources" onclick="dtSwitch('sources')">源码</div>
                                 <div class="cap-tab on" data-p="network" onclick="dtSwitch('network')">网络抓包</div>
+                                <div class="cap-tab" data-p="performance" onclick="dtSwitch('performance')">性能</div>
+                                <div class="cap-tab" data-p="memory" onclick="dtSwitch('memory')">内存</div>
+                                <div class="cap-tab" data-p="application" onclick="dtSwitch('application')">应用</div>
+                                <div class="cap-tab" data-p="security" onclick="dtSwitch('security')">安全</div>
+                                <div class="cap-tab" data-p="device" onclick="dtSwitch('device')">设备</div>
                                 <div class="cap-tab" data-p="cdp" onclick="dtSwitch('cdp')">CDP台</div>
                                 <div class="cap-tab" data-p="tools" onclick="dtSwitch('tools')">工具</div>
                             </div>
@@ -6345,20 +6353,9 @@
             }
         }
 
-        // 方案二：开发者工具主入口 = 浏览器原生 DevTools（F12 同款，内含注入的增强工具台）。
-        // 自研九面板复刻已放弃；下方抽屉降级为「增强工具台」辅助面板，保留主应用侧增强能力。
+        // 开发者工具主入口：在右侧日志抽屉位置展开中文开发者工具（和最早一致），
+        // 不开新窗口。原生 DevTools 作为抽屉顶部的辅助按钮，需要时再单独打开。
         function openDev() {
-            const sel = instances[selectedSid];
-            if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
-            devSid = sel.sid;
-            devTid = null;
-            const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
-            if (tid) devTid = tid;
-            openNativeDevTools();
-        }
-
-        // 增强工具台抽屉：主应用侧的抓包/敏感扫描/导出/CDP/多主机入口，辅助原生 DevTools。
-        function openEnhanceDrawer() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
             devSid = sel.sid;
@@ -6370,6 +6367,9 @@
             $("logDrawer").classList.add("open");
             switchSideView("dev");
         }
+
+        // 兼容旧调用：抽屉增强视图与 openDev 现在完全等价。
+        function openEnhanceDrawer() { openDev(); }
 
         function closeDev() {
             capDisconnect();
@@ -6398,17 +6398,8 @@
             // 故此处只给 host + 路径；wss 由 frontend 依据页面 https 协议自动选择。
             const wsPath = location.host + prefix + "/" + port +
                 "/devtools/page/" + tid + (apiKey ? "?key=" + encodeURIComponent(apiKey) : "");
-            // 增强工具台参数：注入脚本在原生 DevTools 窗口内自建 /ws/inspect 与
-            // /api/list 连接（窗口以 noopener 打开，无法共享主应用状态），故把当前
-            // 目标 sid/tid、鉴权 key、界面语言一并带上；lang 同时决定原生 DevTools
-            // 界面语言（脚本写 devtools.preferences 后自动重载）。
-            const lang = (typeof currentLang === "string" && currentLang) ? currentLang : "zh";
-            const extra = "&cdmp_sid=" + encodeURIComponent(devSid) +
-                "&cdmp_tid=" + encodeURIComponent(tid) +
-                "&cdmp_key=" + encodeURIComponent(apiKey || "") +
-                "&cdmp_lang=" + encodeURIComponent(lang);
             const url = location.origin + prefix + "/" + port +
-                "/devtools/inspector.html?ws=" + encodeURIComponent(wsPath) + extra;
+                "/devtools/inspector.html?ws=" + encodeURIComponent(wsPath);
             return { url: url, ws: wsPath, tid: tid, port: port, prefix: prefix };
         }
 

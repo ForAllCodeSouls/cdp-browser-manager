@@ -44,15 +44,12 @@ function makeDom() {
   return w;
 }
 
-console.log('\n[1] 增强工具台 DOM 与 tab 结构');
+console.log('\n[1] 九面板 DOM 与 tab 结构');
 const w = makeDom();
-// 方案二：可见 tab 收敛为增强能力三项（其余复刻原生面板由原生 DevTools 承担）。
-const visibleTabs = ['network','cdp','tools'];
-visibleTabs.forEach(t => ok(w.document.querySelector('#dtTabbar .cap-tab[data-p="' + t + '"]') !== null, 'tab ' + t + ' 存在'));
-ok(w.document.querySelectorAll('#dtTabbar .cap-tab').length === 3, '仅保留 3 个增强 tab');
-// 底层面板容器与 dtSwitch 能力保留，供原生 DevTools 之外的增强能力继续复用。
 const allPanels = ['elements','console','sources','network','performance','memory','application','security','device','cdp','tools'];
+allPanels.forEach(t => ok(w.document.querySelector('#dtTabbar .cap-tab[data-p="' + t + '"]') !== null, 'tab ' + t + ' 存在'));
 allPanels.forEach(t => ok(w.document.querySelector('#capWrap .cap-panel[data-p="' + t + '"]') !== null, '面板 ' + t + ' 容器存在'));
+ok(w.document.querySelectorAll('#dtTabbar .cap-tab').length === 11, '完整 11 个 tab 可见');
 eq(w.eval('dtPanel'), 'network', '默认网络面板');
 
 console.log('\n[2] 面板切换 dtSwitch');
