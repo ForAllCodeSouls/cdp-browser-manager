@@ -1974,6 +1974,80 @@ class TabOrderTests(unittest.TestCase):
             self.assertEqual([t["id"] for t in got], ["b", "c", "d"])
 
 
+class ExtendedFeaturesTests(unittest.TestCase):
+    """方向一~四：CDP 产品化 / 自动化 / 运维 / 安全协作。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path(ROOT, "app", "templates", "index.html").read_text(encoding="utf-8")
+        cls.share_src = Path(ROOT, "app", "templates", "share.html").read_text(encoding="utf-8")
+        cls.main_src = Path(ROOT, "app", "main.py").read_text(encoding="utf-8")
+        cls.start_sh = Path(ROOT, "start.sh").read_text(encoding="utf-8")
+
+    def test_cdp_command_whitelist_extended(self):
+        m = self.main_src
+        for method in ("DOM.getDocument", "DOM.querySelector", "CSS.getComputedStyleForNode",
+                       "Network.enable", "Network.getCookies", "Performance.getMetrics",
+                       "Runtime.enable", "Log.enable", "Emulation.setDeviceMetricsOverride"):
+            self.assertIn('"' + method + '"', m)
+
+    def test_inspect_ws_domains_and_auth(self):
+        m = self.main_src
+        self.assertIn('@app.websocket("/ws/inspect/{sid}/{tid}")', m)
+        self.assertIn("INSPECT_DOMAINS = {", m)
+        for d in ("network", "console", "performance"):
+            self.assertIn('"' + d + '":', m)
+        self.assertIn('key_ok(websocket.query_params.get("key", ""))', m)
+
+    def test_store_helpers_and_audit(self):
+        m = self.main_src
+        self.assertIn('"audit": DATA_DIR / "audit_log.json"', m)
+        self.assertIn('"tags": DATA_DIR / "instance_tags.json"', m)
+        self.assertIn("def audit(action: str", m)
+        self.assertIn('@app.get("/api/audit")', m)
+        self.assertIn('@app.get("/api/tags")', m)
+
+    def test_batch_monitor_schedule_apis(self):
+        m = self.main_src
+        for route in ("/api/batch/exec", "/api/metrics", "/api/schedules"):
+            self.assertIn('"' + route + '"', m)
+        self.assertIn("def schedule_loop()", m)
+        self.assertIn("threading.Thread(target=schedule_loop", m)
+
+    def test_per_instance_proxy(self):
+        self.assertIn("--proxy-server=", self.start_sh)
+        self.assertIn("BROWSER_PROXY", self.start_sh)
+        m = self.main_src
+        self.assertIn('environment["BROWSER_PROXY"] = proxy', m)
+        self.assertIn('proxy = str(payload.get("proxy") or "").strip()', m)
+        self.assertIn('"proxy": proxy,', m)
+
+    def test_share_watermark(self):
+        s = self.share_src
+        self.assertIn('canvas.id === "largeCanvas"', s)
+        self.assertIn("只读观看", s)
+
+    def test_frontend_panels_and_entries(self):
+        s = self.src
+        for mask in ("devMask", "batchMask", "snipLibMask", "tplMask", "schedMask",
+                     "auditMask", "resMask", "recMask"):
+            self.assertIn('id="' + mask + '"', s)
+        for fn in ("switchDev(", "runBatch()", "loadSnippets()", "loadTpls()",
+                   "loadScheds()", "loadAudit()", "loadMetrics()", "toggleRecord()",
+                   "toggleTheme()"):
+            self.assertIn(fn, s)
+        self.assertIn('id="createProxy"', s)
+        self.assertIn('proxy: ($("createProxy")', s)
+        self.assertIn("开发者工具</button>", s)
+
+    def test_theme_attribute_and_shortcuts(self):
+        s = self.src
+        self.assertIn('data-theme', s)
+        self.assertIn('document.addEventListener("keydown"', s)
+        self.assertIn('e.key === "l"', s)
+        self.assertIn('e.key === "d"', s)
+
+
 @unittest.skipUnless(HAS_TESTCLIENT, "缺少 fastapi/httpx，跳过集成测试")
 class ShareBackendTests(unittest.TestCase):
     def setUp(self):

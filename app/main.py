@@ -1217,8 +1217,13 @@ def start_browser_instance(
     profile_name: str = "",
     browser_mode: str = "full",
     vnc_refresh: str = "",
+    proxy: str = "",
 ) -> dict:
     persistent = profile_mode == "persistent"
+    # 每实例独立代理：只放行常见 scheme，禁止注入空白/换行/引号。
+    proxy = str(proxy or "").strip()
+    if proxy and not re.match(r"^(http|https|socks5|socks4)://[^\s'\"]+$", proxy):
+        raise ValueError("代理地址格式不合法（仅支持 http/https/socks5/socks4）")
     # 空值 = 用全局档位：新建弹窗已不再提供该选项，全部实例统一由面板切换的档位决定。
     vnc_key = normalize_vnc_refresh(vnc_refresh or get_global_vnc_refresh())
     # 先确认镜像在本地：否则 containers.run 会触发 pull，长时间占着全局锁，
@@ -1260,6 +1265,8 @@ def start_browser_instance(
             VNC_REFRESH_LABEL: vnc_key,
         }
         environment = {"BROWSER_MODE": browser_mode}
+        if proxy:
+            environment["BROWSER_PROXY"] = proxy
         if browser_mode == "full":
             # 只有完整内核跑 x11vnc；无头实例不传这组变量（传了也无害，但少点噪音）。
             vp = VNC_REFRESH_PROFILES[vnc_key]
@@ -2468,6 +2475,7 @@ async def new_instance(request: Request):
     except Exception:
         pass
     vnc_refresh = normalize_vnc_refresh(vnc_refresh)
+    proxy = str(payload.get("proxy") or "").strip()
 
     # 远端主机：由本机代理转发创建，密钥只在本机使用。
     if host_id != "local":
@@ -2477,6 +2485,7 @@ async def new_instance(request: Request):
         forwarded = {
             "profile_mode": mode, "profile_name": name,
             "browser_mode": browser_mode, "vnc_refresh": vnc_refresh,
+            "proxy": proxy,
         }
         import urllib.error
         try:
@@ -2515,10 +2524,14 @@ async def new_instance(request: Request):
     try:
         sid = str(uuid.uuid4())
         data = await run_in_threadpool(
-            start_browser_instance, sid, mode, name, browser_mode, vnc_refresh
+            start_browser_instance, sid, mode, name, browser_mode, vnc_refresh, proxy
         )
+        audit("instance.create", sid, detail=f"{mode}/{browser_mode}")
         return JSONResponse(to_view(data, request))
     except ProfileInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         log.warning("创建实例失败: %s", e)
@@ -2709,7 +2722,38 @@ async def api_cdp_cmd(sid: str, request: Request):
         "Page.bringToFront",
         "Page.getNavigationHistory",
         "Page.navigateToHistoryEntry",
+        "Page.captureScreenshot",
+        "Page.printToPDF",
+        "Page.getLayoutMetrics",
         "Runtime.evaluate",
+        # 元素检查器：DOM 查询 + 计算样式 + 外链 CSS 内容。
+        "DOM.getDocument",
+        "DOM.querySelector",
+        "DOM.querySelectorAll",
+        "DOM.getBoxModel",
+        "DOM.getOuterHTML",
+        "CSS.getComputedStyleForNode",
+        "CSS.getMatchedStylesForNode",
+        "CSS.getStyleSheetText",
+        # 网络抓包：允许按需启用/停用并读取 CDP 缓存的 Cookie。
+        "Network.enable",
+        "Network.disable",
+        "Network.getCookies",
+        "Network.setExtraHTTPHeaders",
+        "Network.setUserAgentOverride",
+        # Console / 性能 / 设备模拟 / 离线限速。
+        "Runtime.enable",
+        "Runtime.discardConsoleEntries",
+        "Log.enable",
+        "Log.clear",
+        "Performance.enable",
+        "Performance.getMetrics",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.clearDeviceMetricsOverride",
+        "Emulation.setUserAgentOverride",
+        "Emulation.setGeolocationOverride",
+        "Emulation.clearGeolocationOverride",
+        "Network.emulateNetworkConditions",
     }
     if method not in allowed:
         raise HTTPException(status_code=400, detail="不支持的 CDP 命令: " + method)
@@ -3481,6 +3525,7 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
 @app.post("/api/instance/{sid}/stop")
 async def stop_one(sid: str):
     await run_in_threadpool(stop_instance, sid)
+    audit("instance.stop", sid)
     return {"ok": True}
 
 
@@ -3576,3 +3621,465 @@ async def delete_profile(name: str):
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================================
+# 扩展功能基础设施：通用持久化（审计日志 / 标签 / 脚本库 / 模板 / 定时任务 /
+# 录制脚本共用）。沿用 DATA_DIR 挂载，容器重建不丢；_STORE_LOCK 保证读写原子。
+# ===========================================================================
+STORE_FILES = {
+    "audit": DATA_DIR / "audit_log.json",
+    "tags": DATA_DIR / "instance_tags.json",
+    "snippets": DATA_DIR / "js_snippets.json",
+    "templates": DATA_DIR / "instance_templates.json",
+    "schedules": DATA_DIR / "schedules.json",
+    "recordings": DATA_DIR / "recordings.json",
+}
+
+
+def store_load(kind: str, default=None):
+    if kind not in STORE_FILES:
+        raise ValueError("未知存储类型: " + kind)
+    with _STORE_LOCK:
+        return _load_json(STORE_FILES[kind], default if default is not None else [])
+
+
+def store_save(kind: str, data) -> bool:
+    if kind not in STORE_FILES:
+        raise ValueError("未知存储类型: " + kind)
+    with _STORE_LOCK:
+        return _save_json(STORE_FILES[kind], data)
+
+
+def audit(action: str, sid: str = "", host: str = "local", detail: str = "") -> None:
+    """记一条语义化操作审计，写失败不影响主操作。最多保留 2000 条。"""
+    try:
+        rows = store_load("audit", [])
+        rows.append({
+            "ts": time.time(),
+            "action": action,
+            "sid": sid,
+            "host": host,
+            "detail": detail[:300],
+        })
+        store_save("audit", rows[-2000:])
+    except Exception as e:
+        log.warning("审计日志写入失败: %s", e)
+
+
+@app.get("/api/audit")
+async def api_audit_get(limit: int = 200):
+    rows = store_load("audit", [])
+    return {"rows": rows[-max(1, min(limit, 2000)):][::-1]}
+
+
+@app.delete("/api/audit")
+async def api_audit_clear():
+    store_save("audit", [])
+    return {"ok": True}
+
+
+# ---- 实例标签 / 备注：按 sid 存，跟随实例删除自动清理 ----
+@app.get("/api/tags")
+async def api_tags_get():
+    return {"tags": store_load("tags", {})}
+
+
+@app.post("/api/tags/{sid}")
+async def api_tags_set(sid: str, request: Request):
+    body = await request.json()
+    tags = store_load("tags", {})
+    entry = {
+        "label": str(body.get("label") or "")[:80],
+        "tags": [str(x)[:30] for x in (body.get("tags") or [])][:20],
+    }
+    tags[sid] = entry
+    store_save("tags", tags)
+    audit("tag.set", sid, detail=entry["label"])
+    return {"ok": True, "entry": entry}
+
+
+@app.delete("/api/tags/{sid}")
+async def api_tags_delete(sid: str):
+    tags = store_load("tags", {})
+    tags.pop(sid, None)
+    store_save("tags", tags)
+    return {"ok": True}
+
+
+# ---- 脚本片段库 ----
+@app.get("/api/snippets")
+async def api_snippets_get():
+    return {"snippets": store_load("snippets", [])}
+
+
+@app.post("/api/snippets")
+async def api_snippets_save(request: Request):
+    body = await request.json()
+    items = store_load("snippets", [])
+    item = {
+        "id": str(body.get("id") or uuid.uuid4().hex),
+        "name": str(body.get("name") or "未命名")[:60],
+        "code": str(body.get("code") or "")[:20000],
+    }
+    idx = next((i for i, x in enumerate(items) if x.get("id") == item["id"]), -1)
+    if idx >= 0:
+        items[idx] = item
+    else:
+        items.append(item)
+    store_save("snippets", items)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/snippets/{sid}")
+async def api_snippets_delete(sid: str):
+    items = [x for x in store_load("snippets", []) if x.get("id") != sid]
+    store_save("snippets", items)
+    return {"ok": True}
+
+
+# ---- 实例配置模板 ----
+@app.get("/api/templates")
+async def api_templates_get():
+    return {"templates": store_load("templates", [])}
+
+
+@app.post("/api/templates")
+async def api_templates_save(request: Request):
+    body = await request.json()
+    items = store_load("templates", [])
+    item = {
+        "id": str(body.get("id") or uuid.uuid4().hex),
+        "name": str(body.get("name") or "未命名模板")[:60],
+        "config": body.get("config") or {},
+    }
+    idx = next((i for i, x in enumerate(items) if x.get("id") == item["id"]), -1)
+    if idx >= 0:
+        items[idx] = item
+    else:
+        items.append(item)
+    store_save("templates", items)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/templates/{tid}")
+async def api_templates_delete(tid: str):
+    items = [x for x in store_load("templates", []) if x.get("id") != tid]
+    store_save("templates", items)
+    return {"ok": True}
+
+
+# ---- 录制脚本（前端事件序列，后端只存取） ----
+@app.get("/api/recordings")
+async def api_recordings_get():
+    return {"recordings": store_load("recordings", [])}
+
+
+@app.post("/api/recordings")
+async def api_recordings_save(request: Request):
+    body = await request.json()
+    items = store_load("recordings", [])
+    item = {
+        "id": str(body.get("id") or uuid.uuid4().hex),
+        "name": str(body.get("name") or "未命名录制")[:60],
+        "events": body.get("events") or [],
+    }
+    idx = next((i for i, x in enumerate(items) if x.get("id") == item["id"]), -1)
+    if idx >= 0:
+        items[idx] = item
+    else:
+        items.append(item)
+    store_save("recordings", items)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/recordings/{rid}")
+async def api_recordings_delete(rid: str):
+    items = [x for x in store_load("recordings", []) if x.get("id") != rid]
+    store_save("recordings", items)
+    return {"ok": True}
+
+
+
+# ===========================================================================
+# 方向一：CDP 事件流代理。网络抓包 / Console 日志 / 性能面板共用一条 WS，
+# 通过 domain 查询参数决定启用哪些 CDP 域，避免三套重复的转发代码。
+# 前端连 manager 的 /ws/inspect，manager 连容器 CDP，鉴权同 /ws/cast。
+# ===========================================================================
+INSPECT_DOMAINS = {
+    "network": ["Network.enable", "Runtime.enable"],
+    "console": ["Runtime.enable", "Log.enable"],
+    "performance": ["Performance.enable"],
+}
+
+
+@app.websocket("/ws/inspect/{sid}/{tid}")
+async def ws_inspect(websocket: WebSocket, sid: str, tid: str):
+    import websocket as ws_client
+
+    if not key_ok(websocket.query_params.get("key", "")):
+        await websocket.close(code=4401)
+        return
+    if not valid_target_id(tid):
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "非法的标签 ID"})
+        await websocket.close()
+        return
+    domain = str(websocket.query_params.get("domain", "console") or "").strip().lower()
+    if domain not in INSPECT_DOMAINS:
+        domain = "console"
+    await websocket.accept()
+
+    upstream = None
+    stop = threading.Event()
+    send_lock = threading.Lock()
+    loop = asyncio.get_running_loop()
+    call_id = [100]
+
+    def upstream_send(payload: dict) -> None:
+        with send_lock:
+            upstream.send(json.dumps(payload))
+
+    try:
+        item = get_instance(sid)
+        ip = container_ip_by_id(item.get("container_id"))
+        if not ip:
+            await websocket.send_json({"type": "error", "message": "容器网络未就绪"})
+            await websocket.close()
+            return
+        upstream = ws_client.create_connection(
+            f"ws://{ip}:9222/devtools/page/{tid}", timeout=10, suppress_origin=True
+        )
+        upstream.settimeout(1)
+        # 启用事件域。CDP 会对每条启用命令回一个空结果，pump 里忽略即可。
+        for m in INSPECT_DOMAINS[domain]:
+            call_id[0] += 1
+            upstream_send({"id": call_id[0], "method": m, "params": {}})
+        audit("inspect.open", sid, detail="domain=" + domain)
+
+        def pump():
+            while not stop.is_set():
+                try:
+                    raw = upstream.recv()
+                except Exception:
+                    continue  # 空闲超时/暂时无数据，继续等
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if "id" in msg:
+                    # 命令响应：转发给前端（用于 getResponseBody / getMetrics 等主动调用）
+                    asyncio.run_coroutine_threadsafe(
+                        websocket.send_json({"type": "result", "msg": msg}), loop
+                    )
+                    continue
+                method = msg.get("method", "")
+                params = msg.get("params", {})
+                # 按域过滤，只推前端订阅的事件，避免画面帧等无关流量。
+                keep = False
+                if domain == "network" and method.startswith("Network."):
+                    keep = True
+                elif domain == "console" and (
+                    method in ("Runtime.consoleAPICalled", "Runtime.exceptionThrown",
+                               "Log.entryAdded")
+                ):
+                    keep = True
+                elif domain == "performance" and method == "Performance.metrics":
+                    keep = True
+                if keep:
+                    asyncio.run_coroutine_threadsafe(
+                        websocket.send_json({"type": "event", "method": method, "params": params}),
+                        loop,
+                    )
+
+        t = threading.Thread(target=pump, daemon=True)
+        t.start()
+
+        # 前端 → CDP：转发命令（如 Network.getResponseBody 取响应体）。
+        while True:
+            try:
+                text = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            try:
+                req = json.loads(text)
+            except Exception:
+                continue
+            if req.get("type") == "cmd" and req.get("method"):
+                call_id[0] += 1
+                upstream_send({
+                    "id": call_id[0],
+                    "method": req["method"],
+                    "params": req.get("params") or {},
+                })
+                # 响应通过 pump 以 type=result 回推；前端按 id 关联。
+                await websocket.send_json({"type": "sent", "id": call_id[0]})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)[:200]})
+        except Exception:
+            pass
+    finally:
+        stop.set()
+        if upstream is not None:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+
+
+# ---- 批量执行 CDP 命令：对多个实例/标签下发同一 Runtime.evaluate ----
+@app.post("/api/batch/exec")
+async def api_batch_exec(request: Request):
+    body = await request.json()
+    targets = body.get("targets") or []   # [{sid, tid}]
+    method = str(body.get("method") or "Runtime.evaluate")
+    params = body.get("params") or {}
+    if method != "Runtime.evaluate":
+        raise HTTPException(status_code=400, detail="批量执行仅支持 Runtime.evaluate")
+    results = []
+    for t in targets[:100]:
+        sid = str(t.get("sid") or "")
+        tid = str(t.get("target_id") or t.get("tid") or "")
+        if not sid or not valid_target_id(tid):
+            results.append({"sid": sid, "ok": False, "error": "参数不合法"})
+            continue
+        try:
+            r = await run_in_threadpool(cdp_command, sid, tid, method, params)
+            results.append({"sid": sid, "ok": True, "result": r})
+        except Exception as e:
+            results.append({"sid": sid, "ok": False, "error": str(e)[:200]})
+    audit("batch.exec", detail=f"{len(results)} targets, method={method}")
+    return {"results": results}
+
+
+# ---- 资源监控：逐实例容器 CPU/内存/网络 ----
+@app.get("/api/metrics")
+async def api_metrics():
+    out = []
+    with LOCK:
+        items = list(INSTANCES.values())
+    for item in items:
+        try:
+            c = client.containers.get(item["container_id"])
+            c.reload()
+            st = c.stats(stream=False)
+            cpu = st.get("cpu_stats", {})
+            mem = st.get("memory_stats", {})
+            precpu = st.get("precpu_stats", {})
+            cpu_delta = cpu.get("cpu_usage", {}).get("total_usage", 0) - \
+                precpu.get("cpu_usage", {}).get("total_usage", 0)
+            sys_delta = cpu.get("system_cpu_usage", 0) - precpu.get("system_cpu_usage", 0)
+            cpu_pct = round((cpu_delta / sys_delta) * (cpu.get("cpu_usage", {}).get(
+                "percpu_usage") and len(cpu["cpu_usage"]["percpu_usage"]) or 1) * 100, 1) \
+                if sys_delta else 0
+            mem_used = mem.get("usage", 0)
+            mem_limit = mem.get("limit", 1)
+            out.append({
+                "sid": item.get("sid"),
+                "host": "local",
+                "cpu_pct": cpu_pct,
+                "mem_used": mem_used,
+                "mem_limit": mem_limit,
+                "mem_pct": round(mem_used / mem_limit * 100, 1) if mem_limit else 0,
+            })
+        except Exception:
+            continue
+    return {"metrics": out}
+
+
+# ---- 定时任务：轻量调度器，持久化到 schedules.json ----
+SCHEDULE_JOBS = {}
+SCHEDULE_LOCK = threading.Lock()
+
+
+def schedule_run(job: dict) -> None:
+    """执行一条定时任务：创建/停止实例，或 Runtime.evaluate。"""
+    action = job.get("action")
+    try:
+        if action == "stop":
+            req = urllib.request.Request(
+                "http://127.0.0.1:8000/instance/" + quote(job.get("sid", ""), safe="") + "/stop",
+                method="POST",
+            )
+            if API_KEY:
+                req.add_header("X-API-Key", API_KEY)
+            urllib.request.urlopen(req, timeout=10).read()
+        elif action == "eval":
+            targets = job.get("targets") or []
+            for t in targets[:50]:
+                cdp_command(t.get("sid", ""), t.get("tid", ""), "Runtime.evaluate",
+                            {"expression": job.get("expression", ""), "returnByValue": True})
+        audit("schedule.run", detail=job.get("name", ""))
+    except Exception as e:
+        log.warning("定时任务 %s 执行失败: %s", job.get("name"), e)
+
+
+def schedule_tick() -> None:
+    now = time.time()
+    with SCHEDULE_LOCK:
+        jobs = store_load("schedules", [])
+    for job in jobs:
+        if not job.get("enabled") or job.get("next_run", 0) > now:
+            continue
+        threading.Thread(target=schedule_run, args=(job,), daemon=True).start()
+        with SCHEDULE_LOCK:
+            current = store_load("schedules", [])
+            for j in current:
+                if j.get("id") == job.get("id"):
+                    interval = max(60, int(job.get("interval_sec") or 3600))
+                    j["next_run"] = now + interval
+                    j["last_run"] = now
+            store_save("schedules", current)
+
+
+def schedule_loop() -> None:
+    while True:
+        try:
+            schedule_tick()
+        except Exception as e:
+            log.warning("定时任务轮询异常: %s", e)
+        time.sleep(5)
+
+
+threading.Thread(target=schedule_loop, name="schedule-loop", daemon=True).start()
+
+
+@app.get("/api/schedules")
+async def api_schedules_get():
+    return {"schedules": store_load("schedules", [])}
+
+
+@app.post("/api/schedules")
+async def api_schedules_save(request: Request):
+    body = await request.json()
+    items = store_load("schedules", [])
+    item = {
+        "id": str(body.get("id") or uuid.uuid4().hex),
+        "name": str(body.get("name") or "未命名任务")[:60],
+        "action": body.get("action") if body.get("action") in ("stop", "eval") else "eval",
+        "enabled": bool(body.get("enabled", True)),
+        "interval_sec": max(60, int(body.get("interval_sec") or 3600)),
+        "sid": str(body.get("sid") or ""),
+        "targets": body.get("targets") or [],
+        "expression": str(body.get("expression") or "")[:10000],
+        "next_run": time.time() + max(60, int(body.get("interval_sec") or 3600)),
+        "last_run": 0,
+    }
+    idx = next((i for i, x in enumerate(items) if x.get("id") == item["id"]), -1)
+    if idx >= 0:
+        item["next_run"] = items[idx].get("next_run", item["next_run"])
+        items[idx] = item
+    else:
+        items.append(item)
+    store_save("schedules", items)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/schedules/{job_id}")
+async def api_schedules_delete(job_id: str):
+    items = [x for x in store_load("schedules", []) if x.get("id") != job_id]
+    store_save("schedules", items)
+    return {"ok": True}

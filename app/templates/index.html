@@ -26,6 +26,25 @@
             --scroll-thumb-hover: #4c5470;
             --scroll-track: transparent;
         }
+        /* 浅色主题：仅覆盖颜色变量，布局与交互完全一致。用户切换后存 localStorage。 */
+        html[data-theme="light"] {
+            --bg: #f4f6fb;
+            --surface: #ffffff;
+            --surface-2: #f0f2f8;
+            --surface-3: #e5e9f2;
+            --border: #d7dce8;
+            --border-soft: #e6eaf2;
+            --text: #1e2333;
+            --muted: #6b7390;
+            --accent: #3b6fe0;
+            --accent-hover: #2d5cc4;
+            --accent-soft: rgba(59, 111, 224, .12);
+            --success: #189b62;
+            --danger: #d64545;
+            --warn: #c47f10;
+            --scroll-thumb: #bcc3d4;
+            --scroll-thumb-hover: #9aa3ba;
+        }
         * { box-sizing: border-box; }
         /* 全局统一深色滚动条：避免弹窗/侧栏/列表里冒出浏览器默认的亮色滚动条。
            Firefox 用 scrollbar-color，Chromium/WebKit 用 ::-webkit-scrollbar。 */
@@ -411,6 +430,56 @@
             .snippet-main { grid-template-columns: 1fr; }
             .snippet-libs { flex-direction: row; flex-wrap: wrap; }
         }
+
+        /* 扩展功能：开发者工具 / 批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 监控 */
+        .tool-more { position: relative; }
+        .tool-menu { display: none; position: absolute; right: 0; top: 100%; z-index: 40;
+            background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+            padding: 6px; min-width: 140px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+        .tool-menu.open { display: block; }
+        .tool-menu button { display: block; width: 100%; text-align: left; padding: 9px 12px;
+            border: 0; background: transparent; color: var(--text); font-size: 13px; border-radius: 6px; }
+        .tool-menu button:hover { background: var(--surface-3); }
+        .panel.wide-panel { width: min(1180px, 96vw); max-width: 96vw; }
+        .dev-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--border);
+            padding-bottom: 10px; margin-bottom: 12px; }
+        .dev-tab { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px;
+            background: var(--surface-2); color: var(--text); font-size: 13px; cursor: pointer; }
+        .dev-tab:hover { border-color: var(--accent); }
+        .dev-tab.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+        .dev-pane { min-height: 360px; max-height: 58vh; overflow: auto; }
+        .dev-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .dev-toolbar .spacer { flex: 1; }
+        .dev-log { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+            font: 12px/1.6 ui-monospace, monospace; padding: 10px 12px; max-height: 46vh; overflow: auto; }
+        .dev-log .lvl-error { color: var(--danger, #ff6b6b); }
+        .dev-log .lvl-warn { color: var(--warn, #ffb454); }
+        .dev-log .lvl-info { color: var(--text); }
+        .dev-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .dev-table th, .dev-table td { padding: 7px 9px; border-bottom: 1px solid var(--border); text-align: left; }
+        .dev-table th { color: var(--muted); font-weight: 500; }
+        .dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+        .dev-card { background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 10px; padding: 12px; }
+        .dev-card .t { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+        .dev-card .m { font-size: 11px; color: var(--muted); line-height: 1.6; }
+        .dev-meter { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 6px; }
+        .dev-meter i { display: block; height: 100%; background: var(--accent); }
+        .dev-empty { color: var(--muted); font-size: 12px; padding: 28px; text-align: center; }
+        .dev-code { width: 100%; min-height: 140px; font: 13px/1.6 ui-monospace, monospace;
+            background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 12px; resize: vertical; }
+        .dev-result { margin-top: 10px; max-height: 180px; overflow: auto; font: 12px/1.6 ui-monospace,
+            monospace; white-space: pre-wrap; word-break: break-all; background: var(--surface-2);
+            border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+        .rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+            background: var(--danger, #ff6b6b); margin-right: 5px; vertical-align: middle; }
+        .tag-chip { display: inline-block; padding: 2px 7px; border-radius: 10px;
+            background: var(--accent-soft); color: var(--accent); font-size: 11px; margin-right: 4px; }
+        @media (prefers-reduced-motion: no-preference) {
+            .rec-dot.live { animation: recPulse 1.2s infinite; }
+        }
+        @keyframes recPulse { 50% { opacity: 0.3; } }
 
         .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
         .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 11px; background: var(--surface-2); }
@@ -966,6 +1035,19 @@
             <button id="btnShare" onclick="openShare()" class="btn-icon" title="只读分享：拖入浏览器生成观看链接，观看端不能操控"><svg class="ico"><use href="#i-share"/></svg><span>分享</span></button>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
+            <div class="tool-more" id="toolMore">
+                <button class="btn-icon" onclick="toggleToolMenu()" title="更多工具：批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 资源监控"><svg class="ico"><use href="#i-settings"/></svg><span>工具</span></button>
+                <div class="tool-menu" id="toolMenu">
+                    <button onclick="openBatch()">批量执行</button>
+                    <button onclick="openSnipLib()">脚本片段库</button>
+                    <button onclick="openTpl()">实例模板</button>
+                    <button onclick="openSched()">定时任务</button>
+                    <button onclick="openAudit()">操作审计</button>
+                    <button onclick="openRes()">资源监控</button>
+                    <button onclick="openRec()">录制回放</button>
+                    <button onclick="toggleTheme()">切换主题</button>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -1129,6 +1211,11 @@
                 <select id="reuseName"></select>
                 <div class="hint" id="reuseHint">被运行中实例占用的目录不会出现在列表里。</div>
             </div>
+            <div class="row">
+                <label for="createProxy">代理（可选，每实例独立）</label>
+                <input id="createProxy" placeholder="http://host:port 或 socks5://host:port，留空直连" spellcheck="false">
+                <div class="hint">仅对当前实例生效，支持 http/https/socks5/socks4。需要重建实例才会应用。</div>
+            </div>
             <div class="foot" id="createFoot">持久目录以 Docker Volume 存在宿主机上，删除实例不会清除；需到左侧「持久用户目录」点删除。</div>
             <div class="actions">
                 <button onclick="closeCreate()">取消</button>
@@ -1290,6 +1377,125 @@
             <div class="actions">
                 <button class="btn-primary" onclick="closeSnippet()">关闭</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 开发者工具弹窗：网络抓包 / Console / 元素检查 / 性能 / CDP 命令控制台 -->
+    <div class="mask" id="devMask" onclick="if(event.target===this) closeDev()">
+        <div class="panel wide-panel">
+            <h3>开发者工具 <span id="devSid" style="font-size:12px;color:var(--muted);font-weight:400"></span></h3>
+            <div class="dev-tabs" id="devTabs">
+                <button class="dev-tab on" data-pane="network" onclick="switchDev('network')">网络抓包</button>
+                <button class="dev-tab" data-pane="console" onclick="switchDev('console')">Console</button>
+                <button class="dev-tab" data-pane="element" onclick="switchDev('element')">元素检查</button>
+                <button class="dev-tab" data-pane="performance" onclick="switchDev('performance')">性能</button>
+                <button class="dev-tab" data-pane="console-cmd" onclick="switchDev('console-cmd')">CDP 控制台</button>
+            </div>
+            <div class="dev-pane" id="devPane"></div>
+            <div class="actions">
+                <button onclick="closeDev()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量执行弹窗 -->
+    <div class="mask" id="batchMask" onclick="if(event.target===this) closeBatch()">
+        <div class="panel wide-panel">
+            <h3>批量执行 JavaScript</h3>
+            <div class="hint">对本机已选实例的所有标签页执行同一段 JS（Runtime.evaluate，只读 returnByValue）。</div>
+            <textarea class="dev-code" id="batchCode" spellcheck="false" placeholder="document.title"></textarea>
+            <div class="dev-result" id="batchResult" style="display:none"></div>
+            <div class="actions">
+                <button onclick="closeBatch()">关闭</button>
+                <button class="btn-primary" onclick="runBatch()">执行</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 脚本片段库弹窗 -->
+    <div class="mask" id="snipLibMask" onclick="if(event.target===this) closeSnipLib()">
+        <div class="panel wide-panel">
+            <h3>脚本片段库</h3>
+            <div class="dev-toolbar">
+                <input id="snipName" placeholder="片段名称" style="flex:1;min-width:120px">
+                <button class="btn-mini" onclick="saveSnippet()">保存当前</button>
+            </div>
+            <textarea class="dev-code" id="snipCode" spellcheck="false" placeholder="在此输入 JS 代码"></textarea>
+            <div class="dev-grid" id="snipList" style="margin-top:12px"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeSnipLib()">关闭</button></div>
+        </div>
+    </div>
+
+    <!-- 模板管理弹窗 -->
+    <div class="mask" id="tplMask" onclick="if(event.target===this) closeTpl()">
+        <div class="panel wide-panel">
+            <h3>实例配置模板</h3>
+            <div class="dev-toolbar">
+                <input id="tplName" placeholder="模板名称" style="flex:1;min-width:120px">
+                <button class="btn-mini" onclick="saveCurrentAsTemplate()">保存当前实例配置</button>
+            </div>
+            <div class="dev-grid" id="tplList"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeTpl()">关闭</button></div>
+        </div>
+    </div>
+
+    <!-- 定时任务弹窗 -->
+    <div class="mask" id="schedMask" onclick="if(event.target===this) closeSched()">
+        <div class="panel wide-panel">
+            <h3>定时任务</h3>
+            <div class="dev-toolbar">
+                <input id="schedName" placeholder="任务名称" style="flex:1;min-width:110px">
+                <select id="schedAction"><option value="eval">执行 JS</option><option value="stop">停止实例</option></select>
+                <input id="schedInterval" type="number" value="3600" min="60" style="width:100px" title="间隔秒">
+                <button class="btn-mini" onclick="saveSchedule()">添加</button>
+            </div>
+            <textarea class="dev-code" id="schedExpr" spellcheck="false" placeholder="document.title"></textarea>
+            <div class="dev-grid" id="schedList" style="margin-top:12px"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeSched()">关闭</button></div>
+        </div>
+    </div>
+
+    <!-- 操作审计弹窗 -->
+    <div class="mask" id="auditMask" onclick="if(event.target===this) closeAudit()">
+        <div class="panel wide-panel">
+            <h3>操作审计日志</h3>
+            <div class="dev-toolbar">
+                <span class="hint">最近 200 条语义化操作记录</span>
+                <span class="spacer"></span>
+                <button class="btn-mini" onclick="clearAudit()">清空</button>
+            </div>
+            <div class="dev-log" id="auditList"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeAudit()">关闭</button></div>
+        </div>
+    </div>
+
+    <!-- 资源监控弹窗 -->
+    <div class="mask" id="resMask" onclick="if(event.target===this) closeRes()">
+        <div class="panel wide-panel">
+            <h3>资源监控</h3>
+            <div class="dev-toolbar">
+                <span class="hint">各实例容器实时 CPU / 内存占用</span>
+                <span class="spacer"></span>
+                <button class="btn-mini" onclick="loadMetrics()">刷新</button>
+            </div>
+            <div class="dev-grid" id="resList"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeRes()">关闭</button></div>
+        </div>
+    </div>
+
+    <!-- 录制回放弹窗 -->
+    <div class="mask" id="recMask" onclick="if(event.target===this) closeRec()">
+        <div class="panel wide-panel">
+            <h3>操作录制与回放</h3>
+            <div class="hint">点「开始录制」后在画面上操作，鼠标点击与按键会被记录；保存后可选中实例回放。</div>
+            <div class="dev-toolbar">
+                <button class="btn-mini" id="recToggle" onclick="toggleRecord()"><span class="rec-dot"></span>开始录制</button>
+                <input id="recName" placeholder="录制名称" style="flex:1;min-width:130px">
+                <button class="btn-mini" onclick="saveRecording()">保存</button>
+                <span class="hint" id="recCount">0 个事件</span>
+            </div>
+            <div class="dev-grid" id="recList" style="margin-top:8px"></div>
+            <div class="actions"><button class="btn-primary" onclick="closeRec()">关闭</button></div>
         </div>
     </div>
 
@@ -2407,6 +2613,7 @@
                             browser_mode: browserMode,
                             // VNC 刷新档全局统一，服务端用持久化的档位创建，不再随请求传。
                             host: createHost,
+                            proxy: ($("createProxy") ? $("createProxy").value.trim() : ""),
                         }),
                     },
                     30000
@@ -4256,6 +4463,9 @@
                     '<button class="lk" onclick="openSnippet()"' +
                     ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
+                    '<button class="lk" onclick="openDev()"' +
+                    ' title="开发者工具：网络抓包 / Console / 元素检查 / 性能 / CDP 命令控制台">' +
+                    '开发者工具</button>' +
                     '</div>';
                 $("detail").innerHTML =
                     '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
@@ -5124,6 +5334,503 @@
         setInterval(() => { if (!document.hidden && !bgEcoMode) pollCastTargets(); }, 2500);
         // 镜像更新检测：后端有 10 分钟缓存，这里每 5 分钟问一次即可。
         setInterval(() => { if (!document.hidden) checkImageStatus(); }, 300000);
+
+        // ===================================================================
+        // 扩展功能：开发者工具 / 批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 监控
+        // ===================================================================
+        function toggleToolMenu() { $("toolMenu").classList.toggle("open"); }
+        document.addEventListener("click", e => {
+            const m = $("toolMenu"), wrap = $("toolMore");
+            if (m && wrap && !wrap.contains(e.target)) m.classList.remove("open");
+        });
+
+        // ---- 通用 WS 地址（带 key）----
+        function wsBase() {
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            return proto + "//" + location.host;
+        }
+        function wsKey() { return apiKey ? "?key=" + encodeURIComponent(apiKey) : ""; }
+
+        // ---- 开发者工具：网络抓包 / Console / 元素 / 性能 / CDP 控制台 ----
+        let devSid = null, devTid = null, devWs = null, devDomain = null, devPerfTimer = null;
+        let devNetRows = [], devConsoleRows = [], devPerfRows = [];
+        function openDev() {
+            const sel = instances[selectedSid];
+            if (!sel) { toast("请先选中一个实例"); return; }
+            devSid = sel.sid;
+            devTid = null;
+            const tid = currentTid || castPreferredTid || (castState && castState.tid);
+            if (tid) devTid = tid;
+            $("devSid").textContent = (sel.host_name || "本机") + " " + sel.sid.slice(0, 8);
+            $("devMask").classList.add("open");
+            switchDev("network");
+        }
+        function closeDev() {
+            $("devMask").classList.remove("open");
+            if (devWs) { try { devWs.close(); } catch (e) {} devWs = null; }
+            if (devPerfTimer) { clearInterval(devPerfTimer); devPerfTimer = null; }
+            devDomain = null;
+        }
+        function devConnect(domain) {
+            if (devWs) { try { devWs.close(); } catch (e) {} devWs = null; }
+            if (!devTid) {
+                $("devPane").innerHTML = '<div class="dev-empty">未获取到当前标签，请先在画面区打开一个标签页</div>';
+                return;
+            }
+            devDomain = domain;
+            const url = wsBase() + "/ws/inspect/" + encodeURIComponent(devSid) + "/" +
+                encodeURIComponent(devTid) + "?domain=" + domain + (apiKey ? "&key=" + encodeURIComponent(apiKey) : "");
+            devWs = new WebSocket(url);
+            devWs.onmessage = ev => {
+                let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+                if (m.type === "event") devOnEvent(m.method, m.params);
+                else if (m.type === "error") toast("工具连接错误: " + m.message, "error");
+            };
+        }
+        function switchDev(pane) {
+            document.querySelectorAll(".dev-tab").forEach(b => b.classList.toggle("on", b.dataset.pane === pane));
+            const P = $("devPane");
+            if (pane === "network") {
+                P.innerHTML =
+                    '<div class="dev-toolbar"><button class="btn-mini" onclick="devConnect(\'network\');devRenderNetwork()">开始抓包</button>' +
+                    '<button class="btn-mini" onclick="devNetRows=[];devRenderNetwork()">清空</button>' +
+                    '<span class="hint">抓包期间会持续接收网络事件，关闭弹窗即停止</span></div><div id="devNetBody"></div>';
+                devRenderNetwork();
+            } else if (pane === "console") {
+                P.innerHTML =
+                    '<div class="dev-toolbar"><button class="btn-mini" onclick="devConnect(\'console\');devRenderConsole()">开始监听</button>' +
+                    '<button class="btn-mini" onclick="devConsoleRows=[];devRenderConsole()">清空</button></div><div id="devConsoleBody"></div>';
+                devRenderConsole();
+            } else if (pane === "element") {
+                P.innerHTML =
+                    '<div class="dev-toolbar"><input id="devSel" placeholder="CSS 选择器，如 body > div" style="flex:1;min-width:160px" value="body">' +
+                    '<button class="btn-mini" onclick="devQueryElement()">查询</button></div><div class="dev-result" id="devElemResult">输入选择器并点查询</div>';
+            } else if (pane === "performance") {
+                P.innerHTML =
+                    '<div class="dev-toolbar"><button class="btn-mini" onclick="devConnect(\'performance\')">开始监控</button>' +
+                    '<button class="btn-mini" onclick="devPerfRows=[]">清空</button>' +
+                    '<span class="hint">每 2 秒采样一次性能指标</span></div><div class="dev-result" id="devPerfResult"></div>';
+                devPerfTimer = setInterval(devSamplePerf, 2000);
+            } else if (pane === "console-cmd") {
+                P.innerHTML =
+                    '<div class="hint">直接下发 CDP 命令（白名单内），结果实时显示。例：Runtime.evaluate 参数 {"expression":"document.title"}</div>' +
+                    '<div class="dev-toolbar"><input id="devCmdMethod" placeholder="方法名，如 Runtime.evaluate" value="Runtime.evaluate" style="flex:1;min-width:180px">' +
+                    '<button class="btn-mini" onclick="devRunCmd()">执行</button></div>' +
+                    '<textarea class="dev-code" id="devCmdParams" spellcheck="false" style="min-height:90px">{"expression":"document.title","returnByValue":true}</textarea>' +
+                    '<div class="dev-result" id="devCmdResult"></div>';
+            }
+            if (pane !== "performance" && devPerfTimer) { clearInterval(devPerfTimer); devPerfTimer = null; }
+            if (pane !== "network" && pane !== "console" && pane !== "performance" && devWs) {
+                try { devWs.close(); } catch (e) {} devWs = null;
+            }
+        }
+        function devOnEvent(method, params) {
+            if (method === "Network.requestWillBeSent") {
+                devNetRows.push({ id: params.requestId, method: params.request ? params.request.method : "",
+                    url: params.request ? params.request.url : "", status: "", type: params.type || "" });
+            } else if (method === "Network.responseReceived") {
+                const r = devNetRows.find(x => x.id === params.requestId);
+                if (r) r.status = params.response ? params.response.status : "";
+            } else if (method === "Runtime.consoleAPICalled") {
+                devConsoleRows.push({ lvl: params.type || "log",
+                    text: (params.args || []).map(a => a.value != null ? a.value : (a.description || "")).join(" ") });
+            } else if (method === "Runtime.exceptionThrown") {
+                devConsoleRows.push({ lvl: "error", text: (params.exceptionDetails || {}).text || "异常" });
+            } else if (method === "Log.entryAdded") {
+                const e = params.entry || {};
+                devConsoleRows.push({ lvl: e.level || "info", text: e.text || "" });
+            } else if (method === "Performance.metrics") {
+                devPerfRows.push(params.metrics || []);
+            }
+            if (devDomain === "network" && $("devNetBody")) devRenderNetwork();
+            if (devDomain === "console" && $("devConsoleBody")) devRenderConsole();
+        }
+        function devRenderNetwork() {
+            const el = $("devNetBody"); if (!el) return;
+            if (!devNetRows.length) { el.innerHTML = '<div class="dev-empty">点「开始抓包」后显示网络请求</div>'; return; }
+            el.innerHTML = '<table class="dev-table"><thead><tr><th>状态</th><th>方法</th><th>类型</th><th>URL</th></tr></thead><tbody>' +
+                devNetRows.slice(-200).reverse().map(r =>
+                    '<tr><td>' + esc(String(r.status || "…")) + '</td><td>' + esc(r.method) + '</td><td>' +
+                    esc(r.type) + '</td><td style="max-width:520px;overflow-wrap:anywhere">' + esc(r.url) + '</td></tr>'
+                ).join("") + '</tbody></table>';
+        }
+        function devRenderConsole() {
+            const el = $("devConsoleBody"); if (!el) return;
+            if (!devConsoleRows.length) { el.innerHTML = '<div class="dev-empty">点「开始监听」后显示 Console 输出</div>'; return; }
+            el.innerHTML = devConsoleRows.slice(-300).reverse().map(r =>
+                '<div class="lvl-' + (r.lvl === "error" ? "error" : r.lvl === "warning" ? "warn" : "info") + '">' +
+                '[' + esc(r.lvl) + '] ' + esc(r.text) + '</div>'
+            ).join("");
+        }
+        function devQueryElement() {
+            const sel = $("devSel").value.trim();
+            if (!sel || !devSid || !devTid) return;
+            api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target_id: devTid, method: "DOM.getDocument", params: { depth: -1 } })
+            }).then(d => {
+                const root = d.result && d.result.root && d.result.root.nodeId;
+                if (!root) throw new Error("未获取到 DOM 根节点");
+                return api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target_id: devTid, method: "DOM.querySelector",
+                        params: { nodeId: root, selector: sel } })
+                });
+            }).then(d => {
+                const nid = d.result && d.result.nodeId;
+                if (!nid) { $("devElemResult").textContent = "未匹配到元素"; return; }
+                return api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target_id: devTid, method: "DOM.getOuterHTML", params: { nodeId: nid } })
+                }).then(h => {
+                    $("devElemResult").textContent = (h.result && h.result.outerHTML) || "(空)";
+                });
+            }).catch(e => { $("devElemResult").textContent = "查询失败: " + e.message; });
+        }
+        function devSamplePerf() {
+            if (devDomain !== "performance" || !devSid || !devTid) return;
+            api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target_id: devTid, method: "Performance.getMetrics", params: {} })
+            }).then(d => {
+                const el = $("devPerfResult"); if (!el) return;
+                const ms = (d.result && d.result.metrics) || [];
+                const pick = k => { const m = ms.find(x => x.name === k); return m ? m.value : "-"; };
+                el.textContent = "JS 堆: " + Math.round(pick("JSHeapUsedSize") / 1048576) + " MB / " +
+                    Math.round(pick("JSHeapTotalSize") / 1048576) + " MB\n" +
+                    "DOM 节点: " + pick("Nodes") + " | 文档: " + pick("Documents") +
+                    " | 布局次数: " + pick("LayoutCount");
+            }).catch(() => {});
+        }
+        function devRunCmd() {
+            const method = $("devCmdMethod").value.trim();
+            let params; try { params = JSON.parse($("devCmdParams").value || "{}"); }
+            catch (e) { $("devCmdResult").textContent = "参数不是合法 JSON: " + e.message; return; }
+            api("/api/instance/" + encodeURIComponent(devSid) + "/cmd", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target_id: devTid, method: method, params: params })
+            }).then(d => { $("devCmdResult").textContent = JSON.stringify(d.result, null, 2); })
+              .catch(e => { $("devCmdResult").textContent = "失败: " + e.message; });
+        }
+
+        // ---- 批量执行 ----
+        function openBatch() { $("toolMenu").classList.remove("open"); $("batchMask").classList.add("open"); }
+        function closeBatch() { $("batchMask").classList.remove("open"); }
+        function runBatch() {
+            const expr = $("batchCode").value.trim();
+            if (!expr) { toast("请输入 JS 代码"); return; }
+            const targets = [];
+            for (const i of Object.values(instances)) {
+                let tids = [];
+                try { tids = JSON.parse(sessionStorage.getItem("tabs_" + i.sid) || "[]"); } catch (e) {}
+                const tid = (tids[0] || {}).id || currentTid;
+                if (tid) targets.push({ sid: i.sid, tid: tid });
+            }
+            if (!targets.length) { toast("暂无可用标签页，请先打开实例画面"); return; }
+            $("batchResult").style.display = "block";
+            $("batchResult").textContent = "执行中…";
+            api("/api/batch/exec", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ targets: targets, method: "Runtime.evaluate",
+                    params: { expression: expr, returnByValue: true } })
+            }).then(d => {
+                $("batchResult").textContent = (d.results || []).map(r =>
+                    (r.ok ? "✓ " : "✗ ") + r.sid.slice(0, 8) + " " +
+                    (r.ok ? JSON.stringify(r.result && r.result.result && r.result.result.value) : r.error)
+                ).join("\n");
+                toast("批量执行完成", "ok");
+            }).catch(e => { $("batchResult").textContent = "失败: " + e.message; });
+        }
+
+        // ---- 脚本片段库 ----
+        function openSnipLib() { $("toolMenu").classList.remove("open"); $("snipLibMask").classList.add("open"); loadSnippets(); }
+        function closeSnipLib() { $("snipLibMask").classList.remove("open"); }
+        function loadSnippets() {
+            api("/api/snippets").then(d => {
+                const el = $("snipList");
+                el.innerHTML = (d.snippets || []).length ? d.snippets.map(s =>
+                    '<div class="dev-card"><div class="t">' + esc(s.name) + '</div>' +
+                    '<div class="m">' + esc((s.code || "").slice(0, 80)) + '</div>' +
+                    '<div class="dev-toolbar" style="margin-top:8px">' +
+                    '<button class="btn-mini" onclick="useSnippet(' + jsArg(s.id) + ')">载入</button>' +
+                    '<button class="btn-mini" onclick="deleteSnippet(' + jsArg(s.id) + ')">删除</button></div></div>'
+                ).join("") : '<div class="dev-empty">暂无片段，输入代码后点「保存当前」</div>';
+            }).catch(e => toast("加载片段失败: " + e.message, "error"));
+        }
+        function saveSnippet() {
+            const name = $("snipName").value.trim(), code = $("snipCode").value;
+            if (!name) { toast("请输入片段名称"); return; }
+            api("/api/snippets", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: name, code: code }) })
+                .then(() => { $("snipName").value = ""; toast("片段已保存", "ok"); loadSnippets(); })
+                .catch(e => toast("保存失败: " + e.message, "error"));
+        }
+        function useSnippet(id) {
+            api("/api/snippets").then(d => {
+                const s = (d.snippets || []).find(x => x.id === id);
+                if (s) { $("snipCode").value = s.code; $("snipName").value = s.name; }
+            });
+        }
+        function deleteSnippet(id) {
+            api("/api/snippets/" + encodeURIComponent(id), { method: "DELETE" })
+                .then(() => loadSnippets()).catch(e => toast("删除失败: " + e.message, "error"));
+        }
+
+        // ---- 实例配置模板 ----
+        function openTpl() { $("toolMenu").classList.remove("open"); $("tplMask").classList.add("open"); loadTpls(); }
+        function closeTpl() { $("tplMask").classList.remove("open"); }
+        function loadTpls() {
+            api("/api/templates").then(d => {
+                const el = $("tplList");
+                el.innerHTML = (d.templates || []).length ? d.templates.map(t =>
+                    '<div class="dev-card"><div class="t">' + esc(t.name) + '</div>' +
+                    '<div class="m">' + esc(JSON.stringify(t.config || {}).slice(0, 90)) + '</div>' +
+                    '<div class="dev-toolbar" style="margin-top:8px">' +
+                    '<button class="btn-mini" onclick="applyTpl(' + jsArg(t.id) + ')">应用</button>' +
+                    '<button class="btn-mini" onclick="deleteTpl(' + jsArg(t.id) + ')">删除</button></div></div>'
+                ).join("") : '<div class="dev-empty">暂无模板</div>';
+            }).catch(e => toast("加载模板失败: " + e.message, "error"));
+        }
+        function saveCurrentAsTemplate() {
+            const name = $("tplName").value.trim();
+            if (!name) { toast("请输入模板名称"); return; }
+            const config = {
+                profile_mode: $("createMode") ? $("createMode").value : "new",
+                browser_mode: $("createBrowser") ? $("createBrowser").value : "full",
+                quality: settings.quality, snapRate: settings.snapRate,
+                captureMode: settings.captureMode, proxy: $("createProxy") ? $("createProxy").value : "",
+            };
+            api("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: name, config: config }) })
+                .then(() => { $("tplName").value = ""; toast("模板已保存", "ok"); loadTpls(); })
+                .catch(e => toast("保存失败: " + e.message, "error"));
+        }
+        let tplCache = [];
+        function applyTpl(id) {
+            api("/api/templates").then(d => {
+                const t = (d.templates || []).find(x => x.id === id);
+                if (!t) return;
+                const c = t.config || {};
+                if ($("createMode") && c.profile_mode) $("createMode").value = c.profile_mode;
+                if ($("createBrowser") && c.browser_mode) $("createBrowser").value = c.browser_mode;
+                if ($("createProxy") && c.proxy != null) $("createProxy").value = c.proxy;
+                if (c.quality) setQuality(c.quality);
+                if (c.snapRate) setSnapRate(c.snapRate);
+                if (c.captureMode) setCaptureMode(c.captureMode);
+                closeTpl(); openCreate(); toast("模板已应用到新建弹窗", "ok");
+            });
+        }
+        function deleteTpl(id) {
+            api("/api/templates/" + encodeURIComponent(id), { method: "DELETE" })
+                .then(() => loadTpls()).catch(e => toast("删除失败: " + e.message, "error"));
+        }
+
+        // ---- 定时任务 ----
+        function openSched() { $("toolMenu").classList.remove("open"); $("schedMask").classList.add("open"); loadScheds(); }
+        function closeSched() { $("schedMask").classList.remove("open"); }
+        function loadScheds() {
+            api("/api/schedules").then(d => {
+                const el = $("schedList");
+                el.innerHTML = (d.schedules || []).length ? d.schedules.map(s =>
+                    '<div class="dev-card"><div class="t">' + esc(s.name) + (s.enabled ? '' : ' (停用)') + '</div>' +
+                    '<div class="m">' + esc(s.action) + ' · 每 ' + s.interval_sec + ' 秒<br>' +
+                    (s.last_run ? '上次: ' + new Date(s.last_run * 1000).toLocaleString() : '尚未运行') + '</div>' +
+                    '<div class="dev-toolbar" style="margin-top:8px">' +
+                    '<button class="btn-mini" onclick="toggleSched(' + jsArg(s.id) + ',' + !s.enabled + ')">' +
+                    (s.enabled ? '停用' : '启用') + '</button>' +
+                    '<button class="btn-mini" onclick="deleteSched(' + jsArg(s.id) + ')">删除</button></div></div>'
+                ).join("") : '<div class="dev-empty">暂无定时任务</div>';
+            }).catch(e => toast("加载任务失败: " + e.message, "error"));
+        }
+        function saveSchedule() {
+            const name = $("schedName").value.trim();
+            if (!name) { toast("请输入任务名称"); return; }
+            const action = $("schedAction").value;
+            const body = { name: name, action: action,
+                interval_sec: parseInt($("schedInterval").value, 10) || 3600, enabled: true };
+            if (action === "eval") {
+                body.expression = $("schedExpr").value.trim();
+                if (!body.expression) { toast("请输入要执行的 JS"); return; }
+                const targets = [];
+                for (const i of Object.values(instances)) {
+                    let tids = []; try { tids = JSON.parse(sessionStorage.getItem("tabs_" + i.sid) || "[]"); } catch (e) {}
+                    const tid = (tids[0] || {}).id || currentTid;
+                    if (tid) targets.push({ sid: i.sid, tid: tid });
+                }
+                body.targets = targets.slice(0, 50);
+            } else {
+                body.sid = selectedSid || "";
+                if (!body.sid) { toast("请先选中一个实例"); return; }
+            }
+            api("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body) })
+                .then(() => { $("schedName").value = ""; toast("任务已添加", "ok"); loadScheds(); })
+                .catch(e => toast("添加失败: " + e.message, "error"));
+        }
+        function toggleSched(id, enabled) {
+            api("/api/schedules").then(d => {
+                const s = (d.schedules || []).find(x => x.id === id);
+                if (!s) return;
+                s.enabled = enabled;
+                return api("/api/schedules", { method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(s) }).then(() => loadScheds());
+            });
+        }
+        function deleteSched(id) {
+            api("/api/schedules/" + encodeURIComponent(id), { method: "DELETE" })
+                .then(() => loadScheds()).catch(e => toast("删除失败: " + e.message, "error"));
+        }
+
+        // ---- 操作审计 ----
+        function openAudit() { $("toolMenu").classList.remove("open"); $("auditMask").classList.add("open"); loadAudit(); }
+        function closeAudit() { $("auditMask").classList.remove("open"); }
+        function loadAudit() {
+            api("/api/audit").then(d => {
+                const el = $("auditList");
+                el.innerHTML = (d.rows || []).length ? d.rows.map(r =>
+                    '<div class="lvl-info">[' + new Date(r.ts * 1000).toLocaleString() + '] ' +
+                    esc(r.action) + (r.sid ? ' ' + esc(r.sid.slice(0, 8)) : '') +
+                    (r.host && r.host !== "local" ? ' @' + esc(r.host) : '') +
+                    (r.detail ? ' — ' + esc(r.detail) : '') + '</div>'
+                ).join("") : '<div class="dev-empty">暂无操作记录</div>';
+            }).catch(e => toast("加载审计失败: " + e.message, "error"));
+        }
+        function clearAudit() {
+            api("/api/audit", { method: "DELETE" }).then(() => { toast("已清空", "ok"); loadAudit(); });
+        }
+
+        // ---- 资源监控 ----
+        function openRes() { $("toolMenu").classList.remove("open"); $("resMask").classList.add("open"); loadMetrics(); }
+        function closeRes() { $("resMask").classList.remove("open"); }
+        function loadMetrics() {
+            api("/api/metrics").then(d => {
+                const el = $("resList");
+                el.innerHTML = (d.metrics || []).length ? d.metrics.map(m =>
+                    '<div class="dev-card"><div class="t">' + esc(m.sid.slice(0, 8)) + '</div>' +
+                    '<div class="m">CPU ' + m.cpu_pct + '% · 内存 ' +
+                    Math.round(m.mem_used / 1048576) + '/' + Math.round(m.mem_limit / 1048576) + ' MB</div>' +
+                    '<div class="dev-meter"><i style="width:' + Math.min(100, m.mem_pct) + '%"></i></div></div>'
+                ).join("") : '<div class="dev-empty">暂无运行实例</div>';
+            }).catch(e => toast("加载监控失败: " + e.message, "error"));
+        }
+
+        // ---- 快捷键与主题 ----
+        let uiTheme = localStorage.getItem("uiTheme") || "dark";
+        function applyTheme(t) {
+            uiTheme = t;
+            if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+            else document.documentElement.removeAttribute("data-theme");
+            try { localStorage.setItem("uiTheme", t); } catch (e) {}
+        }
+        applyTheme(uiTheme);
+        document.addEventListener("keydown", e => {
+            if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.key === "l" || e.key === "L") toggleScreenLock();
+            else if (e.key === "d" || e.key === "D") { if ($("devMask").classList.contains("open")) closeDev(); else openDev(); }
+            else if (e.key === "Escape") {
+                if ($("devMask").classList.contains("open")) closeDev();
+                else if ($("batchMask").classList.contains("open")) closeBatch();
+                else if ($("snipLibMask").classList.contains("open")) closeSnipLib();
+                else if ($("tplMask").classList.contains("open")) closeTpl();
+                else if ($("schedMask").classList.contains("open")) closeSched();
+                else if ($("auditMask").classList.contains("open")) closeAudit();
+                else if ($("resMask").classList.contains("open")) closeRes();
+            }
+        });
+        function toggleTheme() {
+            $("toolMenu").classList.remove("open");
+            applyTheme(uiTheme === "dark" ? "light" : "dark");
+            toast("已切换到" + (uiTheme === "dark" ? "深色" : "浅色") + "主题", "ok");
+        }
+
+        // ---- 操作录制与回放 ----
+        let recording = false, recEvents = [];
+        function openRec() { $("toolMenu").classList.remove("open"); $("recMask").classList.add("open"); loadRecordings(); }
+        function closeRec() {
+            $("recMask").classList.remove("open");
+            if (recording) toggleRecord();
+        }
+        function toggleRecord() {
+            recording = !recording;
+            const btn = $("recToggle");
+            btn.innerHTML = recording
+                ? '<span class="rec-dot live"></span>停止录制'
+                : '<span class="rec-dot"></span>开始录制';
+            if (recording) {
+                recEvents = [];
+                $("frameHost").addEventListener("click", recOnClick, true);
+                $("frameHost").addEventListener("keydown", recOnKey, true);
+                toast("开始录制，请在画面上操作", "ok");
+            } else {
+                $("frameHost").removeEventListener("click", recOnClick, true);
+                $("frameHost").removeEventListener("keydown", recOnKey, true);
+                toast("已停止录制，共 " + recEvents.length + " 个事件", "ok");
+            }
+            $("recCount").textContent = recEvents.length + " 个事件";
+        }
+        function recOnClick(e) {
+            const host = $("frameHost").getBoundingClientRect();
+            recEvents.push({ t: "click", x: e.clientX - host.left, y: e.clientY - host.top });
+            $("recCount").textContent = recEvents.length + " 个事件";
+        }
+        function recOnKey(e) {
+            recEvents.push({ t: "key", key: e.key });
+            $("recCount").textContent = recEvents.length + " 个事件";
+        }
+        function saveRecording() {
+            const name = $("recName").value.trim() || ("录制 " + new Date().toLocaleString());
+            if (!recEvents.length) { toast("还没有录到事件"); return; }
+            api("/api/recordings", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: name, events: recEvents }) })
+                .then(() => { $("recName").value = ""; toast("录制已保存", "ok"); loadRecordings(); })
+                .catch(e => toast("保存失败: " + e.message, "error"));
+        }
+        function loadRecordings() {
+            api("/api/recordings").then(d => {
+                const el = $("recList");
+                el.innerHTML = (d.recordings || []).length ? d.recordings.map(r =>
+                    '<div class="dev-card"><div class="t">' + esc(r.name) + '</div>' +
+                    '<div class="m">' + (r.events || []).length + ' 个事件</div>' +
+                    '<div class="dev-toolbar" style="margin-top:8px">' +
+                    '<button class="btn-mini" onclick="replayRecording(' + jsArg(r.id) + ')">回放</button>' +
+                    '<button class="btn-mini" onclick="deleteRecording(' + jsArg(r.id) + ')">删除</button></div></div>'
+                ).join("") : '<div class="dev-empty">暂无录制</div>';
+            }).catch(e => toast("加载录制失败: " + e.message, "error"));
+        }
+        function replayRecording(id) {
+            api("/api/recordings").then(d => {
+                const r = (d.recordings || []).find(x => x.id === id);
+                if (!r || !selectedSid) { toast("请先选中一个实例"); return; }
+                let tids = []; try { tids = JSON.parse(sessionStorage.getItem("tabs_" + selectedSid) || "[]"); } catch (e) {}
+                const tid = (tids[0] || {}).id || currentTid;
+                if (!tid) { toast("未获取到当前标签"); return; }
+                let chain = Promise.resolve();
+                (r.events || []).forEach(ev => {
+                    chain = chain.then(() => {
+                        if (ev.t === "click") {
+                            return api("/api/instance/" + encodeURIComponent(selectedSid) + "/targets/" +
+                                encodeURIComponent(tid) + "/activate", { method: "POST" }).then(() => {
+                                // 用 Runtime.evaluate 在坐标处派发点击（浏览器内 DOM 坐标近似）
+                                return api("/api/instance/" + encodeURIComponent(selectedSid) + "/cmd", {
+                                    method: "POST", headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ target_id: tid, method: "Runtime.evaluate",
+                                        params: { expression:
+                                            "document.elementFromPoint(" + Math.round(ev.x) + "," + Math.round(ev.y) +
+                                            ") && document.elementFromPoint(" + Math.round(ev.x) + "," + Math.round(ev.y) + ").click()" } })
+                                });
+                            });
+                        }
+                        return Promise.resolve();
+                    }).then(() => new Promise(res => setTimeout(res, 150)));
+                });
+                return chain;
+            }).then(() => toast("回放完成", "ok")).catch(e => toast("回放失败: " + e.message, "error"));
+        }
+        function deleteRecording(id) {
+            api("/api/recordings/" + encodeURIComponent(id), { method: "DELETE" })
+                .then(() => loadRecordings()).catch(e => toast("删除失败: " + e.message, "error"));
+        }
     </script>
 </body>
 </html>

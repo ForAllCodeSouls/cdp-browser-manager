@@ -98,6 +98,15 @@ CHROME_ARGS=(
     --window-size=1920,1080
 )
 
+# 每实例独立代理：manager 创建实例时传入 BROWSER_PROXY=http://host:port 或 socks5://...
+# 只对合法 scheme 放行，避免把任意参数注入 Chrome 命令行。
+case "$BROWSER_PROXY" in
+    http://*|https://*|socks5://*|socks4://*)
+        CHROME_ARGS+=(--proxy-server="$BROWSER_PROXY")
+        echo "使用代理: $BROWSER_PROXY"
+        ;;
+esac
+
 # --no-sandbox 会触发 "unsupported command-line flag" 警告条，Chrome 76+ 起
 # 只能用管理策略关闭（--disable-infobars 已失效）。策略在镜像构建时写入。
 if [ -f /etc/opt/chrome/policies/managed/cdp_browser_manager.json ]; then

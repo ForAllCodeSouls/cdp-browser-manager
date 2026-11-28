@@ -146,7 +146,23 @@
             if (!cw || !ch || Math.abs(ratio - cw / ch) > 0.02) {
                 canvas.width = img.width; canvas.height = img.height;
             }
-            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            // 只读观看页水印：大画面叠加时间戳，防止截屏转播时无法追溯来源。
+            if (canvas.id === "largeCanvas") {
+                const now = new Date();
+                const text = "CDP Browser Manager · 只读观看 · " +
+                    now.toLocaleString("zh-CN", { hour12: false });
+                const fs = Math.max(14, Math.round(canvas.width / 64));
+                ctx.font = fs + "px sans-serif";
+                ctx.textAlign = "right";
+                ctx.textBaseline = "bottom";
+                ctx.fillStyle = "rgba(255,255,255,0.75)";
+                ctx.shadowColor = "rgba(0,0,0,0.8)";
+                ctx.shadowBlur = 4;
+                ctx.fillText(text, canvas.width - 12, canvas.height - 10);
+                ctx.shadowBlur = 0;
+            }
             if (onFirst) onFirst();
         };
         img.src = "data:image/jpeg;base64," + data;
