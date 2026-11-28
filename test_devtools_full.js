@@ -18,31 +18,25 @@ function ok(cond, msg) {
 
 console.log("== 自研九面板移除验证 ==");
 
-// 1. 自研九面板 DOM 全部移除（sideTabDev 保留：承载原生 DevTools iframe）
+// 1. 自研九面板 DOM 全部移除；抽屉内嵌 iframe 也已移除
 const domTokens = ["dtTabbar", "capWrap", "capCtxMenu", "dtPanelElements", "dtPanelSources",
-  "dtPanelPerformance", "dtFlameSvg", "dtPanelApplication", "devMask"];
+  "dtPanelPerformance", "dtFlameSvg", "dtPanelApplication", "devMask",
+  "sideTabDev", "sideViewDev", "devToolsFrame"];
 domTokens.forEach(t => ok(!html.includes('id="' + t + '"'), "DOM 移除: " + t));
-// 原生 DevTools 内嵌到抽屉
-ok(html.includes('id="sideTabDev"'), "开发者工具 tab 保留");
-ok(html.includes('id="devToolsFrame"'), "原生 DevTools iframe 保留");
 
 // 2. 九面板 JS 函数全部移除
 const fnTokens = ["dtSwitch", "dtCmd", "dtDispatch", "dtPerfToggle", "dtLoadProfile",
   "dtFlameRender", "dtHeapSnapshot", "dtScanSecrets", "dtExport", "capConnect", "capGenCurl"];
 fnTokens.forEach(fn => ok(!html.includes("function " + fn + "("), "函数移除: " + fn));
 
-// 3. 原生 DevTools 入口与代理链保留
+// 3. 原生 DevTools 入口与代理链保留（独立窗口）
 ok(html.includes("async function openDev()"), "openDev 入口保留");
 ok(html.includes("await openNativeDevTools();"), "openDev 打开原生 DevTools");
-ok(html.includes('switchSideView("dev")'), "openDev 切到抽屉 dev 视图");
+ok(html.includes('window.open(t.url, "_blank", "noopener")'), "openDev 用独立窗口打开");
 ok(html.includes("async function openNativeDevTools()"), "原生入口函数保留");
-ok(html.includes("frame.src = t.url"), "原生 DevTools 内嵌到 iframe");
+ok(!html.includes('switchSideView("dev")'), "不再切抽屉 dev 视图");
+ok(!html.includes("frame.src = t.url"), "不再内嵌 iframe");
 ok(html.includes("/devtools/inspector.html?ws="), "inspector.html 代理保留");
-// sandbox 防跳出：不给顶层导航，保留脚本/同源/剪贴板
-const frameSeg = html.split('id="devToolsFrame"')[1].split(">")[0];
-ok(!frameSeg.includes("allow-top-navigation"), "iframe 拒绝顶层导航");
-ok(frameSeg.includes("allow-same-origin"), "iframe 保留同源");
-ok(frameSeg.includes("allow-clipboard-write"), "iframe 保留复制能力");
 ok(main.includes('@app.api_route("/{port:int}/devtools/{rest:path}"'), "后端 DevTools 代理保留");
 ok(main.includes("def inject_devtools_ws_normalizer("), "ws 参数修正保留");
 ok(main.includes("DEVTOOLS_PY_SNIPPET"), "原生右键 Python 注入保留");

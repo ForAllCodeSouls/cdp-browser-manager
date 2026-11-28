@@ -827,11 +827,7 @@
             width: min(440px, 46vw);
             margin-left: 12px;
         }
-        /* 开发者工具 tab 激活时抽屉加宽，容纳原生 DevTools 多面板 */
-        .log-drawer.open.dev-wide {
-            width: min(1180px, 78vw);
-        }
-        /* 右侧抽屉：运行日志 + 内嵌原生 DevTools */
+        /* 右侧抽屉：只承载运行日志 */
         .side-switch {
             flex: 0 0 auto;
             display: flex;
@@ -868,16 +864,6 @@
         .side-close:hover { background: var(--surface-3); color: var(--text); }
         .side-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
         .side-view.on { display: flex; }
-        /* 内嵌原生 DevTools：iframe 铺满抽屉，去掉边框 */
-        .dev-view { padding: 0; overflow: hidden; }
-        .dev-frame {
-            flex: 1;
-            width: 100%;
-            height: 100%;
-            min-height: 0;
-            border: 0;
-            background: var(--surface-1);
-        }
 
         .log-view {
             flex: 1;
@@ -1319,7 +1305,6 @@
                 <aside class="log-drawer" id="logDrawer">
                     <div class="side-switch">
                         <button class="side-switch-btn on" id="sideTabLog" onclick="switchSideView('log')">运行日志</button>
-                        <button class="side-switch-btn" id="sideTabDev" onclick="switchSideView('dev')">开发者工具</button>
                         <span class="spacer"></span>
                         <button class="side-close" onclick="toggleLogs(false)" title="收起右侧面板">✕</button>
                     </div>
@@ -1335,14 +1320,6 @@
                             <div class="log-info" id="logInfo">全局 · manager</div>
                             <pre class="log-body" id="logBody"></pre>
                         </div>
-                    </div>
-                    <div class="side-view dev-view" id="sideViewDev">
-                        <!-- 原生 DevTools 内嵌：sandbox 刻意不给 allow-top-navigation，
-                             任何试图跳出顶层窗口的代码都会被浏览器拒绝，保证留在抽屉内。
-                             src 由 openDev() 动态注入，避免空 iframe 提前连 CDP。 -->
-                        <iframe id="devToolsFrame" class="dev-frame" title="原生 DevTools"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-clipboard-write allow-downloads"
-                            referrerpolicy="no-referrer"></iframe>
                     </div>
                 </aside>
             </div>
@@ -1513,7 +1490,7 @@
                     <option value="vnc">VNC 画面（可见地址栏/标签栏，仅完整内核）</option>
                     <option value="cast">CDP 抓屏（screencast，三种方式通用）</option>
                 </select>
-                <div class="hint">无头实例自动使用抓屏，不受此设置影响。也可在实例详情栏一键切换。</div>
+                <div class="hint">完整内核固定用 VNC 显示原生浏览器整窗（含标签栏/地址栏）；无头实例没有 VNC，自动用 CDP 抓屏（仅网页视口）。此设置仅影响无头实例的抓屏方式偏好。</div>
             </div>
             <div class="row">
                 <label for="setPage">noVNC 页面</label>
@@ -2821,14 +2798,23 @@
 
         function effectiveMode(i) {
             if (!i) return "vnc";
+            // 有头实例固定走 VNC 整窗：CDP screencast（Page.startScreencast）协议上
+            // 只能抓网页视口，抓不到浏览器自身的标签栏/地址栏，与原生浏览器画面不符。
+            // VNC 抓的是整块 X11 屏，能看到完整浏览器窗口（标签栏 + 地址栏 + 网页）。
+            // 无头实例没有 X11 / VNC 服务，只能用 CDP 抓屏（仅网页视口，客观限制）。
             if (isHeadless(i)) return "cast";
-            return settings.preview === "cast" ? "cast" : "vnc";
+            return "vnc";
         }
 
         function setPreview(mode) {
             const sel = selectedSid ? instances[selectedSid] : null;
-            if (mode === "vnc" && isHeadless(sel)) {
-                toast("无头实例没有 VNC 服务，请使用抓屏", "error");
+            if (!sel) return;
+            if (!isHeadless(sel)) {
+                toast("完整内核固定用 VNC 显示完整浏览器（含标签栏/地址栏）", "ok");
+                return;
+            }
+            if (mode === "vnc") {
+                toast("无头实例没有 VNC 服务，只能用抓屏（仅网页视口）", "error");
                 return;
             }
             settings.preview = mode;
@@ -4883,8 +4869,9 @@
                     '<span class="seg">' +
                         '<button class="' + (mode === "vnc" ? "on" : "") + '"' +
                             (headless ? ' disabled title="无头实例无 VNC"' : '') +
-                            ' onclick="setPreview(\'vnc\')">VNC</button>' +
+                            ' onclick="setPreview(\'vnc\')">完整浏览器</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
+                            (headless ? '' : ' disabled title="完整内核固定用 VNC 显示完整浏览器"') +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
                     '</span>' + qseg + capseg +
                     '<span class="qhint">' + esc(qualityHint(mode, settings.quality, cm, settings.snapRate)) + '</span>';
@@ -4917,7 +4904,7 @@
                     ' title="打开脚本代码生成面板：pydoll / websocket-client / Playwright / nodriver / DrissionPage，自动附带 API_KEY">' +
                     'Python 代码</button>' +
                     '<button class="lk" onclick="openDev()"' +
-                    ' title="在右侧面板内嵌浏览器原生 DevTools（F12 同款，支持复制 cURL / Python）">' +
+                    ' title="在新窗口打开浏览器原生 DevTools（F12 同款，支持复制 cURL / Python）">' +
                     '开发者工具</button>';
                 const linksHtml = '<div class="detail-links">' +
                     '<span class="lk-group"><span class="lk-label">CDP 端点</span>' + endpointLinks + '</span>' +
@@ -5707,13 +5694,7 @@
         // 顶栏滑动开关：打开右侧日志抽屉 / 收起后画面占满。
         function toggleLogs(open) {
             logsOpen = !!open;
-            if (!logsOpen) {
-                // 收起抽屉时卸载 DevTools iframe，断开其 CDP WS，避免后台残留连接。
-                const frame = $("devToolsFrame");
-                if (frame) frame.removeAttribute("src");
-                switchSideView("log");
-                $("logDrawer").style.width = "";
-            }
+            if (!logsOpen) { switchSideView("log"); $("logDrawer").style.width = ""; }
             if (logsOpen) { logsLoadedAt = 0; loadLogs(true); }
             render();
         }
@@ -5818,21 +5799,17 @@
 
         // ---- 开发者工具：在右侧抽屉内嵌浏览器原生 DevTools（F12 同款）----
         // 自研九面板已移除；「开发者工具」入口与 D 键均走 openDev → openNativeDevTools。
-        // 原生 DevTools 前端本身不跳出 iframe（standalone 模式无 top 导航代码），
-        // iframe 再加 sandbox 兜底防跳出；抽屉默认日志宽，切到 DevTools 自动加宽。
+        // 原生 DevTools 用独立窗口打开（F12 同款）；iframe 内嵌方案因会强制 undocked
+        // 且面板太挤已放弃。右侧抽屉只承载运行日志。
         let devSid = null, devTid = null;
         let devToolsUrlCache = "";
 
-        // 右侧抽屉视图切换：log = 运行日志，dev = 内嵌原生 DevTools。
-        // 切到 dev 时抽屉自动加宽；切走时停掉日志轮询那套节流复位。
+        // 兼容旧调用：抽屉视图切换已废弃，统一回到日志视图。
         function switchSideView(which) {
-            const isDev = which === "dev";
-            if ($("sideViewLog")) $("sideViewLog").classList.toggle("on", !isDev);
-            if ($("sideTabLog")) $("sideTabLog").classList.toggle("on", !isDev);
-            if ($("sideViewDev")) $("sideViewDev").classList.toggle("on", isDev);
-            if ($("sideTabDev")) $("sideTabDev").classList.toggle("on", isDev);
-            if ($("logDrawer")) $("logDrawer").classList.toggle("dev-wide", isDev);
-            if (!isDev) { logsLoadedAt = 0; loadLogs(true); }
+            if ($("sideViewLog")) $("sideViewLog").classList.add("on");
+            if ($("sideTabLog")) $("sideTabLog").classList.add("on");
+            logsLoadedAt = 0;
+            loadLogs(true);
         }
 
         function devHasSelection() {
@@ -5869,8 +5846,8 @@
             }
         }
 
-        // 开发者工具主入口：在右侧抽屉内嵌原生 DevTools（F12 同款），不弹新窗口。
-        // 自研九面板已彻底移除；此入口与 D 键统一走这里。
+        // 开发者工具主入口：直接打开浏览器原生 DevTools 独立窗口（F12 同款）。
+        // 自研九面板已移除；此入口与 D 键统一走这里。
         async function openDev() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
@@ -5878,11 +5855,6 @@
             devTid = null;
             const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
             if (tid) devTid = tid;
-            // 先在抽屉里把 dev 视图亮出来，再异步解析标签并加载 iframe。
-            logsOpen = true;
-            $("logToggle").checked = true;
-            $("logDrawer").classList.add("open");
-            switchSideView("dev");
             await openNativeDevTools();
         }
 
@@ -5939,13 +5911,9 @@
             const t = await devToolsTarget();
             if (!t) return;
             devToolsUrlCache = t.url;
-            // 内嵌到抽屉：iframe 的 sandbox 未授予 allow-top-navigation，
-            // DevTools 若尝试跳顶层会被浏览器拒绝，稳定留在抽屉内。
-            // URL 相同不重复赋值，避免无谓地重载 DevTools、丢失面板状态。
-            const frame = $("devToolsFrame");
-            if (!frame) { toast("开发者工具面板未就绪"); return; }
-            if (frame.getAttribute("src") !== t.url) frame.src = t.url;
-            toast("已在右侧面板打开原生 DevTools", "ok");
+            const w = window.open(t.url, "_blank", "noopener");
+            if (!w) toast("弹窗被拦截，请允许本站点打开新窗口");
+            else toast("已在新窗口打开原生 DevTools", "ok");
         }
 
         // ---- 批量执行 ----

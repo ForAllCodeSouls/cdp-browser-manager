@@ -58,7 +58,7 @@ ok(main.includes("await r.requestFormData()"), "异步请求体读取保留");
   const d = w.document;
   ok(!!d.getElementById("sideViewLog"), "运行日志视图存在");
   ok(!d.getElementById("devMask"), "开发者工具自研视图不存在");
-  ok(!!d.getElementById("devToolsFrame"), "原生 DevTools iframe 存在");
+  ok(!d.getElementById("devToolsFrame"), "抽屉内嵌 iframe 已移除（改独立窗口）");
   eq(opened.length, 0, "初始未打开任何窗口");
   w.close();
 }

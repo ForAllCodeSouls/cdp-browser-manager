@@ -2070,7 +2070,7 @@ class ExtendedFeaturesTests(unittest.TestCase):
 
     def test_frontend_panels_and_entries(self):
         s = self.src
-        # 开发者工具已改为抽屉内嵌原生 DevTools iframe；不再有 devMask 自研面板。
+        # 开发者工具为原生 DevTools 独立窗口；不再有 devMask 自研面板。
         for mask in ("batchMask", "snipLibMask", "tplMask", "schedMask",
                      "auditMask", "resMask", "recMask"):
             self.assertIn('id="' + mask + '"', s)
@@ -2080,10 +2080,11 @@ class ExtendedFeaturesTests(unittest.TestCase):
             self.assertIn(fn, s)
         self.assertIn('id="createProxy"', s)
         self.assertIn('proxy: ($("createProxy")', s)
-        # 自研面板已移除；开发者工具入口为 detail 栏按钮 + D 键，抽屉内嵌原生 DevTools。
+        # 自研面板已移除；开发者工具入口为 detail 栏按钮 + D 键，开原生 DevTools 独立窗口。
         self.assertIn('onclick="openDev()"', s)
         self.assertIn("await openNativeDevTools();", s)
-        self.assertIn('id="devToolsFrame"', s)
+        self.assertIn('window.open(t.url, "_blank", "noopener")', s)
+        self.assertNotIn('id="devToolsFrame"', s)
 
     def test_theme_attribute_and_shortcuts(self):
         s = self.src
