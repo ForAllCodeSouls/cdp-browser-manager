@@ -3468,19 +3468,29 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
         await websocket.close(code=4401)
         return
 
-    await websocket.accept()
     item = instance_by_port(port)
     if not item:
-        await websocket.send_json({"error": f"端口 {port} 没有运行中的实例"})
-        await websocket.close()
+        await websocket.close(code=4404, reason=f"端口 {port} 没有运行中的实例")
         return
     ip = container_ip_by_id(item.get("container_id"))
     if not ip:
-        await websocket.send_json({"error": "容器网络未就绪"})
-        await websocket.close()
+        await websocket.close(code=503, reason="容器网络未就绪")
         return
 
+    # 先把上游 CDP 连接建好再 accept 浏览器：目标标签已关闭时上游会握手失败，
+    # 若先 accept 再报错，DevTools frontend 会误报「Debugging connection was
+    # closed」并让用户检查 --remote-allow-origins（实际是 No such target id）。
     upstream = None
+    try:
+        upstream = await run_in_threadpool(lambda: ws_client.create_connection(
+            f"ws://{ip}:9222/devtools/{rest}", timeout=10, suppress_origin=True
+        ))
+    except Exception as e:
+        audit("inspect.devtools_failed", item.get("sid", ""), detail=("upstream=" + rest + " err=" + str(e)[:160]))
+        await websocket.close(code=4404, reason=("目标不可达: " + str(e)[:120]))
+        return
+
+    await websocket.accept()
     stop = threading.Event()
     loop = asyncio.get_running_loop()
 
@@ -3509,11 +3519,8 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
                 break
 
     try:
-        upstream = ws_client.create_connection(
-            f"ws://{ip}:9222/devtools/{rest}", timeout=10, suppress_origin=True
-        )
-        # 握手用 10 秒上限；读循环改成 1 秒短超时，便于及时响应停止信号，
-        # 超时本身由 pump 放行，不再当作断连。
+        # 上游已在 accept 前建好；这里只调整读超时并启动转发。
+        # 1 秒短超时便于及时响应停止信号，超时由 pump 放行，不当作断连。
         upstream.settimeout(1)
         threading.Thread(target=pump, daemon=True).start()
         while True:

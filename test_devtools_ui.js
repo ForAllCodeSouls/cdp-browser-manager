@@ -97,8 +97,31 @@ console.log("== 开发者工具交互测试（抽屉抓包面板 + 原生入口�
           setTimeout(() => {
             const rurl = openUrls[0] || "";
             ok(rurl.includes("/remote/R/9333/devtools/inspector.html"), "远端走 /remote 代理路径");
-            console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
-            process.exit(failed ? 1 : 0);
+
+            // 7. 缓存/期望 TID 已失效时，用实时 /targets 校验并回退到有效标签，
+            //    避免原生 DevTools 连到不存在的 page 立即断连。
+            const w6 = makeDom();
+            w6.eval(`
+              devTid = "GONE_TID";
+              castPreferredTid = "OLD_TID";
+              sessionStorage.setItem("tabs_sid1", JSON.stringify([{id:"STALE_TID",type:"page"}]));
+              api = async (url) => url.endsWith("/targets") ? { targets:[{id:"LIVE_TID",type:"page"}] } : {};
+            `);
+            w6.devResolveTid().then(tid => {
+              eq(tid, "LIVE_TID", "失效 TID 被实时列表校正为有效标签");
+              eq(w6.eval('devTid'), "LIVE_TID", "校正后的 TID 回写缓存");
+
+              const w7 = makeDom();
+              w7.eval(`
+                devTid = "KEEP_TID";
+                api = async (url) => url.endsWith("/targets") ? { targets:[{id:"KEEP_TID",type:"page"}] } : {};
+              `);
+              w7.devResolveTid().then(t2 => {
+                eq(t2, "KEEP_TID", "有效期望 TID 保持不变");
+                console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
+                process.exit(failed ? 1 : 0);
+              });
+            });
           }, 10);
         });
       }, 10);

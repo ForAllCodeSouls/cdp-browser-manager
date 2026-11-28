@@ -6183,21 +6183,33 @@
             return true;
         }
 
-        // 标签 ID：优先画面区当前标签，其次该实例最近一次缓存的标签列表。
+        // 标签 ID：以实时 targets 为准校验，避免用已关闭的缓存/期望标签连出
+        // 「No such target id」导致原生 DevTools/抓包 WS 一开就断。
+        // 优先级：当前 devTid → 画面区标签 → 缓存首项，但都必须出现在实时列表里；
+        // 实时接口失败时才降级信任 devTid，保证断网时仍可用。
         async function devResolveTid() {
-            if (devTid) return devTid;
-            const preferred = castPreferredTid || (castState && castState.sid === devSid ? castState.tid : "");
-            if (preferred) { devTid = preferred; return devTid; }
+            const preferred = devTid || castPreferredTid ||
+                (castState && castState.sid === devSid ? castState.tid : "") || "";
+            let cachedFirst = "";
             try {
                 const cached = JSON.parse(sessionStorage.getItem("tabs_" + devSid) || "[]");
-                if (cached.length && cached[0].id) { devTid = cached[0].id; return devTid; }
+                if (cached.length && cached[0].id) cachedFirst = cached[0].id;
             } catch (e) {}
             try {
                 const list = await api("/api/instance/" + encodeURIComponent(devSid) + "/targets");
                 const pages = (list.targets || []).filter(t => t.type === "page");
-                if (pages.length) { devTid = pages[0].id; return devTid; }
-            } catch (e) {}
-            return "";
+                const ids = pages.map(t => t.id);
+                const pick = [preferred, cachedFirst].find(id => id && ids.includes(id)) ||
+                    (pages[0] && pages[0].id) || "";
+                if (pick) { devTid = pick; return pick; }
+                devTid = "";
+                return "";
+            } catch (e) {
+                if (devTid) return devTid;
+                if (preferred) { devTid = preferred; return preferred; }
+                if (cachedFirst) { devTid = cachedFirst; return cachedFirst; }
+                return "";
+            }
         }
 
         // 开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换。
