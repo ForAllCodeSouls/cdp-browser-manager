@@ -1490,7 +1490,7 @@
                     <option value="vnc">VNC 画面（可见地址栏/标签栏，仅完整内核）</option>
                     <option value="cast">CDP 抓屏（screencast，三种方式通用）</option>
                 </select>
-                <div class="hint">完整内核固定用 VNC 显示原生浏览器整窗（含标签栏/地址栏）；无头实例没有 VNC，自动用 CDP 抓屏（仅网页视口）。此设置仅影响无头实例的抓屏方式偏好。</div>
+                <div class="hint">默认画面模式，会记住你上次的选择：完整内核默认 VNC 整窗（可见标签栏/地址栏），也可在详情栏切到 CDP 抓屏（仅网页视口）；无头实例没有 VNC，固定用抓屏。</div>
             </div>
             <div class="row">
                 <label for="setPage">noVNC 页面</label>
@@ -2798,25 +2798,23 @@
 
         function effectiveMode(i) {
             if (!i) return "vnc";
-            // 有头实例固定走 VNC 整窗：CDP screencast（Page.startScreencast）协议上
-            // 只能抓网页视口，抓不到浏览器自身的标签栏/地址栏，与原生浏览器画面不符。
-            // VNC 抓的是整块 X11 屏，能看到完整浏览器窗口（标签栏 + 地址栏 + 网页）。
+            // 完整内核默认 VNC 整窗（可见浏览器标签栏/地址栏），但尊重用户上次选择：
+            // settings.preview 存 localStorage，选过 cast 就用 cast，否则用 vnc。
+            // CDP screencast 协议上只能抓网页视口，抓不到浏览器自身的标签栏/地址栏。
             // 无头实例没有 X11 / VNC 服务，只能用 CDP 抓屏（仅网页视口，客观限制）。
             if (isHeadless(i)) return "cast";
-            return "vnc";
+            return settings.preview === "cast" ? "cast" : "vnc";
         }
 
         function setPreview(mode) {
             const sel = selectedSid ? instances[selectedSid] : null;
-            if (!sel) return;
-            if (!isHeadless(sel)) {
-                toast("完整内核固定用 VNC 显示完整浏览器（含标签栏/地址栏）", "ok");
-                return;
-            }
-            if (mode === "vnc") {
+            // 无头实例没有 VNC 服务，不允许切到 VNC。
+            if (mode === "vnc" && isHeadless(sel)) {
                 toast("无头实例没有 VNC 服务，只能用抓屏（仅网页视口）", "error");
                 return;
             }
+            // 记住用户选择：完整内核可在 VNC 整窗 / CDP 抓屏之间切换，
+            // 保存后成为下次打开的默认模式。
             settings.preview = mode;
             try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             resetFrameState();
@@ -4871,7 +4869,6 @@
                             (headless ? ' disabled title="无头实例无 VNC"' : '') +
                             ' onclick="setPreview(\'vnc\')">完整浏览器</button>' +
                         '<button class="' + (mode === "cast" ? "on" : "") + '"' +
-                            (headless ? '' : ' disabled title="完整内核固定用 VNC 显示完整浏览器"') +
                             ' onclick="setPreview(\'cast\')">抓屏</button>' +
                     '</span>' + qseg + capseg +
                     '<span class="qhint">' + esc(qualityHint(mode, settings.quality, cm, settings.snapRate)) + '</span>';

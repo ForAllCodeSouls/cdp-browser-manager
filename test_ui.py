@@ -440,5 +440,38 @@ class SelfBuiltPanelsRemovedTests(unittest.TestCase):
         self.assertIn("def inject_devtools_ws_normalizer(", main)
 
 
+class PreviewModeTests(unittest.TestCase):
+    """完整内核可在 VNC 整窗 / CDP 抓屏间切换，默认 VNC 且记住上次选择。"""
+
+    def test_full_kernel_effective_mode_respects_saved_choice(self):
+        eff = JS.split("function effectiveMode(i)")[1].split("function ")[0]
+        # 有头实例读 settings.preview（记住上次选择），无头固定 cast。
+        self.assertIn('if (isHeadless(i)) return "cast";', eff)
+        self.assertIn('return settings.preview === "cast" ? "cast" : "vnc";', eff)
+        self.assertNotIn('return "vnc";\n        }', eff)
+
+    def test_set_preview_allows_full_kernel_switch(self):
+        sp = JS.split("function setPreview(mode)")[1].split("function ")[0]
+        # 不再对完整内核一刀切拦截；只拦无头实例切 VNC。
+        self.assertNotIn("完整内核固定用 VNC", sp)
+        self.assertIn('if (mode === "vnc" && isHeadless(sel))', sp)
+        self.assertIn("settings.preview = mode;", sp)
+        self.assertIn("localStorage.setItem(SETTINGS_KEY", sp)
+
+    def test_capture_button_not_disabled_for_full_kernel(self):
+        # 「抓屏」按钮不再因非无头而被禁用；原那行三元禁用已删除。
+        self.assertNotIn('完整内核固定用 VNC 显示完整浏览器', INDEX)
+        self.assertNotIn("headless ? '' : ' disabled", INDEX)
+        # 抓屏按钮的构建片段（从最近的 button 起点到 onclick）不含 disabled。
+        tail = INDEX.split("setPreview(\\'cast\\')")[0]
+        cap_btn = tail[tail.rfind('<button class="'):]
+        self.assertNotIn("disabled", cap_btn)
+
+    def test_default_preview_is_vnc(self):
+        # 默认完整浏览器；loadSettings 会读回上次保存的 cast/vnc。
+        self.assertIn('preview: s.preview === "cast" ? "cast" : "vnc",', JS)
+        self.assertIn('preview: "vnc"', JS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
