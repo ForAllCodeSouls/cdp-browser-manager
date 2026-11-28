@@ -5639,7 +5639,7 @@
             if (!sel) { toast("请先选中一个实例"); return; }
             devSid = sel.sid;
             devTid = null;
-            const tid = currentTid || castPreferredTid || (castState && castState.tid);
+            const tid = castPreferredTid || (castState && castState.tid);
             if (tid) devTid = tid;
             $("devSid").textContent = (sel.host_name || "本机") + " " + sel.sid.slice(0, 8);
             $("devMask").classList.add("open");
@@ -5803,7 +5803,7 @@
             for (const i of Object.values(instances)) {
                 let tids = [];
                 try { tids = JSON.parse(sessionStorage.getItem("tabs_" + i.sid) || "[]"); } catch (e) {}
-                const tid = (tids[0] || {}).id || currentTid;
+                const tid = (tids[0] || {}).id;
                 if (tid) targets.push({ sid: i.sid, tid: tid });
             }
             if (!targets.length) { toast("暂无可用标签页，请先打开实例画面"); return; }
@@ -5934,7 +5934,7 @@
                 const targets = [];
                 for (const i of Object.values(instances)) {
                     let tids = []; try { tids = JSON.parse(sessionStorage.getItem("tabs_" + i.sid) || "[]"); } catch (e) {}
-                    const tid = (tids[0] || {}).id || currentTid;
+                    const tid = (tids[0] || {}).id || (i.sid === selectedSid ? castPreferredTid : "");
                     if (tid) targets.push({ sid: i.sid, tid: tid });
                 }
                 body.targets = targets.slice(0, 50);
@@ -6083,7 +6083,7 @@
                 const r = (d.recordings || []).find(x => x.id === id);
                 if (!r || !selectedSid) { toast("请先选中一个实例"); return; }
                 let tids = []; try { tids = JSON.parse(sessionStorage.getItem("tabs_" + selectedSid) || "[]"); } catch (e) {}
-                const tid = (tids[0] || {}).id || currentTid;
+                const tid = (tids[0] || {}).id || castPreferredTid || (castState && castState.tid);
                 if (!tid) { toast("未获取到当前标签"); return; }
                 let chain = Promise.resolve();
                 (r.events || []).forEach(ev => {

@@ -116,5 +116,29 @@ class VisualSystemTests(unittest.TestCase):
         self.assertNotIn("confirm(", INDEX)
 
 
+class HandlerIntegrityTests(unittest.TestCase):
+    """防止重构遗留未定义变量，导致按钮点击后函数静默抛错。"""
+
+    def test_no_stale_current_tid(self):
+        # 历史遗留变量 currentTid 从未定义，曾导致开发者工具/批量执行/
+        # 定时任务/录制回放四个入口点击无反应。
+        self.assertNotIn("currentTid", JS)
+
+    def test_all_onclick_handlers_defined(self):
+        calls = set(re.findall(r'onclick=["\']([A-Za-z_$][\w$]*)\s*\(', INDEX))
+        calls -= {"if", "return", "switch", "for", "while"}
+        defined = set(re.findall(r'(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', JS))
+        defined |= set(re.findall(r'(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(', JS))
+        missing = sorted(calls - defined)
+        self.assertEqual(missing, [], "onclick 引用了未定义函数: " + ", ".join(missing))
+
+    def test_affected_handlers_use_defined_tid_source(self):
+        for fn in ("openDev", "runBatch", "saveSchedule", "replayRecording"):
+            self.assertIn("function " + fn + "(", JS)
+        dev = JS.split("function openDev()")[1].split("function ")[0]
+        self.assertIn("castPreferredTid", dev)
+        self.assertIn("castState", dev)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
