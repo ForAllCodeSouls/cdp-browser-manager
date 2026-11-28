@@ -124,7 +124,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
   - **控制台**：实时 console 与异常、按级别着色、文本过滤、清空、重复折叠；底部输入框可执行 JavaScript（`↑` `↓` 翻历史，`Runtime.evaluate` 带返回值）
   - **源码**：已加载脚本列表、`Debugger.getScriptSource` 查看源码、点行号下/断点（`setBreakpointByUrl`）、暂停时显示调用栈与作用域、继续/单步/步入/步出
   - **网络**：真实抓包（`requestWillBeSent` / `responseReceived` / `loadingFinished`），右键复制 cURL (bash/cmd) / Python (requests/httpx) / URL / 编辑重放 / 敏感扫描，详情四页、URL 过滤、录制暂停
-  - **性能**：`Performance.getMetrics` 指标网格；`Tracing.start/end` 录制并按 `Tracing.dataCollected` 聚合最长任务（近似火焰图）
+  - **性能**：`Performance.getMetrics` 指标网格 + **原生式 CPU 火焰图**。录制用 `Profiler.start/stop` 采集 V8 CPUProfile（nodes/samples/timeDeltas），沿 parent 关系重建调用栈、按时间轴合并同深度连续帧，SVG 绘制完整火焰图：原生配色（JS 暖色 / native 紫色 / idle 灰白）、悬停显示函数名+URL:行号+Self/Total 耗时占比、点击帧/滚轮/概览拖拽缩放平移、函数名搜索高亮；底部切换 **Bottom-Up**（按 self 排序）与 **Call Tree**（按调用关系展开），点击条目定位对应火焰帧。若 Profiler 未返回采样，自动从 `Tracing.dataCollected` 的 `Profile`/`ProfileChunk` 事件拼装 CPUProfile 兜底，再退化为任务耗时聚合条
   - **内存**：`HeapProfiler.takeHeapSnapshot` 采集并解析快照，按对象类型列实例数与自占用大小；强制 GC
   - **应用**：Local / Session Storage（读/写/清空）、Cookie（`getCookies`/`deleteCookies`）、IndexedDB 库名、Cache Storage 列表
   - **安全**：`Security.getSecurityState` 与 `stateChanged` 事件显示主源安全状态、证书信息

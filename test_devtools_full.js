@@ -149,5 +149,67 @@ ok(sentCmds.some(c => c.method === 'Emulation.setDeviceMetricsOverride' && c.par
 w.dtDeviceReset();
 ok(sentCmds.some(c => c.method === 'Emulation.clearDeviceMetricsOverride'), '设备恢复命令下发');
 
+console.log('\n[13] 原生式 CPU 火焰图');
+const sampleProfile = {
+  nodes: [
+    { id: 1, callFrame: { functionName: '(root)', url: '' }, children: [2, 3] },
+    { id: 2, callFrame: { functionName: 'main', url: 'https://a.test/app.js', lineNumber: 5 }, children: [4] },
+    { id: 3, callFrame: { functionName: 'idle', url: '' }, children: [] },
+    { id: 4, callFrame: { functionName: 'hot', url: 'https://a.test/app.js', lineNumber: 9 }, children: [] }
+  ],
+  samples: [2, 4, 4, 2, 3],
+  timeDeltas: [1000, 1000, 2000, 1000, 1000]
+};
+w.eval('dtPerfRecording = false; dtTraces = [];');
+w.dtLoadProfile(sampleProfile);
+eq(w.eval('dtFlameFrames.length'), 4, '采样重建为 4 个火焰帧（连续相同栈合并）');
+eq(w.eval('dtFlameFrames[0].nodeId'), 1, '栈底为 root');
+eq(w.eval('dtFlameFrames[0].depth'), 0, 'root 深度为 0');
+eq(w.eval('dtFlameFrames[1].nodeId'), 2, '第二帧为 main');
+eq(w.eval('dtFlameFrames[2].nodeId'), 4, '第三帧为 hot');
+eq(w.eval('dtFlameFrames[2].depth'), 2, 'hot 深度为 2');
+eq(w.eval('dtProfile.totalUs'), 6000, '总时长按采样增量累加');
+ok(w.eval('dtProfile.nodes.get(4).selfUs') === 3000, '连续相同栈的 self 时间正确累加');
+ok(w.eval('dtProfile.nodes.get(2).totalUs') === 5000, '父帧 total 时间覆盖子帧');
+ok(w.eval('dtProfile.nodes.get(1).selfUs') === 0, 'root 无 self 时间');
+ok(w.document.querySelectorAll('#dtFlameSvg .dt-fr').length >= 4, 'SVG 渲染火焰帧');
+ok(w.document.getElementById('dtFlameSvg').textContent.includes('hot'), '火焰帧显示函数名');
+ok(w.document.getElementById('dtFlameStat').textContent.includes('4 帧'), '统计栏显示帧数');
+eq(w.document.getElementById('dtPerfTrace').hidden, true, '有采样时隐藏兜底任务条');
+
+console.log('\n[14] 火焰图交互：缩放 / 搜索 / 视图切换');
+w.eval('dtFlameClick(2)');
+ok(w.eval('dtFlameRange.start') > 0 || w.eval('dtFlameRange.end') < 6000, '点击帧后视窗缩小');
+w.dtFlameZoomReset();
+eq(w.eval('dtFlameRange.start'), 0, '重置缩放回到起点');
+eq(w.eval('dtFlameRange.end'), 6000, '重置缩放回到全程');
+w.document.getElementById('dtFlameSearch').value = 'hot';
+w.dtFlameRender();
+eq(w.document.querySelectorAll('#dtFlameSvg .dt-fr.hit').length, 1, '搜索高亮命中函数帧');
+w.document.getElementById('dtFlameSearch').value = '';
+w.dtFlameRender();
+w.dtFlameView('bottom');
+ok(w.document.getElementById('dtFlameTable').textContent.includes('hot'), 'Bottom-Up 表含函数');
+ok(w.document.getElementById('dtFlameTable').textContent.includes('Self'), 'Bottom-Up 表显示 Self 列');
+w.dtFlameView('tree');
+ok(w.document.getElementById('dtFlameTable').textContent.includes('main'), 'Call Tree 含调用关系');
+w.dtFlameView('flame');
+eq(w.document.getElementById('dtFlameMain').hidden, false, '切回火焰图显示主视图');
+
+console.log('\n[15] 录制命令与 Tracing 兜底采集');
+const w2 = makeDom();
+w2.eval('capConnected = true; capWs = { send: function(m){ window.__sent.push(JSON.parse(m)); } };');
+sentCmds.length = 0;
+w2.dtPerfToggle();
+ok(sentCmds.some(c => c.method === 'Profiler.start'), '开始录制启用 CPU Profiler');
+ok(sentCmds.some(c => c.method === 'Tracing.start' && c.params.categories.includes('disabled-by-default-v8.cpu_profiler')), 'Tracing 启用 V8 CPU profiler 类别');
+eq(w2.eval('dtPerfRecording'), true, '录制状态已开启');
+w2.dtDispatch('Tracing.dataCollected', { value: [{ name: 'Profile', args: { data: { cpuProfile: { nodes: [{ id: 1, callFrame: { functionName: 'x' }, children: [] }] } } } }, { name: 'ProfileChunk', args: { data: { cpuProfile: { samples: [1], timeDeltas: [500] } } } }] });
+ok(w2.eval('dtProfileFromTraces() !== null'), 'Tracing 的 Profile/ProfileChunk 可拼装为 CPUProfile');
+sentCmds.length = 0;
+w2.dtPerfToggle();
+eq(w2.eval('dtPerfRecording'), false, '停止录制状态已关闭');
+ok(sentCmds.some(c => c.method === 'Profiler.stop'), '停止录制下发 Profiler.stop');
+
 console.log('\n结果: ' + passed + ' 通过, ' + failed + ' 失败');
 process.exit(failed ? 1 : 0);

@@ -301,11 +301,16 @@ class DevToolsFullPanelTests(unittest.TestCase):
 
     def test_analysis_panels(self):
         for fn in ("dtPerfMetrics", "dtPerfToggle", "dtHeapSnapshot", "dtParseHeap",
-                   "dtAppRefresh", "dtSecurityRefresh", "dtDeviceApply", "dtDeviceGeo"):
+                   "dtAppRefresh", "dtSecurityRefresh", "dtDeviceApply", "dtDeviceGeo",
+                   "dtLoadProfile", "dtFlameRender", "dtFlameColor", "dtFlameOverviewRender",
+                   "dtFlameClick", "dtFlameWheel", "dtFlameView", "dtFlameTableRender",
+                   "dtProfileFromTraces", "dtFlameFocusNode"):
             self.assertIn("function " + fn + "(", JS)
         for kw in ("Performance.getMetrics", "Tracing.dataCollected", "addHeapSnapshotChunk",
-                   "IndexedDB.getDatabaseNames", "CacheStorage.listCaches", "setGeolocationOverride"):
-            self.assertIn(kw, JS)
+                   "IndexedDB.getDatabaseNames", "CacheStorage.listCaches", "setGeolocationOverride",
+                   "Profiler.start", "Profiler.stop", "disabled-by-default-v8.cpu_profiler",
+                   "timeDeltas", "dtFlameSvg", "dtFlameOverview", "Bottom-Up", "Call Tree"):
+            self.assertIn(kw, JS + INDEX)
 
     def test_enhancements(self):
         for fn in ("dtScanSecrets", "dtExport", "dtFetchToggle", "dtOpenReplay", "dtReplaySend"):
