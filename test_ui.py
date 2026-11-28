@@ -261,6 +261,15 @@ class EnhanceToolkitInjectionTests(unittest.TestCase):
         for kw in ('zh:', 'en:', 'ja:', "devtools.preferences", "setLang", "applyLang"):
             self.assertIn(kw, self.snippet)
 
+    def test_language_switch_never_reloads(self):
+        # 回归：切换语言必须热更新，绝不 reload 窗口打断调试。
+        # 原生 DevTools 自身界面语言只能下次打开生效（浏览器机制）。
+        self.assertNotIn("location.reload", self.snippet)
+        set_lang = self.snippet.split("function setLang(l){")[1].split("\n}")[0]
+        self.assertIn("LANG=l;applyLang()", set_lang)
+        self.assertIn("devtools.preferences", set_lang)
+        self.assertIn("下次打开生效", self.snippet)
+
     def test_boot_deferred_and_style_in_head(self):
         # 回归：注入在 <head> 同步执行时 body 尚不存在，挂到 <html> 会被 DevTools
         # frontend 的 DOM 接管破坏；必须延迟到 DOMContentLoaded 后挂 body，

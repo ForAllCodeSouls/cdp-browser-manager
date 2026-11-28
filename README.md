@@ -124,7 +124,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
   - **原生右键「复制为 Python」（中文）**：原生 Network 面板没有 Python。manager 同源代理 `panels/network/network.js` 时用唯一源码锚点注入「复制为 Python (requests)」与「复制为 Python (httpx)」两个中文菜单，调用内部 `NetworkRequest` 读取 URL/方法/头/体生成代码。幂等注入，锚点消失则静默跳过。该增强依赖 Chrome 前端内部结构，版本升级后需重新确认锚点
   - **主应用增强工具台抽屉（辅助）**：需要主应用侧抓包/编辑重放时用顶栏或入口打开的增强抽屉，只保留「网络抓包 / CDP台 / 工具」三项，接 `/ws/inspect/<sid>/<tid>?domain=all`；底层九面板能力函数保留供增强复用，但界面不再展示复刻面板
   - 自检：`node test_capture_panel.js`、`node test_devtools_full.js`、`node test_devtools_ui.js`（需 jsdom）分别验证抓包、增强能力交互与原生 DevTools 主入口
-- **多语言（中 / 英 / 日，即时切换）**：顶栏工具栏「语言」下拉可切换界面语言，当前页**即时生效、无需刷新或重开窗口**，选择持久化到 localStorage（`cdpLang`）。主应用采用 DOM 文本节点翻译（含 MutationObserver 覆盖动态内容），原生 DevTools 窗口内的增强工具台也内置同三语字典即时切换；原生 DevTools **自身界面**的语言受浏览器机制限制需重载，切换时脚本写入 `devtools.preferences.language` 后自动 reload 窗口并恢复连接，用户无需手动关开。打开 DevTools 时当前语言随 `cdmp_lang` 传入
+- **多语言（中 / 英 / 日，即时切换）**：顶栏工具栏「语言」下拉可切换界面语言，当前页**即时生效、无需刷新或重开窗口**，选择持久化到 localStorage（`cdpLang`）。主应用采用 DOM 文本节点翻译（含 MutationObserver 覆盖动态内容），原生 DevTools 窗口内的增强工具台也内置同三语字典即时切换，**切换时只热更新界面文字，绝不 reload 窗口、不打断正在进行的调试**。原生 DevTools **自身界面**的语言由浏览器内核控制、必须重载才能生效（Chrome 自身机制），脚本仅写入 `devtools.preferences.language` 与地址栏 `cdmp_lang`，**下次打开 DevTools 窗口时生效**，不会强制刷新当前窗口。打开 DevTools 时当前语言随 `cdmp_lang` 传入
 - **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 打开原生 DevTools、`Esc` 关闭弹窗
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台

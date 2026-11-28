@@ -3485,19 +3485,19 @@ var D={
   start:"开始抓包",stop:"停止抓包",clear:"清空",scanNow:"立即扫描",expPy:"导出 Python",expJson:"导出 JSON",
   send:"发送",method:"方法",params:"参数 (JSON)",result:"结果",requests:"个请求",empty:"暂无数据",
   noSecret:"未发现敏感信息",found:"发现敏感信息",connecting:"连接中",connected:"已连接",disconnected:"未连接",
-  switch:"切换",nativeTip:"原生界面语言将在窗口重载后生效",tip:"增强工具台由 CDP Browser Manager 注入",
+  switch:"切换",nativeTip:"工具台已即时切换；原生界面语言下次打开生效",tip:"增强工具台由 CDP Browser Manager 注入",
   noHost:"没有可用实例",loading:"加载中…",close:"收起",badJson:"参数不是合法 JSON"},
  en:{enh:"Enhance Toolkit",scan:"Secret Scan",export:"Batch Export",cdp:"CDP Console",hosts:"Multi-Host",language:"Language",
   start:"Start Capture",stop:"Stop Capture",clear:"Clear",scanNow:"Scan Now",expPy:"Export Python",expJson:"Export JSON",
   send:"Send",method:"Method",params:"Params (JSON)",result:"Result",requests:"requests",empty:"No data",
   noSecret:"No secrets found",found:"Secrets found",connecting:"Connecting",connected:"Connected",disconnected:"Offline",
-  switch:"Switch",nativeTip:"Native UI language applies after the window reloads",tip:"Injected by CDP Browser Manager",
+  switch:"Switch",nativeTip:"Toolkit switched instantly; native UI applies on next open",tip:"Injected by CDP Browser Manager",
   noHost:"No instances",loading:"Loading…",close:"Collapse",badJson:"Params are not valid JSON"},
  ja:{enh:"拡張ツール",scan:"シークレット検査",export:"一括エクスポート",cdp:"CDP コンソール",hosts:"マルチホスト",language:"言語",
   start:"キャプチャ開始",stop:"キャプチャ停止",clear:"クリア",scanNow:"検査する",expPy:"Python 書き出し",expJson:"JSON 書き出し",
   send:"送信",method:"メソッド",params:"パラメータ (JSON)",result:"結果",requests:"件",empty:"データなし",
   noSecret:"シークレットなし",found:"シークレット検出",connecting:"接続中",connected:"接続済み",disconnected:"未接続",
-  switch:"切替",nativeTip:"ネイティブ UI は再読み込み後に反映されます",tip:"CDP Browser Manager により注入",
+  switch:"切替",nativeTip:"ツールは即時切替、ネイティブ UI は次回起動時に反映",tip:"CDP Browser Manager により注入",
   noHost:"インスタンスなし",loading:"読み込み中…",close:"閉じる",badJson:"パラメータが JSON ではありません"}
 };
 function T(k){return (D[LANG]&&D[LANG][k])||D.zh[k]||k;}
@@ -3557,13 +3557,17 @@ function applyLang(){
  $("clang").value=LANG;
 }
 function setLang(l){
+ // 热切换：增强工具台自身三语字典即时生效，绝不 reload 窗口打断调试。
  LANG=l;applyLang();
+ // 原生 DevTools 自身界面的语言由浏览器内核控制，必须重载才能生效；
+ // 这里只写入偏好并更新地址栏参数，下次打开 DevTools 窗口时即为所选语言。
  try{var p={};try{p=JSON.parse(localStorage.getItem("devtools.preferences")||"{}")}catch(e){}
   p.language=({zh:"zh-CN",en:"en-US",ja:"ja"}[l]||l);
   localStorage.setItem("devtools.preferences",JSON.stringify(p));}catch(e){}
  Q.set("cdmp_lang",l);
  try{history.replaceState(null,"",location.pathname+"?"+Q.toString());}catch(e){}
- setTimeout(function(){try{location.reload();}catch(e){}},500);
+ // 提示用户原生界面语言将于下次打开生效（热切换本身已完成）。
+ var tip=root.querySelector(".lg .hint");if(tip)tip.textContent=T("nativeTip");
 }
 $("clang").addEventListener("change",function(){setLang(this.value);});
 $("cFab").addEventListener("click",function(){root.classList.toggle("on");});
