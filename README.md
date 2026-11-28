@@ -108,6 +108,13 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 - 停止单个浏览器实例，或按分组在弹窗勾选后批量停止（只列当前组，默认全选，可只停部分）
 - manager 重启后自动恢复已有实例（通过容器标签识别）
 
+### 界面信息架构
+
+- **顶栏「工具」下拉**：按「自动化 / 运维治理 / 录制与界面」三组排列，每项带图标，避免入口平铺难找。
+- **实例详情栏**：分三层——主行（实例 ID / 状态徽章 / CDP 地址 / 模式切换 / 画面与停止按钮）、信息行（目录与 VNC 档位）、快捷行（CDP 端点与工具链接，按组区分）。次要信息不再挤在同一行。
+- **弹窗**：统一标题栏渐变、动画与阴影；脚本注入面板按「1 脚本内容 → 2 选择目标 → 3 注入设置」分步，自动跟随 / 已注入记录 / 自定义脚本收进折叠区。
+- **主题**：深色与浅色主题共用布局与组件，徽章颜色在浅色主题下单独覆盖，保证对比度。
+
 ### 扩展工具集
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
@@ -469,6 +476,7 @@ python -m py_compile app/main.py app/scripts_builtin.py app/stealth.py   # 后�
 python test_multihost.py                          # 多主机/鉴权自测（纯逻辑；装了 fastapi+httpx 会连 mock 远端跑完整集成测试）
 python -m unittest test_inject -v                 # 脚本注入静态自检
 python -m unittest test_inject_api -v             # 脚本注入 API 层测试（需 fastapi+httpx，不依赖 Docker）
+python -m unittest test_ui -v                     # UI 信息架构与主题兼容自检
 bash -n start.sh upgrade.sh                       # 启动/升级脚本
 docker compose config -q                          # Compose 配置
 curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针

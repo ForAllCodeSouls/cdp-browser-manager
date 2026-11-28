@@ -22,9 +22,15 @@
             --danger: #ff6b6b;
             --warn: #f7b955;
             --radius: 10px;
+            --radius-lg: 14px;
+            --radius-sm: 7px;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,.18);
+            --shadow-lg: 0 16px 48px rgba(0,0,0,.42);
             --scroll-thumb: #3a4055;
             --scroll-thumb-hover: #4c5470;
             --scroll-track: transparent;
+            --header-bg: linear-gradient(135deg, #171b28 0%, #1c2130 55%, #191d2a 100%);
+            --card-bg: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0) 60%);
         }
         /* 浅色主题：仅覆盖颜色变量，布局与交互完全一致。用户切换后存 localStorage。 */
         html[data-theme="light"] {
@@ -44,7 +50,15 @@
             --warn: #c47f10;
             --scroll-thumb: #bcc3d4;
             --scroll-thumb-hover: #9aa3ba;
+            --header-bg: linear-gradient(135deg, #ffffff 0%, #f7f9ff 55%, #eef2fb 100%);
+            --card-bg: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,0) 60%);
+            --shadow-sm: 0 2px 8px rgba(30,35,51,.07);
+            --shadow-lg: 0 16px 48px rgba(30,35,51,.18);
         }
+        html[data-theme="light"] .badge.full { color: #2b5fc4; }
+        html[data-theme="light"] .badge.headless { color: #7946b8; }
+        html[data-theme="light"] .badge.host { color: #1c7a78; }
+        html[data-theme="light"] .mask { background: rgba(20,26,44,.34); }
         * { box-sizing: border-box; }
         /* 全局统一深色滚动条：避免弹窗/侧栏/列表里冒出浏览器默认的亮色滚动条。
            Firefox 用 scrollbar-color，Chromium/WebKit 用 ::-webkit-scrollbar。 */
@@ -71,15 +85,23 @@
             flex: 0 0 auto;
             padding: 12px 22px;
             border-bottom: 1px solid var(--border);
-            background: linear-gradient(180deg, #1a1e2b 0%, var(--surface) 100%);
+            background: var(--header-bg);
             display: flex;
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
             gap: 12px;
+            position: relative;
         }
-        h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
-        .subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+        header::after {
+            content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            opacity: .35; pointer-events: none;
+        }
+        h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: .3px;
+            background: linear-gradient(92deg, var(--text) 20%, var(--accent) 110%);
+            -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { color: var(--muted); font-size: 12px; margin-top: 3px; letter-spacing: .15px; }
         .disclaimer-note {
             display: inline-flex; align-items: center; gap: 4px;
             color: var(--warn); font-size: 11px; margin-top: 4px;
@@ -88,27 +110,32 @@
             border-radius: 6px; padding: 2px 8px;
         }
         .disclaimer-note .ico { width: 12px; height: 12px; }
-        .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-        .toolbar button, .toolbar .switch-wrap { min-height: 30px; }
+        .toolbar { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+        .toolbar button, .toolbar .switch-wrap { min-height: 32px; }
         button {
             font: inherit;
             font-size: 13px;
             padding: 7px 13px;
-            border-radius: 8px;
+            border-radius: var(--radius-sm);
             border: 1px solid var(--border);
             background: var(--surface-2);
             color: var(--text);
             cursor: pointer;
-            transition: background .15s, opacity .15s;
+            transition: background .16s, border-color .16s, box-shadow .16s, opacity .16s, transform .08s;
         }
-        button:hover:not(:disabled) { background: var(--surface-3); }
+        button:hover:not(:disabled) { background: var(--surface-3); border-color: var(--scroll-thumb-hover); }
         button:active:not(:disabled) { transform: translateY(1px); }
+        button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         button:disabled { opacity: .45; cursor: not-allowed; }
-        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-        .btn-danger { color: var(--danger); border-color: #5a3038; }
-        .btn-danger:hover:not(:disabled) { background: #3a2026; }
-        .btn-mini { font-size: 11px; padding: 3px 8px; }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+            box-shadow: 0 3px 12px rgba(91,140,255,.22); }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+        .btn-danger { color: var(--danger); border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.08); }
+        .btn-danger:hover:not(:disabled) { background: rgba(255,107,107,.18); border-color: var(--danger); }
+        .btn-mini { font-size: 11px; padding: 3px 9px; }
+        .btn-icon { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; }
+        .btn-icon .ico { width: 15px; height: 15px; color: var(--muted); transition: color .16s; }
+        .btn-icon:hover .ico { color: var(--accent); }
         /* 地址栏左侧的后退/前进/刷新：纯图标，与浏览器地址栏一致 */
         .btn-nav {
             width: 30px; height: 28px; padding: 0;
@@ -212,13 +239,13 @@
         .host-filter button:hover:not(.on) { color: var(--text); border-color: #3c435a; }
         .host-filter button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
         .item {
-            padding: 11px 14px;
+            padding: 12px 14px;
             border-bottom: 1px solid var(--border-soft);
             cursor: pointer;
-            transition: background .12s, box-shadow .12s;
+            transition: background .14s, box-shadow .14s, padding-left .14s;
         }
-        .item:hover { background: var(--surface-2); }
-        .item.active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+        .item:hover { background: var(--surface-2); padding-left: 17px; }
+        .item.active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); padding-left: 17px; }
         .item.active .sid { color: var(--accent); }
         .item .sid {
             font-family: ui-monospace, monospace;
@@ -356,30 +383,49 @@
         }
         .detail {
             display: flex;
-            align-items: center;
-            gap: 14px;
-            flex-wrap: wrap;
-            background: var(--surface);
+            flex-direction: column;
+            gap: 0;
+            background: var(--card-bg), var(--surface);
             border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 10px 14px;
+            border-radius: var(--radius-lg);
+            padding: 0 16px;
             font-size: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
         }
-        .detail .sid { font-family: ui-monospace, monospace; font-size: 13px; font-weight: 600; }
-        .detail .kv { color: var(--muted); }
+        .detail-main {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            min-height: 52px; padding: 9px 0;
+        }
+        .detail-identity { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+        .detail-identity::before {
+            content: ""; width: 3px; height: 22px; border-radius: 2px;
+            background: linear-gradient(180deg, var(--accent), var(--accent-hover)); margin-right: 3px;
+        }
+        .detail-connection { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+        .detail .sid { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 700; letter-spacing: .3px; }
+        .detail .kv { color: var(--muted); font-size: 11.5px; }
         .detail .kv b { color: var(--text); font-family: ui-monospace, monospace; font-weight: 500; }
         .detail .spacer { flex: 1; }
+        .detail-meta {
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+            padding: 7px 0; border-top: 1px solid var(--border-soft);
+            color: var(--muted); font-size: 11px;
+        }
+        .detail-meta:empty { display: none; }
         /* 详情栏第二行：对应主机的 CDP 常用端点快捷链接 */
         .detail .detail-links {
-            flex-basis: 100%;
             display: flex;
             align-items: center;
             flex-wrap: wrap;
-            gap: 6px;
-            padding-top: 7px;
-            border-top: 1px dashed var(--border);
+            gap: 8px 18px;
+            padding: 8px 0 11px;
+            border-top: 1px solid var(--border-soft);
         }
-        .detail .detail-links .lk-label { color: var(--muted); font-size: 11px; margin-right: 2px; }
+        .detail .lk-group { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+        .detail .detail-links .lk-label { color: var(--muted); font-size: 10px; letter-spacing: .5px;
+            text-transform: uppercase; margin-right: 3px; padding-right: 8px;
+            border-right: 1px solid var(--border); }
         .detail .detail-links .lk {
             display: inline-flex;
             align-items: center;
@@ -433,13 +479,21 @@
 
         /* 扩展功能：开发者工具 / 批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 监控 */
         .tool-more { position: relative; }
-        .tool-menu { display: none; position: absolute; right: 0; top: 100%; z-index: 40;
-            background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
-            padding: 6px; min-width: 140px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+        .tool-menu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+            padding: 8px; min-width: 186px; box-shadow: var(--shadow-lg);
+            animation: toolMenuIn .13s ease-out; }
+        @keyframes toolMenuIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
         .tool-menu.open { display: block; }
-        .tool-menu button { display: block; width: 100%; text-align: left; padding: 9px 12px;
-            border: 0; background: transparent; color: var(--text); font-size: 13px; border-radius: 6px; }
-        .tool-menu button:hover { background: var(--surface-3); }
+        .tool-group + .tool-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
+        .tool-group-title { font-size: 10px; color: var(--muted); letter-spacing: 1px;
+            padding: 4px 10px 5px; font-weight: 600; text-transform: uppercase; }
+        .tool-menu button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+            padding: 8px 10px; border: 0; background: transparent; color: var(--text);
+            font-size: 12.5px; border-radius: var(--radius-sm); }
+        .tool-menu button .ico { width: 15px; height: 15px; color: var(--muted); flex: none; }
+        .tool-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+        .tool-menu button:hover .ico { color: var(--accent); }
         .panel.wide-panel { width: min(1180px, 96vw); max-width: 96vw; }
         .dev-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--border);
             padding-bottom: 10px; margin-bottom: 12px; }
@@ -592,6 +646,7 @@
             border-radius: var(--radius);
             background: var(--surface);
             overflow: hidden;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.02), 0 4px 18px rgba(0,0,0,.12);
         }
         /* 双重保险：留白由容器上色，canvas 透明透出，避免替换元素背景不生效 */
         .frame-host { position: absolute; inset: 0; background: var(--surface); }
@@ -838,8 +893,10 @@
             width: 15px; height: 15px; border-radius: 50%;
             background: var(--muted); transition: transform .2s, background .2s;
         }
-        .switch-wrap input:checked + .switch { background: var(--accent); border-color: var(--accent); }
-        .switch-wrap input:checked + .switch::after { transform: translateX(17px); background: #fff; }
+        .switch-wrap input:checked + .switch { background: var(--accent); border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(91,140,255,.12); }
+        .switch-wrap input:checked + .switch::after { transform: translateX(17px); background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 
         /* 镜像更新红点 */
         .update-dot {
@@ -850,15 +907,16 @@
         }
         @keyframes dotPulse { 50% { opacity: .4; } }
 
-        .badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
-        .badge.running { background: #173d30; color: var(--success); }
-        .badge.stopped { background: #3a2026; color: var(--danger); }
-        .badge.pending { background: #2c3143; color: var(--muted); }
-        .badge.persist { background: #3a2f17; color: var(--warn); }
-        .badge.temp { background: #262a38; color: var(--muted); }
-        .badge.full { background: #23314f; color: #9fc0ff; }
-        .badge.headless { background: #2f2440; color: #c9a6ff; }
-        .badge.host { background: #1d3b40; color: #7fdbd9; }
+        .badge { font-size: 10px; padding: 3px 9px; border-radius: 999px; font-weight: 650;
+            white-space: nowrap; letter-spacing: .2px; border: 1px solid transparent; }
+        .badge.running { background: rgba(62,207,142,.13); color: var(--success); border-color: rgba(62,207,142,.28); }
+        .badge.stopped { background: rgba(255,107,107,.12); color: var(--danger); border-color: rgba(255,107,107,.28); }
+        .badge.pending { background: rgba(139,144,165,.12); color: var(--muted); border-color: rgba(139,144,165,.22); }
+        .badge.persist { background: rgba(247,185,85,.12); color: var(--warn); border-color: rgba(247,185,85,.28); }
+        .badge.temp { background: rgba(139,144,165,.1); color: var(--muted); border-color: rgba(139,144,165,.2); }
+        .badge.full { background: rgba(91,140,255,.14); color: #9fc0ff; border-color: rgba(91,140,255,.3); }
+        .badge.headless { background: rgba(201,166,255,.13); color: #c9a6ff; border-color: rgba(201,166,255,.28); }
+        .badge.host { background: rgba(127,219,217,.11); color: #7fdbd9; border-color: rgba(127,219,217,.25); }
         /* 远端主机 badge 可点跳对端面板：保持徽章外观，hover 高亮提示可点击 */
         a.badge-host-link { text-decoration: none; cursor: pointer; }
         a.badge-host-link:hover { color: #b6f5f2; box-shadow: inset 0 0 0 1px #4b8f8c; }
@@ -880,16 +938,27 @@
         a.link:hover { text-decoration: underline; }
 
         .mask {
-            position: fixed; inset: 0; background: #0009;
+            position: fixed; inset: 0; background: rgba(4,6,12,.72);
+            backdrop-filter: blur(3px);
             display: none; align-items: center; justify-content: center; z-index: 100;
         }
-        .mask.open { display: flex; }
+        .mask.open { display: flex; animation: maskIn .14s ease-out; }
+        @keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
         .panel {
+            position: relative;
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 22px 24px; width: 440px; max-width: 92vw;
-            max-height: 88vh; overflow-y: auto;
+            border-radius: var(--radius-lg); padding: 22px 24px; width: 440px; max-width: 92vw;
+            max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg);
+            animation: panelIn .18s cubic-bezier(.2,.8,.2,1);
         }
-        .panel h3 { margin: 0 0 16px; font-size: 16px; }
+        @keyframes panelIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+        .panel::before {
+            content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-hover) 55%, transparent);
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        }
+        .panel h3 { margin: 0 0 16px; font-size: 17px; font-weight: 650; letter-spacing: .2px;
+            padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
         .row { margin-bottom: 16px; }
         .row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
         .row select, .row input {
@@ -938,8 +1007,28 @@
         .st-m { display: inline-flex; align-items: center; }
 
         /* CDP 脚本注入面板 */
-        .panel.inject-panel { width: 940px; max-width: 96vw; padding: 18px 20px; }
-        .inject-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+        .panel.inject-panel { width: 1020px; max-width: 96vw; padding: 20px 22px; }
+        .inject-grid { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+        .inject-step { position: relative; padding-left: 14px; margin-bottom: 12px;
+            border-left: 2px solid var(--border-soft); }
+        .inject-step:hover { border-left-color: var(--accent); }
+        .inject-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px;
+            font-size: 12px; font-weight: 600; color: var(--text); }
+        .step-no { display: inline-flex; align-items: center; justify-content: center;
+            width: 19px; height: 19px; border-radius: 50%; flex: none;
+            background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
+        .inject-advanced { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 6px; }
+        .inject-details { border-bottom: 1px solid var(--border-soft); }
+        .inject-details summary { padding: 9px 4px; cursor: pointer; font-size: 12px; font-weight: 600;
+            color: var(--text); list-style: none; display: flex; align-items: center; gap: 10px; }
+        .inject-details summary::-webkit-details-marker { display: none; }
+        .inject-details summary::before { content: "▸"; color: var(--muted); font-size: 11px; transition: transform .15s; }
+        .inject-details[open] summary::before { transform: rotate(90deg); }
+        .inject-details summary:hover { color: var(--accent); }
+        .inject-detail-state { font-size: 11px; font-weight: 400; color: var(--muted); }
+        .inject-detail-body { padding: 4px 4px 12px 20px; display: flex; flex-direction: column; gap: 8px; }
+        .inject-detail-body .hint { margin-top: 0; }
+        .inject-custom-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .inject-cats { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
         .inject-cats button { font-size: 11px; padding: 3px 9px; }
         .inject-cats button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -1063,6 +1152,34 @@
             <circle cx="18" cy="19" r="2.5"/>
             <path d="m8.3 10.8 7.4-4.3M8.3 13.2l7.4 4.3"/>
         </symbol>
+        <symbol id="i-terminal" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="16" rx="2"/>
+            <path d="m7 9 3 3-3 3M13 15h4"/>
+        </symbol>
+        <symbol id="i-code" viewBox="0 0 24 24">
+            <path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>
+        </symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 7v5l3.5 2"/>
+        </symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24">
+            <path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>
+        </symbol>
+        <symbol id="i-record" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"/>
+            <circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
+        </symbol>
+        <symbol id="i-theme" viewBox="0 0 24 24">
+            <path d="M12 3a9 9 0 1 0 9 9c0-1.7-.5-3-1.5-4-.5 2.5-2.5 4-5 4-2.5 0-4-1.5-4-4 0-2 1-3.5 3-4-.5-1-1-1-1.5-1Z"/>
+        </symbol>
+        <symbol id="i-stack" viewBox="0 0 24 24">
+            <rect x="4" y="4" width="16" height="5" rx="1"/><rect x="4" y="10" width="16" height="5" rx="1"/><rect x="4" y="16" width="16" height="5" rx="1"/>
+        </symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24">
+            <path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/>
+            <path d="m9 12 2 2 4-4"/>
+        </symbol>
     </svg>
     <header>
         <div>
@@ -1082,17 +1199,26 @@
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
             <div class="tool-more" id="toolMore">
-                <button class="btn-icon" onclick="toggleToolMenu()" title="更多工具：批量执行 / 脚本库 / 模板 / 定时任务 / 审计 / 资源监控"><svg class="ico"><use href="#i-settings"/></svg><span>工具</span></button>
+                <button class="btn-icon" onclick="toggleToolMenu()" title="更多工具：自动化 / 运维治理 / 录制 / 界面"><svg class="ico"><use href="#i-grid"/></svg><span>工具</span></button>
                 <div class="tool-menu" id="toolMenu">
-                    <button onclick="openBatch()">批量执行</button>
-                    <button onclick="openInject()">CDP 脚本注入</button>
-                    <button onclick="openSnipLib()">脚本片段库</button>
-                    <button onclick="openTpl()">实例模板</button>
-                    <button onclick="openSched()">定时任务</button>
-                    <button onclick="openAudit()">操作审计</button>
-                    <button onclick="openRes()">资源监控</button>
-                    <button onclick="openRec()">录制回放</button>
-                    <button onclick="toggleTheme()">切换主题</button>
+                    <div class="tool-group">
+                        <div class="tool-group-title">自动化</div>
+                        <button onclick="openBatch()"><svg class="ico"><use href="#i-stack"/></svg>批量执行</button>
+                        <button onclick="openInject()"><svg class="ico"><use href="#i-shield"/></svg>CDP 脚本注入</button>
+                        <button onclick="openSnipLib()"><svg class="ico"><use href="#i-code"/></svg>脚本片段库</button>
+                        <button onclick="openTpl()"><svg class="ico"><use href="#i-grid"/></svg>实例模板</button>
+                    </div>
+                    <div class="tool-group">
+                        <div class="tool-group-title">运维治理</div>
+                        <button onclick="openSched()"><svg class="ico"><use href="#i-clock"/></svg>定时任务</button>
+                        <button onclick="openAudit()"><svg class="ico"><use href="#i-check"/></svg>操作审计</button>
+                        <button onclick="openRes()"><svg class="ico"><use href="#i-chart"/></svg>资源监控</button>
+                    </div>
+                    <div class="tool-group">
+                        <div class="tool-group-title">录制与界面</div>
+                        <button onclick="openRec()"><svg class="ico"><use href="#i-record"/></svg>录制回放</button>
+                        <button onclick="toggleTheme()"><svg class="ico"><use href="#i-theme"/></svg>切换主题</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1589,46 +1715,55 @@
                     <div class="hint">内置脚本只读；自定义脚本保存在<b>目标实例所在主机</b>的服务端 DATA_DIR，切换目标实例会重新加载对应主机的脚本库。</div>
                 </div>
                 <div>
-                    <div class="inject-row">
-                        <label id="injectCodeLabel">脚本内容（JavaScript）</label>
-                        <textarea class="inject-code" id="injectCode" spellcheck="false"></textarea>
-                    </div>
-                    <div class="inject-row" id="injectParamsRow" style="display:none">
-                        <label>CDP 参数（JSON）</label>
-                        <textarea class="inject-code" id="injectParams" style="height:70px" spellcheck="false">{}</textarea>
-                    </div>
-                    <div class="inject-row inject-two">
-                        <div>
-                            <label>目标实例</label>
-                            <select id="injectSid" onchange="onInjectSidChange()"></select>
+                    <div class="inject-step">
+                        <div class="inject-step-head"><span class="step-no">1</span>脚本内容</div>
+                        <div class="inject-row">
+                            <label id="injectCodeLabel">脚本内容（JavaScript）</label>
+                            <textarea class="inject-code" id="injectCode" spellcheck="false"></textarea>
                         </div>
-                        <div>
-                            <label>目标标签</label>
-                            <select id="injectTid"></select>
+                        <div class="inject-row" id="injectParamsRow" style="display:none">
+                            <label>CDP 参数（JSON）</label>
+                            <textarea class="inject-code" id="injectParams" style="height:70px" spellcheck="false">{}</textarea>
                         </div>
                     </div>
-                    <div class="inject-row inject-two">
-                        <div>
-                            <label>注入方式</label>
-                            <select id="injectMode">
-                                <option value="new_document">新文档自动注入（推荐，刷新后仍生效）</option>
-                                <option value="immediate">当前页面立即执行（刷新后失效）</option>
+                    <div class="inject-step">
+                        <div class="inject-step-head"><span class="step-no">2</span>选择目标</div>
+                        <div class="inject-row inject-two">
+                            <div>
+                                <label>目标实例</label>
+                                <select id="injectSid" onchange="onInjectSidChange()"></select>
+                            </div>
+                            <div>
+                                <label>目标标签</label>
+                                <select id="injectTid"></select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="inject-step">
+                        <div class="inject-step-head"><span class="step-no">3</span>注入设置</div>
+                        <div class="inject-row inject-two">
+                            <div>
+                                <label>注入方式</label>
+                                <select id="injectMode">
+                                    <option value="new_document">新文档自动注入（推荐，刷新后仍生效）</option>
+                                    <option value="immediate">当前页面立即执行（刷新后失效）</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>标签范围</label>
+                                <select id="injectScope">
+                                    <option value="one">仅选中的标签</option>
+                                    <option value="all">实例内全部页面标签</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="inject-row">
+                            <label>实例范围</label>
+                            <select id="injectHostScope">
+                                <option value="one">仅选中的实例</option>
+                                <option value="all">所有运行中的实例（批量）</option>
                             </select>
                         </div>
-                        <div>
-                            <label>标签范围</label>
-                            <select id="injectScope">
-                                <option value="one">仅选中的标签</option>
-                                <option value="all">实例内全部页面标签</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="inject-row">
-                        <label>实例范围</label>
-                        <select id="injectHostScope">
-                            <option value="one">仅选中的实例</option>
-                            <option value="all">所有运行中的实例（批量）</option>
-                        </select>
                     </div>
                     <div class="actions" style="margin-top:4px">
                         <button onclick="closeInject()">关闭</button>
@@ -1637,28 +1772,32 @@
                     <div class="inject-log" id="injectLog">选择脚本后点「注入」。</div>
                 </div>
             </div>
-            <div class="foot">
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                    <b style="color:var(--text)">自动跟随新标签</b>
-                    <span id="watchState">未开启</span>
-                    <button class="btn-mini" onclick="toggleInjectWatch()">开启 / 关闭</button>
-                    <span style="color:var(--muted)">开启后选中的脚本会自动注入此后新开的标签；<b>已打开的标签需手动刷新或单独注入</b>。与「身份伪装守护」并行工作，互不覆盖。</span>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                    <b style="color:var(--text)">已注入记录</b>
-                    <button class="btn-mini" onclick="loadInjections()">刷新</button>
-                    <div id="injectRecords" style="width:100%"></div>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <b style="color:var(--text)">保存自定义</b>
-                    <input id="customId" placeholder="脚本 ID" style="width:130px">
-                    <input id="customName" placeholder="名称" style="width:150px">
-                    <input id="customCategory" placeholder="分类" value="自定义" style="width:100px">
-                    <button class="btn-mini" onclick="saveCustomScript()">保存上方脚本</button>
-                    <button class="btn-mini btn-danger" onclick="deleteCustomScript()">删除该自定义</button>
-                </div>
-                <div class="hint">能力边界：TLS/JA3 与 HTTP/2 指纹由浏览器网络栈决定，JS 注入无法覆盖；本面板只处理页面 JS 可见层。反调试脚本可能干扰目标站点自身逻辑，请按需选择。</div>
+            <div class="inject-advanced">
+                <details class="inject-details">
+                    <summary>自动跟随新标签 <span id="watchState" class="inject-detail-state">未开启</span></summary>
+                    <div class="inject-detail-body">
+                        <button class="btn-mini" onclick="toggleInjectWatch()">开启 / 关闭</button>
+                        <span class="hint">开启后选中的脚本会自动注入此后新开的标签；<b>已打开的标签需手动刷新或单独注入</b>。与「身份伪装守护」并行工作，互不覆盖。</span>
+                    </div>
+                </details>
+                <details class="inject-details">
+                    <summary>已注入记录 <button class="btn-mini" onclick="event.preventDefault();event.stopPropagation();loadInjections()">刷新</button></summary>
+                    <div class="inject-detail-body"><div id="injectRecords"></div></div>
+                </details>
+                <details class="inject-details">
+                    <summary>保存自定义脚本</summary>
+                    <div class="inject-detail-body">
+                        <div class="inject-custom-row">
+                            <input id="customId" placeholder="脚本 ID" style="width:130px">
+                            <input id="customName" placeholder="名称" style="width:150px">
+                            <input id="customCategory" placeholder="分类" value="自定义" style="width:100px">
+                            <button class="btn-mini" onclick="saveCustomScript()">保存上方脚本</button>
+                            <button class="btn-mini btn-danger" onclick="deleteCustomScript()">删除该自定义</button>
+                        </div>
+                    </div>
+                </details>
             </div>
+            <div class="hint" style="margin-top:10px">能力边界：TLS/JA3 与 HTTP/2 指纹由浏览器网络栈决定，JS 注入无法覆盖；本面板只处理页面 JS 可见层。反调试脚本可能干扰目标站点自身逻辑，请按需选择。</div>
         </div>
     </div>
 
@@ -4580,12 +4719,11 @@
                 cdpLinks.push({ label: "协议文档",
                     url: "https://chromedevtools.github.io/devtools-protocol/",
                     tip: "Chrome DevTools Protocol 官方文档（新窗口）" });
-                const linksHtml = '<div class="detail-links">' +
-                    '<span class="lk-label">快捷链接</span>' +
-                    cdpLinks.filter(l => l.url).map(l =>
-                        '<a class="lk" href="' + esc(l.url) + '" target="_blank" rel="noopener"' +
-                        ' title="' + esc(l.tip) + '">' + esc(l.label) + ' ↗</a>'
-                    ).join('') +
+                const endpointLinks = cdpLinks.filter(l => l.url).map(l =>
+                    '<a class="lk" href="' + esc(l.url) + '" target="_blank" rel="noopener"' +
+                    ' title="' + esc(l.tip) + '">' + esc(l.label) + ' ↗</a>'
+                ).join('');
+                const toolLinks =
                     '<button class="lk" onclick="copyBrowserWs()"' +
                     ' title="读取版本信息并复制浏览器级 webSocketDebuggerUrl，脚本连接常用">' +
                     '复制浏览器 WS</button>' +
@@ -4597,28 +4735,38 @@
                     'Python 代码</button>' +
                     '<button class="lk" onclick="openDev()"' +
                     ' title="开发者工具：网络抓包 / Console / 元素检查 / 性能 / CDP 命令控制台">' +
-                    '开发者工具</button>' +
+                    '开发者工具</button>';
+                const linksHtml = '<div class="detail-links">' +
+                    '<span class="lk-group"><span class="lk-label">CDP 端点</span>' + endpointLinks + '</span>' +
+                    '<span class="lk-group"><span class="lk-label">工具</span>' + toolLinks + '</span>' +
                     '</div>';
                 $("detail").innerHTML =
-                    '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
-                    statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
-                    '<span class="kv">' + (cdpProxyFull ? "CDP(域名)" : "CDP") +
-                        ' <b id="cdpVal">' + esc(cdp) + '</b>' +
-                        '<button class="copy" onclick="copyCdp(\'domain\')">复制</button></span>' +
-                    (cdpProxyFull && cdpDirectFull
-                        ? '<span class="kv">CDP(直连) <b>' + esc(sel.cdp_addr || cdpDirectFull) + '</b>' +
-                            '<button class="copy" onclick="copyCdp(\'direct\')">复制</button></span>'
-                        : '') +
-                    pinfo + vncInfo +
-                    '<span class="spacer"></span>' +
-                    // 只留一个画面按钮：文字与点击都跟当前模式走（VNC / 抓屏），不再有下拉。
-                    (mode === "vnc" && vncUrl(sel)
-                        ? '<button class="btn-mini" onclick="openVncPage()"' +
-                            ' title="在新窗口打开该实例的 VNC 画面">VNC画面 ↗</button>'
-                        : '<button class="btn-mini" onclick="openCastPage()"' +
-                            ' title="在新窗口打开该实例的抓屏画面">抓屏画面 ↗</button>') +
-                    '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
-                    seg + linksHtml;
+                    '<div class="detail-main">' +
+                        '<span class="detail-identity">' +
+                            '<span class="sid">' + esc(sel.sid.slice(0, 8)) + '</span>' +
+                            statusBadge(sel) + kernelBadge(sel) + profileBadge(sel) +
+                        '</span>' +
+                        '<span class="detail-connection">' +
+                            '<span class="kv">' + (cdpProxyFull ? "CDP(域名)" : "CDP") +
+                                ' <b id="cdpVal">' + esc(cdp) + '</b>' +
+                                '<button class="copy" onclick="copyCdp(\'domain\')">复制</button></span>' +
+                            (cdpProxyFull && cdpDirectFull
+                                ? '<span class="kv">CDP(直连) <b>' + esc(sel.cdp_addr || cdpDirectFull) + '</b>' +
+                                    '<button class="copy" onclick="copyCdp(\'direct\')">复制</button></span>'
+                                : '') +
+                        '</span>' +
+                        '<span class="spacer"></span>' +
+                        seg +
+                        // 只留一个画面按钮：文字与点击都跟当前模式走（VNC / 抓屏），不再有下拉。
+                        (mode === "vnc" && vncUrl(sel)
+                            ? '<button class="btn-mini" onclick="openVncPage()"' +
+                                ' title="在新窗口打开该实例的 VNC 画面">VNC画面 ↗</button>'
+                            : '<button class="btn-mini" onclick="openCastPage()"' +
+                                ' title="在新窗口打开该实例的抓屏画面">抓屏画面 ↗</button>') +
+                        '<button class="btn-danger" onclick="stop(' + jsArg(sel.sid) + ')">停止</button>' +
+                    '</div>' +
+                    ((pinfo || vncInfo) ? '<div class="detail-meta">' + pinfo + vncInfo + '</div>' : '') +
+                    linksHtml;
             }
 
             // 右侧日志抽屉与画面并存：开关决定抽屉是否滑出，画面区独立按实例状态渲染。
