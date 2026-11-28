@@ -4,3 +4,4 @@ _chk_*.js
 _patch_devtools.js
 __pycache__/
 *.pyc
+app/data/
