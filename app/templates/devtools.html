@@ -87,7 +87,6 @@
     <button class="icon" id="btnDock" title="切换停靠方向（右 / 下）">⇄</button>
     <button class="icon" id="btnFoldStage" title="折叠/展开画面">◧</button>
     <button class="icon" id="btnFoldDev" title="折叠/展开开发者工具">◨</button>
-    <button id="btnStandalone" title="在独立窗口打开原生 DevTools">独立窗口 ↗</button>
 </header>
 <div id="split">
     <section class="pane stage" id="stagePane">
@@ -97,7 +96,7 @@
     <div id="splitter"></div>
     <section class="pane dev" id="devPane">
         <iframe id="devFrame" title="原生 DevTools"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-clipboard-write allow-downloads"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-clipboard-write allow-downloads"
             referrerpolicy="no-referrer"></iframe>
     </section>
 </div>
@@ -220,12 +219,25 @@
     /* 切换目标：先激活标签（避免后台冻结导致 Network 抓不到请求），
        再更新画面与 DevTools 两侧 iframe。DevTools 切换调试目标只能重新加载前端，
        这是 Chrome 原生固有限制（换目标即换 ws 绑定）。 */
-    async function switchTo(targetTid) {
-        if (!inst || !targetTid) return;
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    /* 激活标签：Chrome 把后台标签切到前台需要一点时间，activate 接口返回后
+       立即连 DevTools 仍可能连到冻结标签，Network 会显示「此标签页不活跃」。
+       因此激活后等一拍再接；devToken 防止连续快速切换时旧结果覆盖新标签。 */
+    async function activateAndWait(targetTid) {
+        if (!targetTid) return;
         try {
             await api("/api/instance/" + encodeURIComponent(SID) +
                 "/targets/" + encodeURIComponent(targetTid) + "/activate", { method: "POST" });
+            await sleep(300);
         } catch (e) { /* 激活失败不阻断，headless 下可能不支持 */ }
+    }
+
+    async function switchTo(targetTid) {
+        if (!inst || !targetTid) return;
+        const token = ++devToken;
+        await activateAndWait(targetTid);
+        if (token !== devToken) return;   // 期间又切到别的标签，放弃这次旧结果
         tid = targetTid;
         renderTabs();
         const sUrl = stageUrl(tid);
@@ -237,7 +249,6 @@
         if (dUrl && $("devFrame").getAttribute("src") !== dUrl) {
             $("devFrame").setAttribute("src", dUrl);
         }
-        $("btnStandalone").disabled = false;
         setState("就绪", "live");
     }
 
@@ -340,12 +351,15 @@
         applySplit();
     });
     $("btnNew").addEventListener("click", newTab);
-    $("btnStandalone").addEventListener("click", function () {
-        const u = devUrl(tid);
-        if (u) window.open(u, "_blank", "noopener");
-    });
     $("stageFrame").addEventListener("load", function () {
         $("stageOverlay").classList.add("hide");
+    });
+    /* DevTools 前端加载完成后再兜底激活一次：切标签期间若有别的标签抢占前台，
+       这里把当前 tid 重新置前，避免 Network 停在「此标签页不活跃」。 */
+    $("devFrame").addEventListener("load", function () {
+        if (!tid) return;
+        api("/api/instance/" + encodeURIComponent(SID) +
+            "/targets/" + encodeURIComponent(tid) + "/activate", { method: "POST" }).catch(function () {});
     });
 
     let dragging = false;

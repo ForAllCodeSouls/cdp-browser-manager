@@ -79,13 +79,16 @@ function makeEnv(opts) {
   ok(!frameSeg.includes('allow-top-navigation'), '拒绝顶层导航防跳出');
   ok(frameSeg.includes('allow-same-origin'), '保留同源');
   ok(frameSeg.includes('allow-clipboard-write'), '保留复制能力');
+  ok(!frameSeg.includes('allow-popups'), '拒绝弹窗，避免多开一个窗口');
   ok(html.includes('id="tabRow"'), '标签栏存在');
   ok(html.includes('id="btnDock"') && html.includes('id="btnFoldStage"') && html.includes('id="btnFoldDev"'),
     'dock 与折叠按钮存在');
+  ok(!html.includes('id="btnStandalone"'), '移除独立窗口按钮，避免多开一个窗口');
+  ok(!/window\.open/.test(js), '同屏页脚本不调用 window.open');
 
   // 2. 初始化：读实例、列标签、activate、两侧 URL 就位
   const e = makeEnv({});
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 500));
   const w = e.w;
   ok(e.calls.some(c => c.clean.endsWith('/api/list')), '读取实例列表');
   ok(e.calls.some(c => /\/targets\/[^/]+\/activate$/.test(c.clean)), '初始化 activate 目标标签');
@@ -103,7 +106,7 @@ function makeEnv(opts) {
 
   // 3. 切换标签：activate 新目标 + 两侧 URL 都更新
   chips[1].dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 500));
   ok(e.calls.some(c => c.clean.includes('/targets/' + TARGETS[1].id + '/activate')), '切换时 activate 新标签');
   ok((w.document.getElementById('devFrame').getAttribute('src') || '').includes(TARGETS[1].id), 'DevTools 指向新标签');
   ok(w.stageSrc.includes(TARGETS[1].id) === false, '有头画面 VNC 整窗不按 tid 切换（合理）');
@@ -117,14 +120,13 @@ function makeEnv(opts) {
   w.document.getElementById('btnFoldStage').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   ok(!w.document.getElementById('stagePane').classList.contains('hidden'), '再点展开画面');
 
-  // 5. 独立窗口逃生口
-  w.document.getElementById('btnStandalone').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  ok(e.opened.length === 1 && e.opened[0].includes('/devtools/inspector.html?cdmp_bare=1&ws='), '独立窗口打开原生 DevTools');
+  // 5. 不再有独立窗口入口（点击后不会多开窗口）
+  ok(e.opened.length === 0, '同屏页不打开任何额外窗口');
 
   // 6. 新建标签
   const before = e.calls.filter(c => c.method === 'POST' && /\/api\/devtools\/\d+\/tabs$/.test(c.clean)).length;
   w.document.getElementById('btnNew').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 500));
   const after = e.calls.filter(c => c.method === 'POST' && /\/api\/devtools\/\d+\/tabs$/.test(c.clean)).length;
   ok(after === before + 1, '新建标签 POST 调用');
   ok(e.calls.some(c => c.method === 'POST' && (c.body || '').includes('https://example.com')), '新建带输入的网址');
@@ -134,7 +136,7 @@ function makeEnv(opts) {
     sid: 'sid-full-001', status: 'running', debug_port: 9223, novnc_port: 6080,
     novnc_url_proxy: 'http://156.233.226.94:8001/6080', host: 'local', browser_mode: 'headless',
   } });
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 500));
   ok(h.w.stageSrc && h.w.stageSrc.includes('/cast?sid='), '无头画面走 /cast 抓屏');
   ok(!h.w.stageSrc.includes('vnc_lite.html'), '无头不显示 noVNC');
   ok(h.w.document.getElementById('sidLabel').textContent.includes('无头'), '标注无头内核');
@@ -144,7 +146,7 @@ function makeEnv(opts) {
     sid: 'sid-full-001', status: 'running', debug_port: 9223, novnc_port: 6080,
     novnc_url_proxy: 'http://156.233.226.94:8001/remote/rhost/6080', host: 'rhost', browser_mode: 'full',
   } });
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 500));
   ok(rem.calls.some(c => c.clean.includes('/api/devtools/9223/tabs') && !c.clean.includes('/remote/')), '标签 API 按端口路由（本机即可）');
   ok(rem.calls.some(c => c.clean.startsWith('/remote/rhost/api/instance/')), '远端 instance 级 API 走 /remote 前缀');
   ok((rem.w.document.getElementById('devFrame').getAttribute('src') || '').includes('/remote/rhost/9223/devtools/inspector.html'), '远端 DevTools URL 带前缀');
