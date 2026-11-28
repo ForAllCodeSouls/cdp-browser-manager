@@ -85,6 +85,9 @@ function makeEnv(opts) {
     'dock 与折叠按钮存在');
   ok(!html.includes('id="btnStandalone"'), '移除独立窗口按钮，避免多开一个窗口');
   ok(!/window\.open/.test(js), '同屏页脚本不调用 window.open');
+  ok(html.includes('var(--stage, 60%)'), '默认分栏网页 60% / DevTools 40%');
+  ok(html.includes('max-width: 62vw'), '标签栏放宽，避免挤成一坨');
+  ok(html.includes('max-width: 130px'), '标签 chip 收窄，长标题省略号');
 
   // 2. 初始化：读实例、列标签、activate、两侧 URL 就位
   const e = makeEnv({});
