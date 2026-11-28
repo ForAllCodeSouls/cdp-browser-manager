@@ -56,10 +56,12 @@ ok(w.document.body.textContent.includes('复制为 cURL (cmd)'), '右键菜单�
 ok(typeof w.capToggleConnect === 'function', 'capToggleConnect 已定义');
 ok(typeof w.openNativeDevTools === 'function', '原生 DevTools 入口仍保留');
 
-console.log('\n[2] 视图切换：openDev 打开抽屉的开发者工具，不弹窗');
-w.openDev();
-eq(w.eval('sideView'), 'dev', 'openDev 切到 dev 视图');
-ok(w.document.getElementById('logDrawer').classList.contains('open'), 'openDev 打开右侧抽屉');
+console.log('\n[2] 视图切换：方案二 openDev 打开原生 DevTools，openEnhanceDrawer 打开增强抽屉');
+ok(typeof w.openDev === 'function', 'openDev 主入口存在');
+ok(typeof w.openEnhanceDrawer === 'function', 'openEnhanceDrawer 辅助入口存在');
+w.openEnhanceDrawer();
+eq(w.eval('sideView'), 'dev', 'openEnhanceDrawer 切到 dev 视图');
+ok(w.document.getElementById('logDrawer').classList.contains('open'), '增强抽屉打开右侧面板');
 ok(w.document.getElementById('devMask').classList.contains('on'), 'devMask 视图激活');
 ok(w.document.getElementById('sideViewLog').classList.contains('on') === false, '日志视图隐藏');
 w.switchSideView('log');

@@ -119,21 +119,13 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
 
-- **开发者工具（九面板 CDP 复刻，中文）**：点击详情栏「开发者工具」或按 `D`，在**右侧抽屉**打开中文开发者工具，与「运行日志」用顶部按钮切换；切走时自动断开。面板接后端 `/ws/inspect/<sid>/<tid>?domain=all` 做**真实 CDP 交互**，一个连接启用全部事件域（DOM/CSS/Runtime/Log/Network/Debugger/Performance/HeapProfiler/DOMStorage/IndexedDB/ServiceWorker/Security/Page），前端按 method 分发到各面板。命令带独立 id，后端原样回推响应，保证 `getResponseBody`、`Runtime.evaluate` 等主动调用能正确关联。抽屉在开发者工具视图下自动加宽。顶部 11 个标签页：
-  - **元素**：DOM 树（可展开/折叠）、匹配样式 / 计算样式 / 盒模型 / 事件监听器，点选节点高亮，编辑 outerHTML、复制 HTML 与 CSS 选择器
-  - **控制台**：实时 console 与异常、按级别着色、文本过滤、清空、重复折叠；底部输入框可执行 JavaScript（`↑` `↓` 翻历史，`Runtime.evaluate` 带返回值）
-  - **源码**：已加载脚本列表、`Debugger.getScriptSource` 查看源码、点行号下/断点（`setBreakpointByUrl`）、暂停时显示调用栈与作用域、继续/单步/步入/步出
-  - **网络**：真实抓包（`requestWillBeSent` / `responseReceived` / `loadingFinished`），右键复制 cURL (bash/cmd) / Python (requests/httpx) / URL / 编辑重放 / 敏感扫描，详情四页、URL 过滤、录制暂停
-  - **性能**：`Performance.getMetrics` 指标网格 + **原生式 CPU 火焰图**。录制用 `Profiler.start/stop` 采集 V8 CPUProfile（nodes/samples/timeDeltas），沿 parent 关系重建调用栈、按时间轴合并同深度连续帧，SVG 绘制完整火焰图：原生配色（JS 暖色 / native 紫色 / idle 灰白）、悬停显示函数名+URL:行号+Self/Total 耗时占比、点击帧/滚轮/概览拖拽缩放平移、函数名搜索高亮；底部切换 **Bottom-Up**（按 self 排序）与 **Call Tree**（按调用关系展开），点击条目定位对应火焰帧。若 Profiler 未返回采样，自动从 `Tracing.dataCollected` 的 `Profile`/`ProfileChunk` 事件拼装 CPUProfile 兜底，再退化为任务耗时聚合条
-  - **内存**：`HeapProfiler.takeHeapSnapshot` 采集并解析快照，按对象类型列实例数与自占用大小；强制 GC
-  - **应用**：Local / Session Storage（读/写/清空）、Cookie（`getCookies`/`deleteCookies`）、IndexedDB 库名、Cache Storage 列表
-  - **安全**：`Security.getSecurityState` 与 `stateChanged` 事件显示主源安全状态、证书信息
-  - **设备**：`Emulation` 预设机型尺寸/DPR、自定义 UA、地理定位、媒体查询（`prefers-color-scheme` / `print`）、恢复默认
-  - **CDP台**：直接输入任意 CDP 方法与 JSON 参数，查看原始响应（历史快速回填）
-  - **工具（原生没有的增强）**：① 请求编辑重放（右键「编辑并重新发送」，改 method/URL/头/体后用 `fetch` 在页面重放，或用 `Fetch.enable` 拦截后 `continueRequest` 改写）；② 敏感信息扫描（Bearer Token / API Key / 密码 / 私钥 / 手机号 / 身份证 / 邮箱 / JWT，右键可单条扫描）；③ 批量导出（当前抓包导出 Python requests 脚本或 JSON）；④ CDP 命令台
-  - **原生 DevTools 独立窗口**：面板顶部「原生 DevTools ↗」按钮弹出**浏览器原生 DevTools 独立顶层窗口**，与在该实例浏览器里按 F12 完全一致——需要完整原生能力（如 Lighthouse、完整 Performance 火焰图）时用这个。实现复用 Chrome 自带 `inspector.html`（同源代理并移除 CSP），通过 `ws=<同源代理>/devtools/page/<标签ID>` 连接；远端走 `/remote/<主机ID>/<端口>/...`。iframe 内嵌会 `undocked` 降级，故用独立窗口。`?ws=` 只传 `主机:端口/路径`、不传协议前缀（Chrome 158+ 的 frontend 会自行补 `ws://`，传完整 URL 会拼成 `ws://ws//...` 导致一开就断）；另有后端兜底——manager 代理 inspector.html 时注入脚本，发现 `ws=` 带协议前缀就自动剥离并 `replaceState` 修正地址栏，因此即便浏览器缓存了旧 JS 也能正常打开。主页面强制 `no-store`，避免升级后缓存旧逻辑。打开前用实时 `/targets` 校验标签 ID
+- **开发者工具（原生 DevTools 为主 + 增强工具台）**：点击详情栏「开发者工具」或按 `D`，**直接打开浏览器原生 DevTools 独立顶层窗口**——与在该实例浏览器里按 F12 完全一致，元素/控制台/源码/网络/性能火焰图/内存/应用/安全/设备/传感器等全部原生能力开箱即用，不再使用自研复刻面板。实现复用 Chrome 自带 `inspector.html`（同源代理并移除 CSP），通过 `ws=<同源代理>/devtools/page/<标签ID>` 连接；远端走 `/remote/<主机ID>/<端口>/...`。iframe 内嵌会 `undocked` 降级，故用独立窗口。`?ws=` 只传 `主机:端口/路径`、不传协议前缀（Chrome 158+ 的 frontend 会自行补 `ws://`，传完整 URL 会拼成 `ws://ws//...` 导致一开就断）；后端兜底——manager 代理 inspector.html 时注入脚本，发现 `ws=` 带协议前缀就自动剥离并 `replaceState` 修正地址栏，因此即便浏览器缓存了旧 JS 也能正常打开。主页面强制 `no-store`，打开前用实时 `/targets` 校验标签 ID
+  - **窗口内增强工具台（原生没有的能力，已注入）**：右下角齿轮按钮展开一个 Shadow DOM 悬浮面板，与原生面板互不干扰。脚本从 URL 带上的 `cdmp_sid/cdmp_tid/cdmp_key/cdmp_lang` 自行连接 manager 同源的 `/ws/inspect/<sid>/<tid>?domain=all` 与 `/api/list`（原生窗口以 `noopener` 打开，无法共享主应用状态，故走直连）。四项增强：① **敏感扫描**——抓包 URL/请求头/请求体扫 Bearer Token / API Key / 密码 / 私钥 / 手机号 / 身份证 / 邮箱 / JWT；② **批量导出**——当前抓包导出 Python requests 脚本或 JSON；③ **CDP 直发台**——任意 CDP 方法 + JSON 参数看原始响应；④ **多主机聚合**——拉 `/api/list` 列全部主机实例，点选即从实时 `/targets` 解析标签并切到目标 DevTools。幂等注入，锚点（`</title>`）消失则静默跳过
   - **原生右键「复制为 Python」（中文）**：原生 Network 面板没有 Python。manager 同源代理 `panels/network/network.js` 时用唯一源码锚点注入「复制为 Python (requests)」与「复制为 Python (httpx)」两个中文菜单，调用内部 `NetworkRequest` 读取 URL/方法/头/体生成代码。幂等注入，锚点消失则静默跳过。该增强依赖 Chrome 前端内部结构，版本升级后需重新确认锚点
-  - 自检：`node test_capture_panel.js`、`node test_devtools_full.js`、`node test_devtools_ui.js`（需 jsdom）分别验证抓包、九面板与抽屉交互
+  - **主应用增强工具台抽屉（辅助）**：需要主应用侧抓包/编辑重放时用顶栏或入口打开的增强抽屉，只保留「网络抓包 / CDP台 / 工具」三项，接 `/ws/inspect/<sid>/<tid>?domain=all`；底层九面板能力函数保留供增强复用，但界面不再展示复刻面板
+  - 自检：`node test_capture_panel.js`、`node test_devtools_full.js`、`node test_devtools_ui.js`（需 jsdom）分别验证抓包、增强能力交互与原生 DevTools 主入口
+- **多语言（中 / 英 / 日，即时切换）**：顶栏工具栏「语言」下拉可切换界面语言，当前页**即时生效、无需刷新或重开窗口**，选择持久化到 localStorage（`cdpLang`）。主应用采用 DOM 文本节点翻译（含 MutationObserver 覆盖动态内容），原生 DevTools 窗口内的增强工具台也内置同三语字典即时切换；原生 DevTools **自身界面**的语言受浏览器机制限制需重载，切换时脚本写入 `devtools.preferences.language` 后自动 reload 窗口并恢复连接，用户无需手动关开。打开 DevTools 时当前语言随 `cdmp_lang` 传入
+- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 打开原生 DevTools、`Esc` 关闭弹窗
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
@@ -145,7 +137,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 - **只读分享水印**：分享观看页大画面叠加时间戳水印，防止截屏转播无法追溯
 - **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 开发者工具、`Esc` 关闭弹窗
 
-新增 API（均需 API_KEY）：`/api/audit`、`/api/tags`、`/api/snippets`、`/api/templates`、`/api/recordings`、`/api/schedules`、`/api/batch/exec`、`/api/metrics`，以及 WS `/ws/inspect/{sid}/{tid}?domain=network|console|performance|all`（`all` 为九面板共用的全功能域，启用全部事件并透传任意 CDP 命令）。
+新增 API（均需 API_KEY）：`/api/audit`、`/api/tags`、`/api/snippets`、`/api/templates`、`/api/recordings`、`/api/schedules`、`/api/batch/exec`、`/api/metrics`，以及 WS `/ws/inspect/{sid}/{tid}?domain=network|console|performance|all`（`all` 为增强工具台共用的全功能域，启用全部事件并透传任意 CDP 命令）。
 
 ### CDP 脚本注入
 
@@ -493,7 +485,7 @@ python -m unittest test_inject_api -v             # 脚本注入 API 层测试�
 python -m unittest test_ui -v                     # UI 信息架构与主题兼容自检
 node test_devtools_ui.js                          # 开发者工具交互自检（需 npm i jsdom，不依赖 Docker）
 node test_capture_panel.js                        # 中文抓包面板交互自检（右键/导出/CDP 事件，需 jsdom）
-node test_devtools_full.js                        # 九面板 CDP 复刻自检（切换/分发/四增强，需 jsdom）
+node test_devtools_full.js                        # 增强工具台 CDP 交互自检（切换/分发/四增强，需 jsdom）
 bash -n start.sh upgrade.sh                       # 启动/升级脚本
 docker compose config -q                          # Compose 配置
 curl -fsS http://127.0.0.1:8000/api/health        # 启动后探针

@@ -153,13 +153,30 @@ class DevToolsDrawerTests(unittest.TestCase):
         self.assertIn('onclick="switchSideView(\'dev\')"', INDEX)
         self.assertIn("function switchSideView(which)", JS)
 
-    def test_open_dev_switches_to_drawer(self):
-        # openDev 打开抽屉并切到开发者工具视图，不再弹独立窗口
+    def test_open_dev_opens_native_devtools(self):
+        # 方案二：openDev 主入口直接打开原生 DevTools（含注入增强工具台）
         self.assertIn("function openDev()", JS)
         open_dev = JS.split("function openDev()")[1].split("function ")[0]
-        self.assertIn('switchSideView("dev")', open_dev)
-        self.assertIn('$("logDrawer").classList.add("open")', open_dev)
+        self.assertIn("openNativeDevTools()", open_dev)
+        self.assertNotIn('switchSideView("dev")', open_dev)
         self.assertIn('onclick="openDev()"', INDEX)
+
+    def test_enhance_drawer_still_switches(self):
+        # 增强工具台抽屉保留主应用侧增强能力，辅助原生 DevTools
+        self.assertIn("function openEnhanceDrawer()", JS)
+        drawer = JS.split("function openEnhanceDrawer()")[1].split("function ")[0]
+        self.assertIn('switchSideView("dev")', drawer)
+        self.assertIn('$("logDrawer").classList.add("open")', drawer)
+
+    def test_tabbar_converged_to_enhance(self):
+        # 可见 tab 收敛为网络抓包/CDP台/工具三项，复刻原生面板由原生 DevTools 承担
+        tabbar = INDEX.split('id="dtTabbar"')[1].split('class="cap-toolbar"')[0]
+        self.assertIn('data-p="network"', tabbar)
+        self.assertIn('data-p="cdp"', tabbar)
+        self.assertIn('data-p="tools"', tabbar)
+        self.assertNotIn('data-p="elements"', tabbar)
+        self.assertNotIn('data-p="performance"', tabbar)
+        self.assertNotIn("网络抓包 · 中文开发者工具", INDEX)
 
     def test_native_devtools_still_available(self):
         # 原生 DevTools 独立窗口作为抓包面板内入口保留
@@ -200,9 +217,89 @@ class DevToolsDrawerTests(unittest.TestCase):
         main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
         self.assertIn("def inject_devtools_ws_normalizer(", main)
         self.assertIn("DEVTOOLS_WS_NORMALIZER", main)
-        self.assertIn("return inject_devtools_ws_normalizer(text)", main)
+        self.assertIn("text = inject_devtools_ws_normalizer(text)", main)
+        self.assertIn("return inject_devtools_enhance(text)", main)
         self.assertIn("history.replaceState", main)
         self.assertIn("no-store, no-cache, must-revalidate", main)
+
+
+class EnhanceToolkitInjectionTests(unittest.TestCase):
+    """方案二：原生 DevTools 窗口内注入增强工具台，四项增强能力 + 三语即时切换。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import ast
+        cls.main_src = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        cls.snippet = ""
+        tree = ast.parse(cls.main_src)
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name) \
+                    and node.targets[0].id == "DEVTOOLS_ENHANCE_SNIPPET":
+                cls.snippet = ast.literal_eval(node.value)
+                break
+
+    def test_injector_wired(self):
+        self.assertIn("def inject_devtools_enhance(", self.main_src)
+        self.assertIn("return inject_devtools_enhance(text)", self.main_src)
+        self.assertIn("__cdmpEnh", self.snippet)
+
+    def test_reads_target_params_from_url(self):
+        for k in ("cdmp_sid", "cdmp_tid", "cdmp_key", "cdmp_lang"):
+            self.assertIn(k, self.snippet)
+
+    def test_four_enhance_capabilities(self):
+        # 敏感扫描 / 批量导出 / CDP 直发 / 多主机聚合
+        self.assertIn("scanSecrets", self.snippet)
+        self.assertIn("exportData", self.snippet)
+        self.assertIn("sendCdp", self.snippet)
+        self.assertIn("loadHosts", self.snippet)
+        self.assertIn("/ws/inspect/", self.snippet)
+        self.assertIn("/api/list", self.snippet)
+
+    def test_three_languages_instant_switch(self):
+        for kw in ('zh:', 'en:', 'ja:', "devtools.preferences", "setLang", "applyLang"):
+            self.assertIn(kw, self.snippet)
+
+    def test_shadow_dom_isolated(self):
+        self.assertIn("attachShadow", self.snippet)
+        self.assertIn("data-cdmp-enh", self.snippet)
+
+    def test_idempotent_injection(self):
+        import ast
+        tree = ast.parse(self.main_src)
+        fn = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "inject_devtools_enhance":
+                fn = node
+                break
+        self.assertIsNotNone(fn)
+        # 幂等守卫：已含标记时原样返回
+        src = ast.get_source_segment(self.main_src, fn)
+        self.assertIn('"__cdmpEnh" in text', src)
+        self.assertIn("return text", src)
+
+
+class I18nTests(unittest.TestCase):
+    """全应用中/英/日多语言，下拉即切、即时生效、持久化。"""
+
+    def test_i18n_framework(self):
+        self.assertIn("const I18N", JS)
+        for kw in ("currentLang", "applyLang", "setLang", "i18nWalk",
+                   "MutationObserver", "cdpLang", "langSelect"):
+            self.assertIn(kw, JS)
+
+    def test_three_languages_present(self):
+        self.assertIn('{en:"Logs", ja:"', JS)
+        self.assertIn('value="en">English', INDEX)
+        self.assertIn('value="ja">日本語', INDEX)
+        self.assertIn('id="langSelect"', INDEX)
+        self.assertIn("setLang(this.value)", INDEX)
+
+    def test_lang_passed_to_native_devtools(self):
+        self.assertIn("cdmp_lang=", JS)
+        self.assertIn('currentLang', JS)
+        self.assertIn('"&cdmp_sid=" + encodeURIComponent(devSid)', JS)
 
 
 class PythonCopyInjectionTests(unittest.TestCase):

@@ -112,6 +112,10 @@
         .disclaimer-note .ico { width: 12px; height: 12px; }
         .toolbar { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
         .toolbar button, .toolbar .switch-wrap { min-height: 32px; }
+        .lang-wrap { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; min-height: 32px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev, transparent); }
+        .lang-wrap .ico { width: 14px; height: 14px; color: var(--muted); }
+        .lang-wrap select { border: 0; background: transparent; color: var(--text, inherit); font: inherit; font-size: 12px; cursor: pointer; outline: 0; padding: 4px 2px; }
+        .lang-wrap select option { color: #111; }
         button {
             font: inherit;
             font-size: 13px;
@@ -1435,6 +1439,14 @@
             <button id="btnKey" onclick="openKey()" class="btn-icon" style="display:none" title="设置本机 API 密钥（服务端启用 API_KEY 时才需要）"><svg class="ico"><use href="#i-key"/></svg><span id="keyLabel">密钥</span></button>
             <button id="btnRemote" onclick="openRemote()" class="btn-icon" title="远程接入：添加远端主机，或生成本机接入令牌给其他主机远控"><svg class="ico"><use href="#i-link"/></svg><span>远程</span></button>
             <button id="btnShare" onclick="openShare()" class="btn-icon" title="只读分享：拖入浏览器生成观看链接，观看端不能操控"><svg class="ico"><use href="#i-share"/></svg><span>分享</span></button>
+            <label class="lang-wrap" title="界面语言 / Interface language / インターフェース言語">
+                <svg class="ico"><use href="#i-grid"/></svg>
+                <select id="langSelect" onchange="setLang(this.value)" aria-label="Interface language">
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                    <option value="ja">日本語</option>
+                </select>
+            </label>
             <button onclick="openSettings()" style="position:relative" class="btn-icon"><svg class="ico"><use href="#i-settings"/></svg><span>设置</span><span class="update-dot" id="updateDot" title="浏览器镜像有新版本，建议更新" style="display:none"></span></button>
             <button id="btnScreenLock" onclick="toggleScreenLock()" title="锁定画面输入，防止脚本执行时误点击" class="btn-icon"><svg class="ico"><use href="#i-unlock"/></svg><span>屏幕锁</span></button>
             <div class="tool-more" id="toolMore">
@@ -1523,23 +1535,15 @@
                             <div class="cap-bar">
                                 <span class="cap-brand">
                                     <svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 5-8 4 3"/></svg>
-                                    网络抓包 · 中文开发者工具
+                                    增强工具台 · 原生 DevTools
                                 </span>
                                 <span class="cap-spacer"></span>
-                                <button class="cap-btn ghost" onclick="openNativeDevTools()" title="打开浏览器原生 DevTools 独立窗口（与 F12 一致）">原生 DevTools ↗</button>
-                                <button class="cap-btn" id="capBtnConn" onclick="capToggleConnect()">开始抓包</button>
+                                <button class="cap-btn" onclick="openNativeDevTools()" title="打开浏览器原生 DevTools 独立窗口（F12 同款，已内置增强工具台）">原生 DevTools ↗</button>
+                                <button class="cap-btn ghost" id="capBtnConn" onclick="capToggleConnect()">开始抓包</button>
                                 <span class="cap-state"><span class="cap-dot" id="capStateDot"></span><span id="capStateText">未连接</span></span>
                             </div>
                             <div class="cap-tabbar" id="dtTabbar">
-                                <div class="cap-tab" data-p="elements" onclick="dtSwitch('elements')">元素</div>
-                                <div class="cap-tab" data-p="console" onclick="dtSwitch('console')">控制台</div>
-                                <div class="cap-tab" data-p="sources" onclick="dtSwitch('sources')">源码</div>
-                                <div class="cap-tab on" data-p="network" onclick="dtSwitch('network')">网络</div>
-                                <div class="cap-tab" data-p="performance" onclick="dtSwitch('performance')">性能</div>
-                                <div class="cap-tab" data-p="memory" onclick="dtSwitch('memory')">内存</div>
-                                <div class="cap-tab" data-p="application" onclick="dtSwitch('application')">应用</div>
-                                <div class="cap-tab" data-p="security" onclick="dtSwitch('security')">安全</div>
-                                <div class="cap-tab" data-p="device" onclick="dtSwitch('device')">设备</div>
+                                <div class="cap-tab on" data-p="network" onclick="dtSwitch('network')">网络抓包</div>
                                 <div class="cap-tab" data-p="cdp" onclick="dtSwitch('cdp')">CDP台</div>
                                 <div class="cap-tab" data-p="tools" onclick="dtSwitch('tools')">工具</div>
                             </div>
@@ -2331,6 +2335,133 @@
 
     <script>
         const $ = (id) => document.getElementById(id);
+
+        // ---- 全应用多语言（中 / 英 / 日）----
+        // 采用 DOM 文本节点自动翻译：key 为界面原文（中文），value 为其它语言。
+        // 这样无需改动海量 onclick/innerHTML，静态与动态插入的文案都能即时切换；
+        // 切回中文时从 WeakMap 恢复原文。字典未收录的中文保持原样，不影响功能。
+        const I18N = {
+            "CDP Browser Manager": {en:"CDP Browser Manager", ja:"CDP ブラウザマネージャー"},
+            "完整 / 无头双内核 · VNC / CDP 抓屏可切换 · 用户目录可临时/持久": {en:"Full / headless dual engine · switchable VNC / CDP capture · temporary or persistent profiles", ja:"フル/ヘッドレス双眼 · VNC/CDP 画面切替可 · プロファイル一時/永続"},
+            "仅限合法授权的自动化测试与内网使用，禁止用于任何非法用途": {en:"For authorized automation and internal use only. Illegal use is prohibited.", ja:"正規に許可された自動テストと社内利用のみ。不正利用は禁止です。"},
+            "运行日志": {en:"Logs", ja:"ログ"},
+            "开发者工具": {en:"Dev Tools", ja:"開発ツール"},
+            "密钥": {en:"Key", ja:"キー"},
+            "远程": {en:"Remote", ja:"リモート"},
+            "分享": {en:"Share", ja:"共有"},
+            "设置": {en:"Settings", ja:"設定"},
+            "屏幕锁": {en:"Screen Lock", ja:"画面ロック"},
+            "工具": {en:"Tools", ja:"ツール"},
+            "更多工具：自动化 / 运维治理 / 录制 / 界面": {en:"More tools: automation / operations / recording / UI", ja:"その他のツール: 自動化 / 運用 / 録画 / UI"},
+            "打开/收起右侧运行日志": {en:"Show/hide the runtime logs panel", ja:"実行ログパネルの表示/非表示"},
+            "实例列表（点击切换画面）": {en:"Instances (click to switch view)", ja:"インスタンス一覧（クリックで切替）"},
+            "持久用户目录（保留登录态）": {en:"Persistent profiles (keep login state)", ja:"永続プロファイル（ログイン状態を保持）"},
+            "暂无可显示的画面": {en:"No view available", ja:"表示できる画面がありません"},
+            "点击实例列表，或点「临时实例」右侧的 + 新建": {en:"Click an instance, or press + next to “Temporary” to create one", ja:"インスタンスをクリック、または「一時インスタンス」の + で作成"},
+            "画面已锁定": {en:"Screen locked", ja:"画面がロックされています"},
+            "解锁画面": {en:"Unlock screen", ja:"画面のロックを解除"},
+            "收起右侧面板": {en:"Collapse the right panel", ja:"右パネルを折りたたむ"},
+            "原生 DevTools ↗": {en:"Native DevTools ↗", ja:"ネイティブ DevTools ↗"},
+            "开始抓包": {en:"Start capture", ja:"傍受開始"},
+            "停止抓包": {en:"Stop capture", ja:"傍受停止"},
+            "未连接": {en:"Disconnected", ja:"未接続"},
+            "抓包中": {en:"Capturing", ja:"傍受中"},
+            "元素": {en:"Elements", ja:"要素"},
+            "控制台": {en:"Console", ja:"コンソール"},
+            "源码": {en:"Sources", ja:"ソース"},
+            "网络": {en:"Network", ja:"ネットワーク"},
+            "性能": {en:"Performance", ja:"パフォーマンス"},
+            "内存": {en:"Memory", ja:"メモリ"},
+            "应用": {en:"Application", ja:"アプリケーション"},
+            "安全": {en:"Security", ja:"セキュリティ"},
+            "设备": {en:"Devices", ja:"デバイス"},
+            "CDP台": {en:"CDP Console", ja:"CDP コンソール"},
+            "工具": {en:"Tools", ja:"ツール"},
+            "录制中": {en:"Recording", ja:"録画中"},
+            "清空": {en:"Clear", ja:"クリア"},
+            "请求操作": {en:"Request actions", ja:"リクエスト操作"},
+            "复制为 cURL (bash)": {en:"Copy as cURL (bash)", ja:"cURL としてコピー (bash)"},
+            "复制为 cURL (cmd)": {en:"Copy as cURL (cmd)", ja:"cURL としてコピー (cmd)"},
+            "复制为 Python (requests)": {en:"Copy as Python (requests)", ja:"Python としてコピー (requests)"},
+            "复制为 Python (httpx)": {en:"Copy as Python (httpx)", ja:"Python としてコピー (httpx)"},
+            "复制请求地址": {en:"Copy request URL", ja:"リクエスト URL をコピー"},
+            "编辑并重新发送": {en:"Edit and resend", ja:"編集して再送信"},
+            "扫描此请求敏感信息": {en:"Scan this request for secrets", ja:"このリクエストをスキャン"},
+            "编辑并重新发送": {en:"Edit and resend", ja:"編集して再送信"},
+            "发送": {en:"Send", ja:"送信"},
+            "取消": {en:"Cancel", ja:"キャンセル"},
+            "方法": {en:"Method", ja:"メソッド"},
+            "请求头（JSON）": {en:"Request headers (JSON)", ja:"リクエストヘッダ (JSON)"},
+            "请求体": {en:"Request body", ja:"リクエスト本文"},
+            "敏感信息扫描": {en:"Secret scan", ja:"シークレット検査"},
+            "批量导出脚本": {en:"Batch export scripts", ja:"スクリプトを一括書き出し"},
+            "请求编辑重放": {en:"Request edit & replay", ja:"リクエスト編集と再生"},
+            "API 触发重放": {en:"API trigger replay", ja:"API トリガー再生"},
+            "立即扫描": {en:"Scan now", ja:"今すぐ検査"},
+            "Python 脚本": {en:"Python script", ja:"Python スクリプト"},
+            "开启/关闭拦截": {en:"Toggle interception", ja:"傍受の切替"},
+            "关闭": {en:"Close", ja:"閉じる"},
+            "语言": {en:"Language", ja:"言語"},
+            "中文": {en:"Chinese", ja:"中国語"},
+            "英文": {en:"English", ja:"英語"},
+            "日文": {en:"Japanese", ja:"日本語"},
+            "主题": {en:"Theme", ja:"テーマ"}
+        };
+        let currentLang = "zh";
+        try { currentLang = localStorage.getItem("cdpLang") || "zh"; } catch (e) {}
+        const _i18nText = new WeakMap();
+        const _i18nAttr = new WeakMap();
+        let _i18nApplying = false;
+        function i18nLookup(text) {
+            const t = String(text || ""), hit = I18N[t];
+            return (hit && hit[currentLang]) ? hit[currentLang] : null;
+        }
+        function i18nWalk(node) {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                const raw = _i18nText.has(node) ? _i18nText.get(node) : node.nodeValue;
+                _i18nText.set(node, raw);
+                const translated = currentLang === "zh" ? raw : (i18nLookup(raw) || raw);
+                if (node.nodeValue !== translated) node.nodeValue = translated;
+            } else if (node.nodeType === 1) {
+                ["title", "placeholder"].forEach(function (attr) {
+                    if (!node.hasAttribute(attr)) return;
+                    const key = "_" + attr;
+                    const raw = _i18nAttr.has(node) && _i18nAttr.get(node)[key] !== undefined
+                        ? _i18nAttr.get(node)[key] : node.getAttribute(attr);
+                    const store = _i18nAttr.get(node) || {};
+                    store[key] = raw; _i18nAttr.set(node, store);
+                    const translated = currentLang === "zh" ? raw : (i18nLookup(raw) || raw);
+                    if (node.getAttribute(attr) !== translated) node.setAttribute(attr, translated);
+                });
+                Array.prototype.forEach.call(node.childNodes, i18nWalk);
+            }
+        }
+        function applyLang(lang) {
+            if (lang) currentLang = lang;
+            try { localStorage.setItem("cdpLang", currentLang); } catch (e) {}
+            document.documentElement.setAttribute("lang", currentLang === "zh" ? "zh-CN" : (currentLang === "ja" ? "ja" : "en"));
+            const sel = $("langSelect"); if (sel) sel.value = currentLang;
+            _i18nApplying = true;
+            try { i18nWalk(document.body); } finally { _i18nApplying = false; }
+        }
+        function setLang(lang) { applyLang(lang); }
+        // 动态插入的 DOM（如实例卡片、弹窗）也即时翻译；忽略自身改动触发的回调。
+        try {
+            const _i18nObserver = new MutationObserver(function (muts) {
+                if (_i18nApplying) return;
+                let changed = false;
+                muts.forEach(function (m) {
+                    if (m.type === "childList") {
+                        Array.prototype.forEach.call(m.addedNodes, function (n) { i18nWalk(n); });
+                        changed = true;
+                    }
+                });
+                if (changed && currentLang !== "zh") { /* 文本节点改动由 addedNodes 的 walk 处理 */ }
+            });
+            _i18nObserver.observe(document.body, { childList: true, subtree: true });
+        } catch (e) {}
+
         let instances = {};
         let profiles = [];
         // 远端主机的持久目录：{host, host_name, name, volume, created, used_by}，
@@ -6135,6 +6266,8 @@
             }
         });
         checkImageStatus();
+        // 应用界面语言：从 localStorage 恢复，并即时翻译已渲染的静态 DOM。
+        applyLang();
         // 页面在后台时暂停轮询，避免标签页一多就持续打 Docker API。
         setInterval(() => { if (!document.hidden && !bgEcoMode) load(true); }, 10000);
         // 远端持久目录独立于 10 秒实例轮询，60 秒刷新一次：远端离线时不会拖慢面板。
@@ -6212,8 +6345,20 @@
             }
         }
 
-        // 开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换。
+        // 方案二：开发者工具主入口 = 浏览器原生 DevTools（F12 同款，内含注入的增强工具台）。
+        // 自研九面板复刻已放弃；下方抽屉降级为「增强工具台」辅助面板，保留主应用侧增强能力。
         function openDev() {
+            const sel = instances[selectedSid];
+            if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
+            devSid = sel.sid;
+            devTid = null;
+            const tid = castPreferredTid || (castState && castState.sid === sel.sid ? castState.tid : "");
+            if (tid) devTid = tid;
+            openNativeDevTools();
+        }
+
+        // 增强工具台抽屉：主应用侧的抓包/敏感扫描/导出/CDP/多主机入口，辅助原生 DevTools。
+        function openEnhanceDrawer() {
             const sel = instances[selectedSid];
             if (!sel || sel.status !== "running") { toast("请先选中一个运行中的实例"); return; }
             devSid = sel.sid;
@@ -6253,8 +6398,17 @@
             // 故此处只给 host + 路径；wss 由 frontend 依据页面 https 协议自动选择。
             const wsPath = location.host + prefix + "/" + port +
                 "/devtools/page/" + tid + (apiKey ? "?key=" + encodeURIComponent(apiKey) : "");
+            // 增强工具台参数：注入脚本在原生 DevTools 窗口内自建 /ws/inspect 与
+            // /api/list 连接（窗口以 noopener 打开，无法共享主应用状态），故把当前
+            // 目标 sid/tid、鉴权 key、界面语言一并带上；lang 同时决定原生 DevTools
+            // 界面语言（脚本写 devtools.preferences 后自动重载）。
+            const lang = (typeof currentLang === "string" && currentLang) ? currentLang : "zh";
+            const extra = "&cdmp_sid=" + encodeURIComponent(devSid) +
+                "&cdmp_tid=" + encodeURIComponent(tid) +
+                "&cdmp_key=" + encodeURIComponent(apiKey || "") +
+                "&cdmp_lang=" + encodeURIComponent(lang);
             const url = location.origin + prefix + "/" + port +
-                "/devtools/inspector.html?ws=" + encodeURIComponent(wsPath);
+                "/devtools/inspector.html?ws=" + encodeURIComponent(wsPath) + extra;
             return { url: url, ws: wsPath, tid: tid, port: port, prefix: prefix };
         }
 

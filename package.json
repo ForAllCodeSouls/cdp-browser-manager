@@ -1,0 +1,11 @@
+{
+  "name": "cdp-browser-manager-tests",
+  "private": true,
+  "description": "jsdom UI self-tests for cdp-browser-manager",
+  "scripts": {
+    "test": "node test_devtools_ui.js && node test_capture_panel.js && node test_devtools_full.js"
+  },
+  "dependencies": {
+    "jsdom": "^31.0.1"
+  }
+}
