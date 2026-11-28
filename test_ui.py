@@ -142,23 +142,34 @@ class HandlerIntegrityTests(unittest.TestCase):
 
 
 class DevToolsDrawerTests(unittest.TestCase):
-    """开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换；原生窗口为其中入口。"""
+    """开发者工具 = 右侧抽屉内嵌原生 DevTools，与运行日志 tab 切换；无新窗口。"""
 
-    def test_drawer_only_has_log_view(self):
-        # 自研九面板移除后抽屉只剩运行日志视图。
+    def test_drawer_has_log_and_native_dev_views(self):
+        # 自研九面板移除；抽屉保留运行日志 + 内嵌原生 DevTools 两个视图。
         self.assertIn('class="side-switch"', INDEX)
         self.assertIn('class="side-view on" id="sideViewLog"', INDEX)
+        self.assertIn('id="sideTabDev"', INDEX)
+        self.assertIn("switchSideView('dev')", INDEX)
+        self.assertIn('id="devToolsFrame"', INDEX)
         self.assertNotIn('id="devMask"', INDEX)
-        self.assertNotIn('id="sideTabDev"', INDEX)
-        self.assertNotIn("switchSideView('dev')", INDEX)
 
-    def test_open_dev_opens_native_devtools(self):
-        # 主入口与 D 键统一打开原生 DevTools 独立窗口（F12 同款）。
+    def test_iframe_sandbox_prevents_breakout(self):
+        # 原生 DevTools 以 iframe 内嵌，sandbox 不给 allow-top-navigation 防跳出。
+        frame = INDEX.split('id="devToolsFrame"')[1].split(">")[0]
+        self.assertIn("sandbox=", frame)
+        self.assertNotIn("allow-top-navigation", frame)
+        self.assertIn("allow-scripts", frame)
+        self.assertIn("allow-same-origin", frame)
+        self.assertIn("allow-clipboard-write", frame)
+
+    def test_open_dev_opens_native_devtools_in_drawer(self):
+        # 主入口与 D 键统一在右侧抽屉内嵌原生 DevTools（F12 同款），不弹窗。
         self.assertIn("async function openDev()", JS)
         open_dev = JS.split("async function openDev()")[1].split("function ")[0]
         self.assertIn("await openNativeDevTools();", open_dev)
-        self.assertNotIn('switchSideView("dev")', open_dev)
-        self.assertNotIn('$("logDrawer").classList.add("open")', open_dev)
+        self.assertIn('switchSideView("dev")', open_dev)
+        self.assertIn('$("logDrawer").classList.add("open")', open_dev)
+        self.assertNotIn("window.open", open_dev)
         self.assertIn('onclick="openDev()"', INDEX)
 
     def test_enhance_drawer_is_alias(self):
@@ -174,15 +185,16 @@ class DevToolsDrawerTests(unittest.TestCase):
         self.assertNotIn("网络抓包 · 中文开发者工具", INDEX)
 
     def test_native_devtools_still_available(self):
-        # 原生 DevTools 独立窗口作为抓包面板内入口保留
+        # 原生 DevTools 作为抽屉内 iframe 入口保留
         self.assertIn("function openNativeDevTools(", JS)
         self.assertIn("/devtools/inspector.html", JS)
         self.assertIn("/devtools/page/", JS)
-        self.assertIn("openNativeDevTools()", INDEX)
+        self.assertIn('frame.src = t.url', JS)
+        self.assertIn("openNativeDevTools()", JS)
 
-    def test_no_embedded_iframe_left(self):
-        # 不保留会降级为 undocked 的内嵌 iframe 实现
-        for dead in ("nativeDevFrame", "mountNativeDevTools", "devNativeReload",
+    def test_no_old_custom_panel_JS_left(self):
+        # 自研九面板的旧 JS 实现不得残留（现改为原生 iframe 内嵌）
+        for dead in ("devMask", "mountNativeDevTools", "devNativeReload",
                      "copyDevToolsLink", "initDrawerResizer", "drawerResizer",
                      "devToggle", "switchDev("):
             self.assertNotIn(dead, INDEX + JS, dead)

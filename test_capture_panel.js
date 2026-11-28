@@ -31,7 +31,7 @@ ok(main.includes("DEVTOOLS_PY_ANCHOR"), "原生 Python 注入锚点保留");
 ok(main.includes("import requests") && main.includes("import httpx"), "requests/httpx 代码生成保留");
 ok(main.includes("await r.requestFormData()"), "异步请求体读取保留");
 
-// 3. jsdom：抽屉只有日志，openDev 打开原生窗口
+// 3. jsdom：抽屉含日志 + 原生 DevTools iframe，初始不弹任何窗口
 {
   const vc = new VirtualConsole(); vc.on("jsdomError", () => {});
   let opened = [];
@@ -58,6 +58,7 @@ ok(main.includes("await r.requestFormData()"), "异步请求体读取保留");
   const d = w.document;
   ok(!!d.getElementById("sideViewLog"), "运行日志视图存在");
   ok(!d.getElementById("devMask"), "开发者工具自研视图不存在");
+  ok(!!d.getElementById("devToolsFrame"), "原生 DevTools iframe 存在");
   eq(opened.length, 0, "初始未打开任何窗口");
   w.close();
 }

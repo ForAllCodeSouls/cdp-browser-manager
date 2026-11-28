@@ -119,12 +119,12 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 
 面板顶栏「工具」下拉与实例详情栏「开发者工具」入口提供以下能力（均为本机管理功能，配置持久化到 `DATA_DIR`）：
 
-- **开发者工具（浏览器原生 DevTools）**：点击详情栏「开发者工具」或按 `D`，直接打开**浏览器原生 DevTools 独立窗口**，与按 F12 完全一致。自研的九面板中文复刻已彻底移除——原生 DevTools 在元素/控制台/源码/网络/性能/内存/应用/安全/设备各面板的完整度远超复刻，故全部交给原生。右侧抽屉现在只承载运行日志
-  - **原生窗口实现**：复用 Chrome 自带 `inspector.html`（同源代理并移除 CSP），通过 `ws=<同源代理>/devtools/page/<标签ID>` 连接；远端走 `/remote/<主机ID>/<端口>/...`。iframe 内嵌会 `undocked` 降级，故用独立顶层窗口。`?ws=` 只传 `主机:端口/路径`、不传协议前缀（Chrome 158+ 的 frontend 会自行补 `ws://`，传完整 URL 会拼成 `ws://ws//...` 导致一开就断）；后端兜底——manager 代理 inspector.html 时注入脚本，发现 `ws=` 带协议前缀就自动剥离并 `replaceState` 修正地址栏。原生窗口保持干净，**不注入任何自研面板或增强工具台**
+- **开发者工具（浏览器原生 DevTools）**：点击详情栏「开发者工具」或按 `D`，在**右侧抽屉内嵌打开浏览器原生 DevTools**（与按 F12 完全一致），**不弹新窗口**。自研的九面板中文复刻已彻底移除——原生 DevTools 在元素/控制台/源码/网络/性能/内存/应用/安全/设备各面板的完整度远超复刻，故全部交给原生。抽屉内「运行日志 / 开发者工具」两个 tab 切换，切到 DevTools 时抽屉自动加宽，收起抽屉会卸载 iframe 断开 CDP。
+  - **抽屉内嵌实现**：复用 Chrome 自带 `inspector.html`（同源代理并移除 CSP），放进 `<iframe>`，通过 `ws=<同源代理>/devtools/page/<标签ID>` 连接；远端走 `/remote/<主机ID>/<端口>/...`。iframe 的 `sandbox` 保留 `allow-scripts / allow-same-origin / allow-forms / allow-modals / allow-popups / allow-clipboard-write / allow-downloads`，但**刻意不给 `allow-top-navigation`**——任何试图跳出顶层窗口的代码都会被浏览器拒绝，保证 DevTools 稳定留在抽屉内（原生 DevTools frontend 在 `?ws=` standalone 模式下本身也没有顶层导航代码，只有用户主动点外链才 `window.open`）。`?ws=` 只传 `主机:端口/路径`、不传协议前缀（Chrome 158+ 的 frontend 会自行补 `ws://`，传完整 URL 会拼成 `ws://ws//...` 导致一开就断）；后端兜底——manager 代理 inspector.html 时注入脚本，发现 `ws=` 带协议前缀就自动剥离并 `replaceState` 修正地址栏。原生 DevTools 保持干净，**不注入任何自研面板或增强工具台**
   - **原生右键「复制为 Python」（中文）**：原生 Network 面板没有 Python。manager 同源代理 `panels/network/network.js` 时用唯一源码锚点注入「复制为 Python (requests)」与「复制为 Python (httpx)」两个中文菜单，调用内部 `NetworkRequest` 读取 URL/方法/头/体生成代码。幂等注入，锚点消失则静默跳过。该增强依赖 Chrome 前端内部结构，版本升级后需重新确认锚点。抓包（Network 面板）、复制 cURL、请求编辑重放等均使用原生功能
   - 自检：`node test_devtools_ui.js`、`node test_capture_panel.js`、`node test_devtools_full.js`（需 jsdom）验证原生入口/URL/语言热切换，以及自研面板确已移除
 - **多语言（中 / 英 / 日，即时切换）**：顶栏工具栏「语言」下拉可切换界面语言，当前页**即时生效、无需刷新或重开窗口**，选择持久化到 localStorage（`cdpLang`）。采用 DOM 文本节点翻译 + MutationObserver 覆盖动态内容，切换后所有可见文案即时更新，不 reload 页面、不打断抓包或调试。
-- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 打开原生 DevTools、`Esc` 关闭弹窗
+- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在右侧抽屉打开原生 DevTools、`Esc` 关闭弹窗
 - **批量执行 JavaScript**：对所有实例当前标签页并发生发同一段 `Runtime.evaluate`，逐条显示成功值与错误
 - **脚本片段库**：保存常用 JS 片段，一键载入到批量执行或 CDP 控制台
 - **实例配置模板**：把内核、目录模式、画质、代理等保存成模板，一键回填到新建弹窗
@@ -134,7 +134,7 @@ manager 支持以下环境变量（Compose 中已给出常用项）：
 - **操作录制回放**：录制画面上的点击与按键序列，保存后选实例回放（点击通过 `elementFromPoint` 近似还原到页面对应位置）
 - **每实例独立代理**：新建弹窗填 `http://` / `https://` / `socks5://` / `socks4://` 代理地址，仅对当前实例生效；需重建浏览器镜像才能加载新参数
 - **只读分享水印**：分享观看页大画面叠加时间戳水印，防止截屏转播无法追溯
-- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 打开原生 DevTools、`Esc` 关闭弹窗
+- **主题与快捷键**：顶栏工具菜单切换深色/浅色主题（存 localStorage）；`L` 锁屏、`D` 在右侧抽屉打开原生 DevTools、`Esc` 关闭弹窗
 
 新增 API（均需 API_KEY）：`/api/audit`、`/api/tags`、`/api/snippets`、`/api/templates`、`/api/recordings`、`/api/schedules`、`/api/batch/exec`、`/api/metrics`，以及 WS `/ws/inspect/{sid}/{tid}?domain=network|console|performance|all`（保留给脚本注入/批量执行等主应用功能；开发者工具本身走原生 DevTools 的同源代理）。
 
@@ -263,6 +263,8 @@ curl http://你的IP:8000/api/instance/{sid}/diag
 
 > 面板顶栏的「运行日志」是滑动开关：打开后日志抽屉从右侧滑出，与画面并排显示；
 > 关上后抽屉收起、画面占满。日志为 manager 全局记录，每 10 秒自动刷新，不再有单实例来源切换。
+> 抽屉顶部有「运行日志 / 开发者工具」两个 tab；点详情栏「开发者工具」或按 `D` 会打开抽屉并切到 DevTools（自动加宽），
+> 原生 DevTools 以 iframe 内嵌在抽屉里，不弹新窗口。
 
 ## 部署（推荐 Docker Compose）
 
