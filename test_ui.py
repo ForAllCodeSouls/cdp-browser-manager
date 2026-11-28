@@ -158,10 +158,23 @@ class DevToolsDrawerTests(unittest.TestCase):
             self.assertIn('id="' + btn + '"', INDEX + JS)
 
     def test_native_devtools_entry(self):
-        self.assertIn("function openNativeDevTools()", JS)
+        self.assertIn("function openNativeDevTools(", JS)
         self.assertIn("/devtools/inspector.html", JS)
         self.assertIn("/devtools/page/", JS)
-        self.assertIn("openNativeDevTools()", INDEX)
+        self.assertIn("openNativeDevTools(", INDEX)
+
+    def test_native_devtools_embedded(self):
+        # 原生 DevTools 是默认面板，直接嵌在抽屉里；轻量工具退居次级标签。
+        self.assertIn('data-pane="native"', INDEX)
+        self.assertIn('id="nativeDevFrame"', INDEX)
+        self.assertIn("function mountNativeDevTools(", JS)
+        self.assertIn("function devNativeReload(", JS)
+        self.assertIn("function copyDevToolsLink(", JS)
+        self.assertIn("initDrawerResizer()", JS)
+        self.assertIn('id="drawerResizer"', INDEX)
+        self.assertIn('"dev-mode"', JS)
+        # 远端实例的原生 DevTools 走 /remote/<host>/<port>/devtools/...
+        self.assertIn('"/remote/" + encodeURIComponent(sel.host)', JS)
 
     def test_tid_autoresolve(self):
         self.assertIn("function devResolveTid()", JS)

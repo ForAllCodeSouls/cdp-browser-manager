@@ -308,6 +308,20 @@ def ws_requested_subprotocols(headers) -> list:
     return [p.strip() for p in str(raw).split(",") if p.strip()]
 
 
+def ws_is_idle_timeout(exc: BaseException) -> bool:
+    """识别 WS 读超时，避免把「暂时没数据」误判成断连。
+
+    websocket-client 的 recv() 在 socket 超时后抛自有异常类
+    WebSocketTimeoutException；标准库超时也会以 socket.timeout / TimeoutError
+    出现。代理帧泵统一用 1 秒短超时轮询 stop 信号，必须把这类异常放行。
+    原生 DevTools 对此最敏感：空闲十几秒就被断开会直接弹出
+    “Debugging connection was closed”。
+    """
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return True
+    return type(exc).__name__ in ("WebSocketTimeoutException", "TimeoutException")
+
+
 def auth_exempt(path: str, method: str) -> bool:
     """免鉴权路径：面板首页、健康检查、主机列表（仅 GET），以及 noVNC 静态资源。
 
@@ -332,6 +346,13 @@ def auth_exempt(path: str, method: str) -> bool:
         if rest.startswith("devtools/"):
             return True
         return not rest.startswith("json/") and bool(STATIC_RESOURCE_RE.search(rest))
+    # 远端主机上的 DevTools 前端同样由通用远端代理转发。浏览器无法给 iframe
+    # 加 X-API-Key 头，因此这里只放行静态前端资源；WS 仍由 remote_ws_proxy
+    # 用服务端配置的远端密钥鉴权。
+    if method == "GET":
+        m = re.match(r"^/remote/([^/]+)/(\d+/devtools/.+)$", path)
+        if m:
+            return True
     return False
 
 
@@ -3223,13 +3244,16 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
         while not stop.is_set():
             try:
                 raw = upstream.recv()
-            except Exception:
+            except Exception as e:
+                # 远端 DevTools / VNC 都可能长时间静默；读超时不能当断连。
+                if ws_is_idle_timeout(e):
+                    continue
                 break
-            if not raw:
-                break
+            if raw is None:
+                continue
             try:
                 coro = (
-                    websocket.send_bytes(raw) if isinstance(raw, bytes)
+                    websocket.send_bytes(raw) if isinstance(raw, (bytes, bytearray))
                     else websocket.send_text(raw)
                 )
                 asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=3)
@@ -3241,6 +3265,7 @@ async def remote_ws_proxy(websocket: WebSocket, host_id: str, rest: str):
         if subprotocol:
             upstream_opts["subprotocols"] = [subprotocol]
         upstream = ws_client.create_connection(url, **upstream_opts)
+        upstream.settimeout(1)
         threading.Thread(target=pump, daemon=True).start()
         while True:
             try:
@@ -3403,10 +3428,15 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
         while not stop.is_set():
             try:
                 raw = upstream.recv()
-            except Exception:
+            except Exception as e:
+                # 关键：DevTools 空闲时 CDP 长时间无消息，websocket-client
+                # 会在 recv 超时后抛异常。旧实现直接 break 并关闭上游，
+                # 前端遂弹「Debugging connection was closed」。
+                if ws_is_idle_timeout(e):
+                    continue
                 break
-            if not raw:
-                break
+            if raw is None:
+                continue
             try:
                 # CDP 几乎全是文本帧（JSON），但截图/二进制响应按协议可能以
                 # 二进制帧送达；按类型转发避免 send_text 收到 bytes 抛错断连。
@@ -3422,6 +3452,9 @@ async def cdp_devtools_ws(websocket: WebSocket, port: int, rest: str):
         upstream = ws_client.create_connection(
             f"ws://{ip}:9222/devtools/{rest}", timeout=10, suppress_origin=True
         )
+        # 握手用 10 秒上限；读循环改成 1 秒短超时，便于及时响应停止信号，
+        # 超时本身由 pump 放行，不再当作断连。
+        upstream.settimeout(1)
         threading.Thread(target=pump, daemon=True).start()
         while True:
             try:
@@ -3537,10 +3570,13 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
         while not stop.is_set():
             try:
                 raw = upstream.recv()
-            except Exception:
+            except Exception as e:
+                # 静态 VNC 画面可能几十秒无更新；读超时必须继续等待。
+                if ws_is_idle_timeout(e):
+                    continue
                 break
-            if not raw:
-                break
+            if raw is None:
+                continue
             try:
                 # binary 模式下 recv 返回 bytes；base64 模式下返回 str。
                 # 按类型回发对应帧，避免把 base64 文本错当二进制帧。
@@ -3559,6 +3595,7 @@ async def novnc_ws_proxy(websocket: WebSocket, port: int):
         upstream = ws_client.create_connection(
             f"ws://{ip}:6080/websockify", **upstream_opts
         )
+        upstream.settimeout(1)
         threading.Thread(target=pump, daemon=True).start()
         while not stop.is_set():
             try:
@@ -3945,8 +3982,11 @@ async def ws_inspect(websocket: WebSocket, sid: str, tid: str):
             while not stop.is_set():
                 try:
                     raw = upstream.recv()
-                except Exception:
-                    continue  # 空闲超时/暂时无数据，继续等
+                except Exception as e:
+                    # 只放行空闲超时；真正断开时退出，避免 100% CPU 空转。
+                    if ws_is_idle_timeout(e):
+                        continue
+                    break
                 try:
                     msg = json.loads(raw)
                 except Exception:

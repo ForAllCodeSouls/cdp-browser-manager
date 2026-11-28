@@ -34,6 +34,10 @@ function makeDom() {
       w.alert = () => {};
       w.confirm = () => true;
       w.open = (url) => { openUrls.push(url); return {}; };
+      Object.defineProperty(w.navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (t) => { w.CopiedText = t; } }
+      });
     }
   });
   const w = dom.window;
@@ -69,13 +73,16 @@ function makeDom() {
 
 console.log("== 开发者工具交互测试 ==");
 
-// 1. openDev 打开抽屉而非全屏弹窗
+// 1. openDev 打开抽屉，并默认展示内嵌原生 DevTools
 {
   const w = makeDom();
   w.openDev();
   ok(w.document.getElementById("logDrawer").classList.contains("open"), "openDev 打开右侧抽屉");
   eq(w.eval("sideView"), "dev", "openDev 切到开发者工具视图");
   ok(w.document.getElementById("devMask").classList.contains("on"), "devMask 作为抽屉视图被激活");
+  ok(w.document.getElementById("nativeDevFrame") !== null, "默认渲染内嵌原生 DevTools iframe");
+  ok(w.document.getElementById("logDrawer").classList.contains("dev-mode"), "原生面板自动加宽抽屉");
+  w.switchDev("network");
   ok(w.document.getElementById("devMainBtn") !== null, "网络面板生成主按钮");
   eq(w.document.getElementById("devMainBtn").textContent, "开始抓包", "网络主按钮初始文案");
 }
@@ -84,6 +91,7 @@ console.log("== 开发者工具交互测试 ==");
 {
   const w = makeDom();
   w.openDev();
+  w.switchDev("network");
   w.devToggle();
   setTimeout(() => {
     ok(w.eval("devWs") !== null, "点开始抓包后建立 WS");
@@ -132,8 +140,22 @@ console.log("== 开发者工具交互测试 ==");
             ok(url.includes("ws=") && decodeURIComponent(url).includes("/devtools/page/tid123"), "ws 参数指向 page 级 CDP");
             ok(decodeURIComponent(url).includes("key=testkey"), "原生入口携带 API_KEY");
 
-            console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
-            process.exit(failed ? 1 : 0);
+            w.switchDev("native");
+            setTimeout(() => {
+              const frame = w.document.getElementById("nativeDevFrame");
+              ok(frame && frame.src.includes("/9333/devtools/inspector.html"), "内嵌 iframe 加载同源 DevTools 前端");
+              ok(w.document.getElementById("devStatus").textContent.includes("已连接"), "内嵌面板显示连接状态");
+              w.copyDevToolsLink().then(() => {
+                ok(w.CopiedText && w.CopiedText === frame.src, "复制链接复用当前 DevTools 地址");
+                w.eval('instances.sid1.host = "R"; instances.sid1.host_name = "主机R";');
+                return w.devToolsTarget();
+              }).then(t => {
+                ok(t && t.url.includes("/remote/R/9333/devtools/inspector.html"), "远端实例使用远端 DevTools 代理路径");
+                ok(t && decodeURIComponent(t.url).includes("/remote/R/9333/devtools/page/tid123"), "远端 WS 也走远端代理");
+                console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
+                process.exit(failed ? 1 : 0);
+              });
+            }, 10);
           });
         });
       });

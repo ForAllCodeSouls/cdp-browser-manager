@@ -9,6 +9,7 @@
 """
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -668,6 +669,37 @@ class AuthExemptTests(unittest.TestCase):
             self.assertTrue(main.key_ok("secret"))
             self.assertFalse(main.key_ok(""))
             self.assertFalse(main.key_ok("wrong"))
+
+    def test_devtools_assets_exempt_including_remote(self):
+        # DevTools 前端静态资源无扩展名路径很多，页面本身不含数据；WS 单独鉴权。
+        self.assertTrue(main.auth_exempt("/9222/devtools/inspector.html", "GET"))
+        self.assertTrue(main.auth_exempt("/remote/B/9222/devtools/inspector.html", "GET"))
+        self.assertTrue(main.auth_exempt("/remote/B/9222/devtools/front_end/sdk/SDK.js", "GET"))
+        self.assertFalse(main.auth_exempt("/remote/B/9222/json/version", "GET"))
+
+
+class WebSocketIdleTimeoutTests(unittest.TestCase):
+    """透明代理不能把「暂时没数据」当断连，否则原生 DevTools 空闲即掉线。"""
+
+    def test_idle_timeout_detection(self):
+        class WebSocketTimeoutException(Exception):
+            pass
+
+        self.assertTrue(main.ws_is_idle_timeout(WebSocketTimeoutException("idle")))
+        self.assertTrue(main.ws_is_idle_timeout(socket.timeout("idle")))
+        self.assertTrue(main.ws_is_idle_timeout(TimeoutError("idle")))
+        self.assertFalse(main.ws_is_idle_timeout(RuntimeError("closed")))
+
+    def test_all_ws_pumps_ignore_idle_timeout(self):
+        src = (Path(ROOT) / "app" / "main.py").read_text(encoding="utf-8")
+        for route in ("cdp_devtools_ws", "remote_ws_proxy", "novnc_ws_proxy", "ws_inspect"):
+            start = src.index("async def " + route + "(")
+            end = src.find("\n@app.", start + 10)
+            if end < 0:
+                end = len(src)
+            block = src[start:end]
+            self.assertIn("ws_is_idle_timeout(e)", block, route)
+            self.assertIn("upstream.settimeout(1)", block, route)
 
 
 class LinkTokenKeyTests(unittest.TestCase):
