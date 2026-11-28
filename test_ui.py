@@ -213,6 +213,20 @@ class DevToolsDrawerTests(unittest.TestCase):
         self.assertIn('@app.api_route("/{port:int}/devtools/{rest:path}"', main)
         self.assertIn("Content-Security-Policy", main)
 
+    def test_backend_activates_target_for_direct_link(self):
+        # 直链打开 inspector.html 时后端兜底激活目标标签，避免「此标签页不活跃」。
+        main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn('rest == "inspector.html"', main)
+        self.assertIn("/devtools/page/", main)
+        self.assertIn('"/json/activate/"', main)
+
+    def test_frontend_activates_target_before_devtools(self):
+        # 主应用打开 DevTools 前先 activate 目标标签，屏幕锁期间不抢前台。
+        self.assertIn('"/targets/" + encodeURIComponent(tid) + "/activate"', JS)
+        active = JS.split("async function devToolsTarget()")[1].split("async function openNativeDevTools()")[0]
+        self.assertIn("if (!screenLocked)", active)
+        self.assertIn("setTimeout", active)
+
     def test_ws_param_no_protocol_prefix(self):
         # 回归：Chrome 158 DevTools frontend 自行补 ws:// 前缀，?ws= 不能带协议。
         self.assertIn("const wsPath = location.host", JS)

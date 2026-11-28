@@ -46,7 +46,12 @@ function makeDom() {
     instances = { sid1: { sid:"sid1", status:"running", debug_port:9333, host:"local" } };
     selectedSid = "sid1";
     apiKey = "testkey";
-    api = async (url) => url.endsWith("/targets") ? { targets:[{id:"tid123",type:"page"}] } : {};
+    window.__activated = [];
+    api = async (url, opts) => {
+      if (url.endsWith("/targets")) return { targets:[{id:"tid123",type:"page"}] };
+      if (url.includes("/targets/") && url.endsWith("/activate")) { window.__activated.push(url); return {ok:true}; }
+      return {};
+    };
     load = async () => {};
     render = function () {};
     loadLogs = async () => {};
@@ -71,6 +76,8 @@ function makeDom() {
     ok(d.getElementById("sideViewDev").classList.contains("on"), "dev 视图激活");
     ok(!d.getElementById("sideViewLog").classList.contains("on"), "日志视图让位");
     ok(d.getElementById("sideTabDev").classList.contains("on"), "开发者工具 tab 高亮");
+    eq(w.__activated.length, 1, "打开 DevTools 前激活目标标签一次");
+    ok((w.__activated[0] || "").includes("/targets/tid123/activate"), "激活的是被调试的标签 tid");
     w.close();
   }
 
@@ -103,6 +110,17 @@ function makeDom() {
     await tick();
     eq(openUrls.length, 0, "未选中实例不弹窗");
     ok(!w.document.getElementById("logDrawer").classList.contains("open"), "未选中实例不开抽屉");
+    w.close();
+  }
+
+  // 4b. 屏幕锁期间不激活标签（脚本执行中不抢浏览器前台）
+  {
+    const w = makeDom();
+    w.eval('screenLocked = true;');
+    await w.openDev();
+    await tick();
+    eq(w.__activated.length, 0, "屏幕锁期间不激活标签");
+    ok(!!w.document.getElementById("devToolsFrame").getAttribute("src"), "屏幕锁期间 DevTools 仍打开");
     w.close();
   }
 

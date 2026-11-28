@@ -3490,6 +3490,22 @@ async def cdp_devtools_http(port: int, rest: str, request: Request):
         raise HTTPException(status_code=502, detail=f"DevTools 资源请求失败: {e}")
 
     if "html" in ctype.lower() and raw:
+        # 直接贴 inspector.html?ws=... URL（不经过主应用）打开时，目标标签可能
+        # 处于后台冻结状态，页面显示「此标签页不活跃」、Network 面板抓不到请求。
+        # 主应用 openDev 已在前端 activate，但直链场景需后端兜底：解析 ws= 里
+        # 的 page/<tid> 并激活。仅在 inspector.html 主文档执行（子资源不带 ws），
+        # 激活失败静默忽略，不影响前端资源返回。
+        if rest == "inspector.html":
+            try:
+                from urllib.parse import parse_qs, urlsplit
+                ws_val = (parse_qs(urlsplit(str(request.url)).query).get("ws") or [""])[0]
+                m = re.search(r"/devtools/page/([0-9A-Fa-f]{32})", ws_val)
+                if m and item.get("sid"):
+                    await run_in_threadpool(
+                        cdp_http, item["sid"], "/json/activate/" + m.group(1)
+                    )
+            except Exception:
+                pass
         text = raw.decode("utf-8", "replace")
         text = relax_devtools_csp(text)
         # 让页面内相对路径资源与 WS 均走 manager 同源；URL 里的 ws= 由前端构造时给定。

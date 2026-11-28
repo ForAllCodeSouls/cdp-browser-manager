@@ -5904,6 +5904,23 @@
             }
             const port = sel.debug_port;
             if (!port) { toast("该实例未暴露 CDP 端口"); return null; }
+            // 关键：必须先把目标标签切到前台再连 DevTools。Chrome 会冻结后台标签
+            // （页面显示「此标签页不活跃」），此时 DevTools 能连上 CDP，但 Network
+            // 面板显示「正在录制网络活动」却抓不到任何请求，等同于不可用。
+            // 画面区 VNC 模式本来就会 activate 当前标签，直接打开 inspector.html
+            // 或从详情栏进 DevTools 时没有这一步，故在此补齐。屏幕锁期间不抢前台。
+            if (!screenLocked) {
+                try {
+                    await api(
+                        "/api/instance/" + encodeURIComponent(devSid) +
+                            "/targets/" + encodeURIComponent(tid) + "/activate",
+                        { method: "POST" }
+                    );
+                    // 等待浏览器把标签切到前台、解除冻结后再让 iframe 建连，
+                    // 否则 DevTools 可能在标签仍冻结时就完成握手而抓不到活动。
+                    await new Promise(r => setTimeout(r, 250));
+                } catch (e) { /* 激活失败不阻断 DevTools，headless 下可能不支持 */ }
+            }
             const prefix = (sel.host && sel.host !== "local")
                 ? "/remote/" + encodeURIComponent(sel.host) : "";
             // 关键：Chrome DevTools frontend 的 ?ws= 参数只接受 "主机:端口/路径"，
