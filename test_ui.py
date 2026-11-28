@@ -144,22 +144,21 @@ class HandlerIntegrityTests(unittest.TestCase):
 class DevToolsDrawerTests(unittest.TestCase):
     """开发者工具 = 右侧抽屉内中文抓包面板，与运行日志按钮切换；原生窗口为其中入口。"""
 
-    def test_drawer_has_two_views(self):
+    def test_drawer_only_has_log_view(self):
+        # 自研九面板移除后抽屉只剩运行日志视图。
         self.assertIn('class="side-switch"', INDEX)
         self.assertIn('class="side-view on" id="sideViewLog"', INDEX)
-        self.assertIn('id="devMask"', INDEX)
-        self.assertIn('id="sideTabLog"', INDEX)
-        self.assertIn('id="sideTabDev"', INDEX)
-        self.assertIn('onclick="switchSideView(\'dev\')"', INDEX)
-        self.assertIn("function switchSideView(which)", JS)
+        self.assertNotIn('id="devMask"', INDEX)
+        self.assertNotIn('id="sideTabDev"', INDEX)
+        self.assertNotIn("switchSideView('dev')", INDEX)
 
-    def test_open_dev_opens_drawer_not_new_window(self):
-        # 主入口回到右侧日志抽屉；不开新网页。原生 DevTools 保留为抽屉内辅助按钮。
-        self.assertIn("function openDev()", JS)
-        open_dev = JS.split("function openDev()")[1].split("function ")[0]
-        self.assertIn('switchSideView("dev")', open_dev)
-        self.assertIn('$("logDrawer").classList.add("open")', open_dev)
-        self.assertNotIn("openNativeDevTools()", open_dev)
+    def test_open_dev_opens_native_devtools(self):
+        # 主入口与 D 键统一打开原生 DevTools 独立窗口（F12 同款）。
+        self.assertIn("async function openDev()", JS)
+        open_dev = JS.split("async function openDev()")[1].split("function ")[0]
+        self.assertIn("await openNativeDevTools();", open_dev)
+        self.assertNotIn('switchSideView("dev")', open_dev)
+        self.assertNotIn('$("logDrawer").classList.add("open")', open_dev)
         self.assertIn('onclick="openDev()"', INDEX)
 
     def test_enhance_drawer_is_alias(self):
@@ -168,13 +167,11 @@ class DevToolsDrawerTests(unittest.TestCase):
         drawer = JS.split("function openEnhanceDrawer()")[1].split("function ")[0]
         self.assertIn("openDev();", drawer)
 
-    def test_tabbar_full_nine_panels_restored(self):
-        # 恢复完整九面板 tab（和最早一致），品牌文案同步恢复
-        tabbar = INDEX.split('id="dtTabbar"')[1].split('class="cap-toolbar"')[0]
-        for p in ("elements", "console", "sources", "network", "performance",
-                  "memory", "application", "security", "device", "cdp", "tools"):
-            self.assertIn('data-p="' + p + '"', tabbar)
-        self.assertIn("网络抓包 · 中文开发者工具", INDEX)
+    def test_nine_panel_tabbar_removed(self):
+        # 自研九面板已移除，不再有 dtTabbar / 品牌文案 / 面板 data-p。
+        self.assertNotIn('id="dtTabbar"', INDEX)
+        self.assertNotIn('data-p="elements"', INDEX)
+        self.assertNotIn("网络抓包 · 中文开发者工具", INDEX)
 
     def test_native_devtools_still_available(self):
         # 原生 DevTools 独立窗口作为抓包面板内入口保留
@@ -316,89 +313,52 @@ class PythonCopyInjectionTests(unittest.TestCase):
         self.assertIn("await r.requestFormData()", self.main_src)
 
 
-class CapturePanelTests(unittest.TestCase):
-    """主应用抽屉内的中文抓包面板：真 CDP 抓包、右键 cURL/Python。"""
+class CapturePanelRemovedTests(unittest.TestCase):
+    """自研中文抓包面板已彻底移除，抓包能力由原生 DevTools 承担。"""
 
-    def test_chinese_ui(self):
-        for kw in ("网络抓包", "开始抓包", "请求头", "Python 代码", "复制为 Python (requests)"):
-            self.assertIn(kw, INDEX)
+    def test_capture_panel_dom_removed(self):
+        for token in ('id="capWrap"', 'id="dtTabbar"', 'id="capCtxMenu"',
+                      "网络抓包 · 中文开发者工具"):
+            self.assertNotIn(token, INDEX)
 
-    def test_real_cdp_wiring(self):
-        for kw in ("/ws/inspect/", "domain=all", "Network.requestWillBeSent",
-                   "Network.responseReceived", "Network.getResponseBody", "oncontextmenu"):
-            self.assertIn(kw, JS + INDEX)
-
-    def test_export_functions(self):
-        for fn in ("function capGenCurl(", "function capGenPython(", "function capCtxAction("):
-            self.assertIn(fn, JS)
-
-    def test_no_naming_collision(self):
-        # 抓包函数全部 cap 前缀，不覆盖主应用的 toast/render/$ 等
-        self.assertNotIn("function render()", JS.split("// ---- 中文抓包面板")[1].split("// ---- 批量执行")[0])
-        cap_section = JS.split("// ---- 中文抓包面板")[1].split("// ---- 批量执行")[0]
-        for fn in ("capGenCurl", "capGenPython", "capRender", "capCopyText", "capLog", "capConnect"):
-            self.assertIn("function " + fn + "(", cap_section)
-        self.assertNotIn("id=\"capWrap\"", INDEX.replace('id="capWrap"', "", 1))  # 只出现一次
+    def test_capture_functions_removed(self):
+        for fn in ("function capGenCurl(", "function capGenPython(",
+                   "function capConnect(", "function dtDispatch("):
+            self.assertNotIn(fn, JS)
 
     def test_standalone_file_removed(self):
-        # 抓包功能已整合进主应用，不再保留单独 html 文件
         self.assertFalse((ROOT / "devtools-preview.html").exists())
 
+    def test_native_python_copy_kept(self):
+        # 原生 DevTools 右键「复制为 Python」注入保留在后端，不受影响。
+        main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("DEVTOOLS_PY_SNIPPET", main)
+        self.assertIn("appendCopyAsPreloadItem", main)
 
-class DevToolsFullPanelTests(unittest.TestCase):
-    """九面板 CDP 复刻：DOM 结构、统一分发、四项增强。"""
 
-    def test_nine_panel_tabs_and_containers(self):
-        for p in ("elements", "console", "sources", "network", "performance",
-                  "memory", "application", "security", "device", "cdp", "tools"):
-            self.assertIn('data-p="' + p + '"', INDEX)
-        self.assertIn('id="dtTabbar"', INDEX)
-        self.assertIn('id="dtPanelElements"', INDEX)
-        self.assertIn('id="dtPanelSources"', INDEX)
-        self.assertIn('id="dtPanelApplication"', INDEX)
+class SelfBuiltPanelsRemovedTests(unittest.TestCase):
+    """自研九面板 CDP 复刻已彻底移除，由浏览器原生 DevTools 取代。"""
 
-    def test_unified_dispatch_and_cmd_id(self):
-        for fn in ("function dtCmd(", "function dtOnResult(", "function dtDispatch(", "function dtSwitch("):
-            self.assertIn(fn, JS)
-        self.assertIn('type: "cmd", id: id, method: method', JS)
-        for method in ("DOM.getDocument", "CSS.getMatchedStylesForNode", "Debugger.getScriptSource",
-                       "Tracing.start", "HeapProfiler.takeHeapSnapshot", "DOMStorage.getDOMStorageItems",
-                       "Emulation.setDeviceMetricsOverride", "Security.getSecurityState"):
-            self.assertIn(method, JS)
+    def test_nine_panel_dom_removed(self):
+        for token in ('id="dtTabbar"', 'id="dtPanelElements"', 'id="dtPanelSources"',
+                      'id="dtPanelApplication"', 'data-p="elements"', 'data-p="performance"'):
+            self.assertNotIn(token, INDEX)
 
-    def test_core_debug_panels(self):
-        for fn in ("dtLoadDom", "dtFlatten", "dtSelectNode", "dtRenderElem",
-                   "dtScriptParsed", "dtToggleBp", "dtPaused", "dtEvalConsole"):
-            self.assertIn("function " + fn + "(", JS)
-        for kw in ("matchedCSSRules", "computedStyle", "getBoxModel", "getEventListeners",
-                   "callFrames", "scopeChain"):
-            self.assertIn(kw, JS)
-
-    def test_analysis_panels(self):
-        for fn in ("dtPerfMetrics", "dtPerfToggle", "dtHeapSnapshot", "dtParseHeap",
-                   "dtAppRefresh", "dtSecurityRefresh", "dtDeviceApply", "dtDeviceGeo",
-                   "dtLoadProfile", "dtFlameRender", "dtFlameColor", "dtFlameOverviewRender",
-                   "dtFlameClick", "dtFlameWheel", "dtFlameView", "dtFlameTableRender",
-                   "dtProfileFromTraces", "dtFlameFocusNode"):
-            self.assertIn("function " + fn + "(", JS)
-        for kw in ("Performance.getMetrics", "Tracing.dataCollected", "addHeapSnapshotChunk",
-                   "IndexedDB.getDatabaseNames", "CacheStorage.listCaches", "setGeolocationOverride",
-                   "Profiler.start", "Profiler.stop", "disabled-by-default-v8.cpu_profiler",
-                   "timeDeltas", "dtFlameSvg", "dtFlameOverview", "Bottom-Up", "Call Tree"):
-            self.assertIn(kw, JS + INDEX)
-
-    def test_enhancements(self):
-        for fn in ("dtScanSecrets", "dtExport", "dtFetchToggle", "dtOpenReplay", "dtReplaySend"):
-            self.assertIn("function " + fn + "(", JS)
-        for kw in ("Bearer Token", "JWT", "Fetch.continueRequest", "requests.request",
-                   "编辑并重新发送", "dtScanSecrets", "dtExport"):
-            self.assertIn(kw, JS)
-        for kw in ("扫描此请求敏感信息", "批量导出脚本"):
-            self.assertIn(kw, INDEX)
+    def test_dispatch_functions_removed(self):
+        for fn in ("function dtCmd(", "function dtOnResult(", "function dtDispatch(",
+                   "function dtSwitch(", "function dtPerfToggle(", "function dtFlameRender(",
+                   "function dtScanSecrets(", "function dtExport("):
+            self.assertNotIn(fn, JS)
 
     def test_native_entry_kept(self):
-        self.assertIn("function openNativeDevTools(", JS)
+        self.assertIn("async function openNativeDevTools()", JS)
         self.assertIn("原生 DevTools", INDEX)
+
+    def test_backend_devtools_proxy_kept(self):
+        # 原生 DevTools 所需的同源代理与 ws 修正必须保留。
+        main = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("@app.api_route(\"/{port:int}/devtools/{rest:path}\"", main)
+        self.assertIn("def inject_devtools_ws_normalizer(", main)
 
 
 if __name__ == "__main__":

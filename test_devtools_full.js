@@ -1,216 +1,46 @@
-// 九面板 CDP 复刻交互测试（jsdom）。
-// 契约：主应用开发者工具抽屉内含九面板 + CDP 台 + 工具；
-//       统一 domain=all 连接，dtCmd 带 id，事件按 method 分发；
-//       增强功能：请求重放、CDP 命令台、敏感扫描、批量导出。
-// 运行：node test_devtools_full.js
-const fs = require('fs');
-const path = require('path');
-const { JSDOM, VirtualConsole } = require('jsdom');
+/**
+ * 自研九面板移除验证（静态）。
+ * 原自研九面板 CDP 复刻已彻底删除，改由浏览器原生 DevTools 承担。
+ * 本测试断言：九面板 DOM/函数确实不存在；原生 DevTools 代理链与 Python 注入保留。
+ * 运行：node test_devtools_full.js
+ */
+const fs = require("fs");
+const path = require("path");
 
-const html = fs.readFileSync(path.join(__dirname, 'app', 'templates', 'index.html'), 'utf-8');
+const html = fs.readFileSync(path.join(__dirname, "app", "templates", "index.html"), "utf8");
+const main = fs.readFileSync(path.join(__dirname, "app", "main.py"), "utf8");
+
 let passed = 0, failed = 0;
-function ok(c, m) { if (c) { passed++; console.log('  ok  - ' + m); } else { failed++; console.log('  FAIL- ' + m); } }
-function eq(a, b, m) { ok(a === b, m + ' (期望 ' + JSON.stringify(b) + ', 实际 ' + JSON.stringify(a) + ')'); }
-
-let sentCmds = [];
-function makeDom() {
-  sentCmds.length = 0;
-  const vc = new VirtualConsole();
-  vc.on('jsdomError', () => {});
-  const dom = new JSDOM(html, {
-    runScripts: 'dangerously', url: 'https://example.test/', virtualConsole: vc,
-    beforeParse(w) {
-      w.fetch = async () => ({ ok: true, json: async () => ({}) });
-      w.WebSocket = class {
-        constructor(url) { this.url = url; w.FakeWS = this; }
-        close() { this.closed = true; if (this.onclose) this.onclose(); }
-        send(msg) { w.__sent.push(JSON.parse(msg)); }
-      };
-      w.__sent = sentCmds;
-      w.alert = () => {}; w.confirm = () => true; w.prompt = () => 'k';
-      w.open = () => ({});
-      w.URL.createObjectURL = () => 'blob:x'; w.URL.revokeObjectURL = () => {};
-      w.navigator.clipboard = { writeText: () => Promise.resolve() };
-    }
-  });
-  const w = dom.window;
-  w.sessionStorage.setItem('tabs_sid1', JSON.stringify([{ id: 'tid123', type: 'page' }]));
-  w.eval(`
-    instances = { sid1: { sid:"sid1", status:"running", debug_port:9333 } };
-    selectedSid = "sid1"; devSid = "sid1"; apiKey = "testkey";
-    api = async (u) => u.endsWith('/targets') ? { targets:[{id:'tid123',type:'page'}] } : {};
-    load = async()=>{}; render=function(){}; loadLogs=async()=>{}; applyTheme=function(){}; setPreview=function(){};
-  `);
-  return w;
+function ok(cond, msg) {
+  if (cond) { passed++; console.log("  ok  -", msg); }
+  else { failed++; console.log("  FAIL-", msg); }
 }
 
-console.log('\n[1] 九面板 DOM 与 tab 结构');
-const w = makeDom();
-const allPanels = ['elements','console','sources','network','performance','memory','application','security','device','cdp','tools'];
-allPanels.forEach(t => ok(w.document.querySelector('#dtTabbar .cap-tab[data-p="' + t + '"]') !== null, 'tab ' + t + ' 存在'));
-allPanels.forEach(t => ok(w.document.querySelector('#capWrap .cap-panel[data-p="' + t + '"]') !== null, '面板 ' + t + ' 容器存在'));
-ok(w.document.querySelectorAll('#dtTabbar .cap-tab').length === 11, '完整 11 个 tab 可见');
-eq(w.eval('dtPanel'), 'network', '默认网络面板');
+console.log("== 自研九面板移除验证 ==");
 
-console.log('\n[2] 面板切换 dtSwitch');
-w.eval('capConnected = true;');
-['elements','sources','performance','memory','application','security','device','cdp','tools'].forEach(t => {
-  w.eval('dtSwitch("' + t + '")');
-  eq(w.eval('dtPanel'), t, '切到 ' + t);
-  ok(w.document.querySelector('#capWrap .cap-panel[data-p="' + t + '"]').classList.contains('on'), t + ' 面板激活');
-});
-eq(w.document.querySelectorAll('#capWrap .cap-panel.on').length, 1, '同时只有一个面板激活');
+// 1. 九面板 DOM 全部移除
+const domTokens = ["dtTabbar", "capWrap", "capCtxMenu", "dtPanelElements", "dtPanelSources",
+  "dtPanelPerformance", "dtFlameSvg", "dtPanelApplication", "devMask", "sideTabDev"];
+domTokens.forEach(t => ok(!html.includes('id="' + t + '"'), "DOM 移除: " + t));
 
-console.log('\n[3] 统一 CDP 连接与命令 id');
-const url = w.eval('capWsUrl("sid1","tid123")');
-ok(url.includes('domain=all'), 'WS 使用 domain=all');
-ok(url.includes('key=testkey'), 'WS 携带 API_KEY');
-w.eval('capWs = { send: function(m){ window.__sent.push(JSON.parse(m)); } }; capConnected = true;');
-sentCmds.length = 0;
-w.dtCmd('Runtime.evaluate', { expression: '1+1' });
-ok(sentCmds.length === 1, '命令已发送');
-const cmd = sentCmds[0];
-ok(cmd.type === 'cmd' && cmd.method === 'Runtime.evaluate', '命令结构正确');
-ok(typeof cmd.id === 'number' && cmd.id > 1000, '命令带独立 id');
-// 模拟响应按 id 关联
-w.eval('dtOnResult({ id: ' + cmd.id + ', result: { result: { value: 2 } } })');
-ok(w.eval('Object.keys(dtPending).length') === 0, '响应按 id 清除等待队列');
+// 2. 九面板 JS 函数全部移除
+const fnTokens = ["dtSwitch", "dtCmd", "dtDispatch", "dtPerfToggle", "dtLoadProfile",
+  "dtFlameRender", "dtHeapSnapshot", "dtScanSecrets", "dtExport", "capConnect", "capGenCurl"];
+fnTokens.forEach(fn => ok(!html.includes("function " + fn + "("), "函数移除: " + fn));
 
-console.log('\n[4] 事件分发 dtDispatch');
-w.eval('dtConsoleRows = []; dtScripts = [];');
-w.dtDispatch('Runtime.consoleAPICalled', { type: 'log', args: [{ value: 'hello' }] });
-eq(w.eval('dtConsoleRows.length'), 1, 'console 事件进入控制台');
-eq(w.eval('dtConsoleRows[0].text'), 'hello', 'console 内容正确');
-w.dtDispatch('Runtime.exceptionThrown', { exceptionDetails: { text: 'boom' } });
-eq(w.eval('dtConsoleRows[1].kind'), 'error', '异常标记为 error');
-w.dtDispatch('Debugger.scriptParsed', { scriptId: 'S1', url: 'https://a.test/app.js', startLine: 0, endLine: 10 });
-eq(w.eval('dtScripts.length'), 1, 'scriptParsed 收集脚本');
-w.dtDispatch('Security.stateChanged', { securityState: { state: 'secure' } });
-ok(w.document.getElementById('dtSecurityBody').textContent.includes('secure'), '安全事件渲染');
+// 3. 原生 DevTools 入口与代理链保留
+ok(html.includes("async function openDev()"), "openDev 入口保留");
+ok(html.includes("await openNativeDevTools();"), "openDev 打开原生窗口");
+ok(html.includes("async function openNativeDevTools()"), "原生入口函数保留");
+ok(html.includes("/devtools/inspector.html?ws="), "inspector.html 代理保留");
+ok(main.includes('@app.api_route("/{port:int}/devtools/{rest:path}"'), "后端 DevTools 代理保留");
+ok(main.includes("def inject_devtools_ws_normalizer("), "ws 参数修正保留");
+ok(main.includes("DEVTOOLS_PY_SNIPPET"), "原生右键 Python 注入保留");
 
-console.log('\n[5] 元素面板 DOM 树');
-w.eval('dtNodes = [{nodeId:1,name:"#document",type:9,attrs:[],text:"",depth:0,childIds:[2],expanded:true},{nodeId:2,name:"HTML",type:1,attrs:[],text:"",depth:1,childIds:[],expanded:true}]; dtRenderTree();');
-ok(w.document.querySelectorAll('#dtDomTree .dt-node').length === 2, 'DOM 树渲染两层节点');
-ok(w.document.querySelector('#dtDomTree .dt-tag').textContent.includes('document'), '节点标签正确');
+// 4. 语言热切换保留、无刷新
+ok(html.includes("function applyLang(lang)"), "i18n 应用函数保留");
+ok(html.includes("const I18N"), "i18n 字典保留");
+ok(!html.includes("location.reload"), "无强制刷新");
 
-console.log('\n[6] 源码断点');
-w.eval('dtScripts = [{url:"https://a.test/x.js",scriptId:"S1",lineCount:10,bp:[]}]; dtSrcSelected=0; dtRenderScripts();');
-w.dtToggleBp(3);
-eq(w.eval('dtScripts[0].bp.length'), 1, '断点已添加');
-ok(sentCmds.some(c => c.method === 'Debugger.setBreakpointByUrl'), '下发 setBreakpointByUrl');
-w.dtToggleBp(3);
-eq(w.eval('dtScripts[0].bp.length'), 0, '断点可移除');
-
-console.log('\n[7] 控制台执行 JS');
-w.eval('dtHist=[]; dtHistIdx=-1;');
-w.document.getElementById('dtConsoleInput').value = '1+1';
-sentCmds.length = 0;
-w.dtEvalConsole();
-ok(sentCmds.some(c => c.method === 'Runtime.evaluate' && c.params.expression === '1+1'), '执行 JS 下发 Runtime.evaluate');
-eq(w.eval('dtHist[0]'), '1+1', '历史记录保存');
-
-console.log('\n[8] CDP 命令台');
-w.document.getElementById('dtCdpMethod').value = 'DOM.getDocument';
-w.document.getElementById('dtCdpParams').value = '{"depth":1}';
-sentCmds.length = 0;
-w.dtCdpSend();
-ok(sentCmds.some(c => c.method === 'DOM.getDocument' && c.params.depth === 1), '命令台发送带参数命令');
-
-console.log('\n[9] 敏感信息扫描');
-w.eval('capRequests = [{id:"R1",url:"https://a.test/?token=abcdefghijklmnop",method:"GET",headers:{Authorization:"Bearer abcdefghijklmnop1234"},postData:"",status:200,start:1,name:"a"}]');
-const found = w.dtScanSecrets();
-ok(found.length === 1, '扫描到敏感请求');
-ok(w.document.getElementById('dtScanResult').textContent.includes('Bearer'), '扫描结果含 Bearer Token');
-w.eval('capRequests = [{id:"R2",url:"https://safe.test/",method:"GET",headers:{},postData:"",status:200,start:1,name:"safe"}]');
-eq(w.dtScanSecrets().length, 0, '正常请求无误报');
-
-console.log('\n[10] 批量导出');
-w.eval('capRequests = [{id:"R1",url:"https://a.test/x",method:"GET",headers:{},postData:"",status:200,start:1,name:"x"}]');
-w.dtExport('py');
-w.dtExport('json');
-ok(true, '导出 Python / JSON 无异常');
-
-console.log('\n[11] 请求编辑重放');
-w.eval('capRequests = [{id:"R1",url:"https://a.test/x",method:"POST",headers:{"Content-Type":"application/json"},postData:"{}",status:200,start:1,name:"x"}]; capCtxReqId="R1";');
-w.capCtxAction('edit-replay');
-ok(w.document.getElementById('dtEditModal').classList.contains('open'), '右键编辑重放打开弹窗');
-eq(w.document.getElementById('dtEditUrl').value, 'https://a.test/x', '弹窗回填 URL');
-w.document.getElementById('dtEditUrl').value = 'https://b.test/y';
-sentCmds.length = 0;
-w.dtReplaySend();
-ok(sentCmds.some(c => c.method === 'Runtime.evaluate' && c.params.expression.includes('https://b.test/y')), '重放使用新 URL');
-
-console.log('\n[12] 设备模拟');
-w.document.getElementById('dtDevW').value = '390';
-w.document.getElementById('dtDevH').value = '844';
-w.document.getElementById('dtDevDpr').value = '3';
-sentCmds.length = 0;
-w.dtDeviceApply();
-ok(sentCmds.some(c => c.method === 'Emulation.setDeviceMetricsOverride' && c.params.width === 390), '设备尺寸命令正确');
-w.dtDeviceReset();
-ok(sentCmds.some(c => c.method === 'Emulation.clearDeviceMetricsOverride'), '设备恢复命令下发');
-
-console.log('\n[13] 原生式 CPU 火焰图');
-const sampleProfile = {
-  nodes: [
-    { id: 1, callFrame: { functionName: '(root)', url: '' }, children: [2, 3] },
-    { id: 2, callFrame: { functionName: 'main', url: 'https://a.test/app.js', lineNumber: 5 }, children: [4] },
-    { id: 3, callFrame: { functionName: 'idle', url: '' }, children: [] },
-    { id: 4, callFrame: { functionName: 'hot', url: 'https://a.test/app.js', lineNumber: 9 }, children: [] }
-  ],
-  samples: [2, 4, 4, 2, 3],
-  timeDeltas: [1000, 1000, 2000, 1000, 1000]
-};
-w.eval('dtPerfRecording = false; dtTraces = [];');
-w.dtLoadProfile(sampleProfile);
-eq(w.eval('dtFlameFrames.length'), 4, '采样重建为 4 个火焰帧（连续相同栈合并）');
-eq(w.eval('dtFlameFrames[0].nodeId'), 1, '栈底为 root');
-eq(w.eval('dtFlameFrames[0].depth'), 0, 'root 深度为 0');
-eq(w.eval('dtFlameFrames[1].nodeId'), 2, '第二帧为 main');
-eq(w.eval('dtFlameFrames[2].nodeId'), 4, '第三帧为 hot');
-eq(w.eval('dtFlameFrames[2].depth'), 2, 'hot 深度为 2');
-eq(w.eval('dtProfile.totalUs'), 6000, '总时长按采样增量累加');
-ok(w.eval('dtProfile.nodes.get(4).selfUs') === 3000, '连续相同栈的 self 时间正确累加');
-ok(w.eval('dtProfile.nodes.get(2).totalUs') === 5000, '父帧 total 时间覆盖子帧');
-ok(w.eval('dtProfile.nodes.get(1).selfUs') === 0, 'root 无 self 时间');
-ok(w.document.querySelectorAll('#dtFlameSvg .dt-fr').length >= 4, 'SVG 渲染火焰帧');
-ok(w.document.getElementById('dtFlameSvg').textContent.includes('hot'), '火焰帧显示函数名');
-ok(w.document.getElementById('dtFlameStat').textContent.includes('4 帧'), '统计栏显示帧数');
-eq(w.document.getElementById('dtPerfTrace').hidden, true, '有采样时隐藏兜底任务条');
-
-console.log('\n[14] 火焰图交互：缩放 / 搜索 / 视图切换');
-w.eval('dtFlameClick(2)');
-ok(w.eval('dtFlameRange.start') > 0 || w.eval('dtFlameRange.end') < 6000, '点击帧后视窗缩小');
-w.dtFlameZoomReset();
-eq(w.eval('dtFlameRange.start'), 0, '重置缩放回到起点');
-eq(w.eval('dtFlameRange.end'), 6000, '重置缩放回到全程');
-w.document.getElementById('dtFlameSearch').value = 'hot';
-w.dtFlameRender();
-eq(w.document.querySelectorAll('#dtFlameSvg .dt-fr.hit').length, 1, '搜索高亮命中函数帧');
-w.document.getElementById('dtFlameSearch').value = '';
-w.dtFlameRender();
-w.dtFlameView('bottom');
-ok(w.document.getElementById('dtFlameTable').textContent.includes('hot'), 'Bottom-Up 表含函数');
-ok(w.document.getElementById('dtFlameTable').textContent.includes('Self'), 'Bottom-Up 表显示 Self 列');
-w.dtFlameView('tree');
-ok(w.document.getElementById('dtFlameTable').textContent.includes('main'), 'Call Tree 含调用关系');
-w.dtFlameView('flame');
-eq(w.document.getElementById('dtFlameMain').hidden, false, '切回火焰图显示主视图');
-
-console.log('\n[15] 录制命令与 Tracing 兜底采集');
-const w2 = makeDom();
-w2.eval('capConnected = true; capWs = { send: function(m){ window.__sent.push(JSON.parse(m)); } };');
-sentCmds.length = 0;
-w2.dtPerfToggle();
-ok(sentCmds.some(c => c.method === 'Profiler.start'), '开始录制启用 CPU Profiler');
-ok(sentCmds.some(c => c.method === 'Tracing.start' && c.params.categories.includes('disabled-by-default-v8.cpu_profiler')), 'Tracing 启用 V8 CPU profiler 类别');
-eq(w2.eval('dtPerfRecording'), true, '录制状态已开启');
-w2.dtDispatch('Tracing.dataCollected', { value: [{ name: 'Profile', args: { data: { cpuProfile: { nodes: [{ id: 1, callFrame: { functionName: 'x' }, children: [] }] } } } }, { name: 'ProfileChunk', args: { data: { cpuProfile: { samples: [1], timeDeltas: [500] } } } }] });
-ok(w2.eval('dtProfileFromTraces() !== null'), 'Tracing 的 Profile/ProfileChunk 可拼装为 CPUProfile');
-sentCmds.length = 0;
-w2.dtPerfToggle();
-eq(w2.eval('dtPerfRecording'), false, '停止录制状态已关闭');
-ok(sentCmds.some(c => c.method === 'Profiler.stop'), '停止录制下发 Profiler.stop');
-
-console.log('\n结果: ' + passed + ' 通过, ' + failed + ' 失败');
-process.exit(failed ? 1 : 0);
+console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
+if (failed) process.exit(1);

@@ -2080,7 +2080,9 @@ class ExtendedFeaturesTests(unittest.TestCase):
             self.assertIn(fn, s)
         self.assertIn('id="createProxy"', s)
         self.assertIn('proxy: ($("createProxy")', s)
-        self.assertIn("原生 DevTools ↗</button>", s)
+        # 自研面板已移除；开发者工具入口改为 detail 栏按钮 + D 键，直接开原生窗口。
+        self.assertIn('onclick="openDev()"', s)
+        self.assertIn("await openNativeDevTools();", s)
 
     def test_theme_attribute_and_shortcuts(self):
         s = self.src
